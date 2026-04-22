@@ -239,6 +239,15 @@ textarea {
   height: calc(100% - 58px);
 }
 
+.editor-instance {
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid rgba(91, 141, 168, 0.18);
+  border-radius: 18px;
+  background: #0d1721;
+}
+
 .editor-toolbar,
 .editor-footer {
   display: flex;
@@ -292,34 +301,55 @@ textarea {
   mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.95), transparent 100%);
 }
 
-.editor-textarea,
-.diagram-code {
-  width: 100%;
-  padding: 18px;
-  border: 1px solid rgba(18, 33, 44, 0.1);
-  border-radius: 18px;
-  background: #13232e;
-  color: #edf6f3;
-  line-height: 1.6;
+.editor-loading {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--text-soft);
 }
 
-.editor-textarea {
-  min-height: 100%;
-  resize: vertical;
-  outline: none;
-  border-color: rgba(91, 141, 168, 0.18);
-  background: #0d1721;
+.code2flow-monaco {
+  height: 100%;
 }
 
-.diagram-code {
+.code2flow-line-highlight {
+  background: rgba(84, 194, 240, 0.14);
+}
+
+.code2flow-gutter-highlight {
+  border-left: 3px solid var(--accent);
+}
+
+.diagram-render {
   position: relative;
   z-index: 1;
+  display: grid;
+  place-items: center;
   min-height: 100%;
-  margin: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  white-space: pre-wrap;
+  padding: 20px;
+  overflow: auto;
+}
+
+.diagram-render svg {
+  width: 100%;
+  height: auto;
+}
+
+.diagram-render [id*='flowchart-'],
+.diagram-render .node,
+.diagram-render g.node {
+  cursor: pointer;
+}
+
+.diagram-error {
+  position: absolute;
+  inset: auto 16px 16px 16px;
+  z-index: 2;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(115, 28, 36, 0.8);
+  border: 1px solid rgba(240, 92, 92, 0.24);
+  color: #ffb7b7;
 }
 
 .mapping-header {
@@ -349,6 +379,21 @@ textarea {
   border-radius: 16px;
   border: 1px solid rgba(91, 141, 168, 0.14);
   background: rgba(15, 31, 44, 0.76);
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    transform 0.2s ease,
+    background 0.2s ease;
+}
+
+.mapping-list li:hover {
+  transform: translateY(-1px);
+  border-color: rgba(84, 194, 240, 0.28);
+}
+
+.mapping-item-active {
+  border-color: rgba(84, 194, 240, 0.42) !important;
+  background: rgba(17, 44, 62, 0.95) !important;
 }
 
 .mapping-list strong {

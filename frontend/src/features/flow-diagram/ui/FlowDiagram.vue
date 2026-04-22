@@ -1,10 +1,25 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { NodeMapping } from '../../../entities/flow/model/types'
+import { useMermaidRenderer } from '../model/useMermaidRenderer'
 
-defineProps<{
+const props = defineProps<{
   mermaid: string
   mappings: NodeMapping[]
+  selectedNodeId?: string
 }>()
+
+const emit = defineEmits<{
+  'select-node': [nodeId: string]
+}>()
+
+const { diagramElement, renderError } = useMermaidRenderer(
+  () => props.mermaid,
+  () => props.mappings,
+  (nodeId) => emit('select-node', nodeId)
+)
+
+const hasMappings = computed(() => props.mappings.length > 0)
 </script>
 
 <template>
@@ -12,7 +27,10 @@ defineProps<{
     <div class="diagram-preview">
       <div class="diagram-stage">
         <div class="diagram-stage-grid" />
-        <pre class="diagram-code">{{ mermaid }}</pre>
+        <div ref="diagramElement" class="diagram-render" />
+        <div v-if="renderError" class="diagram-error">
+          {{ renderError }}
+        </div>
       </div>
     </div>
 
@@ -21,8 +39,13 @@ defineProps<{
         <h3>节点映射</h3>
         <span>{{ mappings.length }} 个节点</span>
       </div>
-      <ul v-if="mappings.length > 0">
-        <li v-for="item in mappings" :key="item.nodeId">
+      <ul v-if="hasMappings">
+        <li
+          v-for="item in mappings"
+          :key="item.nodeId"
+          :class="{ 'mapping-item-active': item.nodeId === selectedNodeId }"
+          @click="emit('select-node', item.nodeId)"
+        >
           <strong>{{ item.nodeId }}</strong>
           <span>{{ item.description }}</span>
           <em>第 {{ item.lineStart }} - {{ item.lineEnd }} 行</em>

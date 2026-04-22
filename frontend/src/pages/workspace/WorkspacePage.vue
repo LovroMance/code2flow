@@ -1,7 +1,11 @@
 <script setup lang="ts">
+import { ref } from 'vue'
+import type { CodeEditorExpose } from '../../features/code-editor/model/types'
 import CodeEditor from '../../features/code-editor/ui/CodeEditor.vue'
 import FlowDiagram from '../../features/flow-diagram/ui/FlowDiagram.vue'
 import { useWorkspacePage } from '../../features/workspace/model/useWorkspacePage'
+
+const editorRef = ref<CodeEditorExpose | null>(null)
 
 const {
   code,
@@ -14,8 +18,22 @@ const {
   mermaid,
   status,
   statusText,
-  clearWorkspace
+  clearWorkspace,
+  findMappingByNodeId,
+  selectedNodeId,
+  selectNode
 } = useWorkspacePage()
+
+function handleSelectNode(nodeId: string) {
+  selectNode(nodeId)
+
+  const mapping = findMappingByNodeId(nodeId)
+  if (!mapping) {
+    return
+  }
+
+  editorRef.value?.focusMapping(mapping)
+}
 </script>
 
 <template>
@@ -73,9 +91,9 @@ const {
             <p class="panel-kicker">Input</p>
             <h2>代码输入区</h2>
           </div>
-          <span class="badge">Monaco 待接入</span>
+          <span class="badge badge-active">Monaco Ready</span>
         </div>
-        <CodeEditor v-model="code" />
+        <CodeEditor ref="editorRef" v-model="code" />
       </section>
 
       <section class="analysis-panel">
@@ -89,7 +107,12 @@ const {
               {{ statusText }}
             </span>
           </div>
-          <FlowDiagram :mermaid="mermaid" :mappings="mappings" />
+          <FlowDiagram
+            :mermaid="mermaid"
+            :mappings="mappings"
+            :selected-node-id="selectedNodeId"
+            @select-node="handleSelectNode"
+          />
         </section>
       </section>
     </main>
