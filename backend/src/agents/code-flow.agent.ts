@@ -1,10 +1,22 @@
 import type { FlowGenerationResult } from '../domain/flow/types'
+import { generateCodeFlowWithLangChain } from '../ai/chains/code-flow.chain'
+import { generateCodeFlowWithGraph } from '../ai/graph/code-flow.graph'
 import { buildCodeFlowPrompt } from '../prompts/code-flow.prompt'
 import { validateMermaid } from '../utils/mermaidValidator'
 
 export function createCodeFlowAgent() {
   return {
     async generate(code: string): Promise<FlowGenerationResult> {
+      const provider = process.env.CODE2FLOW_AGENT_PROVIDER ?? 'mock'
+
+      if (provider === 'langchain') {
+        return generateCodeFlowWithLangChain(code)
+      }
+
+      if (provider === 'graph') {
+        return generateCodeFlowWithGraph(code)
+      }
+
       const prompt = buildCodeFlowPrompt(code)
 
       const result: FlowGenerationResult = {
