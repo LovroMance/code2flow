@@ -28,6 +28,7 @@
 - Product milestone planning: `docs/阶段一.md`, `docs/阶段二.md`
 - Prompt and output contract: `docs/prompt-spec.md`
 - Dev workflow and script conventions: `docs/scripts-plan.md`
+- Current repo state and handoff: `docs/current-status.md`, `docs/session-handoff.md`
 
 ## Non-Negotiable Rules
 
@@ -50,8 +51,8 @@
 
 ## Backend Implementation Rules
 
-- Keep prompt templates centralized in `backend/src/prompts.ts`
-- Keep schemas and shared contracts centralized in `backend/src/types.ts`
+- Keep prompt templates centralized in `backend/src/prompts/code-flow.prompt.ts`
+- Keep schemas and shared contracts centralized in `backend/src/domain/flow/schema.ts` and `backend/src/domain/flow/types.ts`
 - Validate all model output with Zod before returning to the client
 - Keep the first LangGraph flow minimal:
   - `analyze`
@@ -66,6 +67,25 @@
 - Clicking a Mermaid node must scroll and highlight the mapped editor lines
 - Streaming UI should prioritize clarity over animation complexity
 - Prefer composables for stateful frontend integration code
+- Keep page orchestration in `pages/` and feature logic inside `features/`
+
+## Current Implementation Snapshot
+
+- Frontend already has:
+  - workspace page
+  - Monaco editor
+  - Mermaid rendering
+  - node mapping list
+  - click-to-line highlight
+  - `axios` for normal APIs
+  - `fetch` for SSE
+- Backend already has:
+  - `GET /api/health`
+  - `POST /api/generate-flow`
+  - Zod request validation
+  - SSE response writing
+  - mock code-flow agent
+- Current agent is still mock-based; do not assume LangChain is wired yet
 
 ## Working Style
 

@@ -46,7 +46,8 @@ const hasMappings = computed(() => props.mappings.length > 0)
           :class="{ 'mapping-item-active': item.nodeId === selectedNodeId }"
           @click="emit('select-node', item.nodeId)"
         >
-          <strong>{{ item.nodeId }}</strong>
+          <strong>{{ item.label }}</strong>
+          <span>{{ item.kind }} · {{ item.nodeId }}</span>
           <span>{{ item.description }}</span>
           <em>第 {{ item.lineStart }} - {{ item.lineEnd }} 行</em>
         </li>

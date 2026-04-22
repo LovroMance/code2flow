@@ -43,22 +43,25 @@ function focusMapping(mapping: NodeMapping) {
     return
   }
 
+  const startColumn = mapping.columnStart ?? 1
+  const endColumn = mapping.columnEnd ?? 1
+
   editorInstance.focus()
   editorInstance.revealLinesInCenter(mapping.lineStart, mapping.lineEnd)
   editorInstance.setSelection({
     startLineNumber: mapping.lineStart,
-    startColumn: 1,
+    startColumn,
     endLineNumber: mapping.lineEnd,
-    endColumn: 1
+    endColumn
   })
 
   decorationIds = editorInstance.deltaDecorations(decorationIds, [
     {
       range: {
         startLineNumber: mapping.lineStart,
-        startColumn: 1,
+        startColumn,
         endLineNumber: mapping.lineEnd,
-        endColumn: 1
+        endColumn
       },
       options: {
         isWholeLine: true,

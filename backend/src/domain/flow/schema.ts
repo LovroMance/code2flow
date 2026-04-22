@@ -1,11 +1,32 @@
 import { z } from 'zod'
 
-export const NodeMappingSchema = z.object({
-  nodeId: z.string(),
-  lineStart: z.number().int().positive(),
-  lineEnd: z.number().int().positive(),
-  description: z.string()
-})
+export const NodeKindSchema = z.enum(['start', 'action', 'decision', 'return', 'end'])
+
+export const NodeMappingSchema = z
+  .object({
+    nodeId: z.string().min(1),
+    kind: NodeKindSchema,
+    label: z.string().min(1),
+    description: z.string().min(1),
+    lineStart: z.number().int().positive(),
+    lineEnd: z.number().int().positive(),
+    columnStart: z.number().int().positive().optional(),
+    columnEnd: z.number().int().positive().optional()
+  })
+  .refine((mapping) => mapping.lineEnd >= mapping.lineStart, {
+    message: 'lineEnd must be greater than or equal to lineStart',
+    path: ['lineEnd']
+  })
+  .refine(
+    (mapping) =>
+      mapping.columnStart === undefined ||
+      mapping.columnEnd === undefined ||
+      mapping.columnEnd >= mapping.columnStart,
+    {
+      message: 'columnEnd must be greater than or equal to columnStart',
+      path: ['columnEnd']
+    }
+  )
 
 export const GenerationResultSchema = z.object({
   mermaid: z.string(),

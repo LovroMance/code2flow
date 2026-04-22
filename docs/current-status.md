@@ -2,40 +2,55 @@
 
 ## 已完成
 
-- 将原始 `work.md` 拆分为阶段文档
-- 新增阶段规划：
-  - `docs/阶段一.md`
-  - `docs/阶段二.md`
-- 新增上下文和协作文件：
-  - `AGENTS.md`
-  - `docs/prompt-spec.md`
-  - `docs/scripts-plan.md`
-- 新增前后端骨架：
-  - Vue 3 + Vite 前端
-  - Express + TypeScript 后端
-- 根目录启用 npm workspaces
-- 已补全一轮项目依赖到各层 `package.json`
+- 阶段文档、Prompt 规范、协作规则已经整理到 `docs/` 和 `AGENTS.md`
+- 根目录已使用 npm workspaces 管理 `frontend/` 和 `backend/`
+- 前端工作台已落地：
+  - 工作台页面
+  - Monaco Editor
+  - Mermaid 图渲染
+  - 节点映射列表
+  - 节点点击联动到编辑器行号高亮
+- 前端接口层已分开：
+  - 普通接口走 `axios`
+  - 流式接口走 `fetch + ReadableStream`
+- 后端接口已落地：
+  - `GET /api/health`
+  - `POST /api/generate-flow`
+- 后端已具备：
+  - Zod 请求校验
+  - Mermaid 校验
+  - SSE 事件写回
+  - mock Agent 输出
+- 工程化基础已经在仓库里：
+  - ESLint
+  - Prettier
+  - Husky
+  - lint-staged
 
-## 当前还没完成
+## 当前仍是占位 / mock 的部分
 
-- 依赖尚未实际安装
-- ESLint / Prettier 配置文件尚未落地
-- Tailwind 尚未真正接入样式管线
-- Monaco 尚未真实接入
-- Mermaid 尚未真实渲染
-- 前端尚未真正请求后端 SSE
-- LangGraph 尚未真实接入模型调用
+- `backend/src/agents/code-flow.agent.ts` 仍返回固定 Mermaid 和固定 mappings
+- Prompt 模板已存在，但还没有真实模型调用
+- LangChain / LangGraph 依赖已安装，但业务尚未真正接入
+- 当前 nodeId 仍是简单的 `A / B / C / D / E`
 
-## 当前最适合继续做的事情
+## 当前最值得继续推进的方向
 
-1. 在根目录执行 `npm install`
-2. 增加 ESLint / Prettier 配置
-3. 接前端到 `/api/generate-flow`
-4. 接 Monaco 与 Mermaid
-5. 将 mock Agent 替换为真实模型调用
+1. 把后端 mock 结果升级成更贴近真实代码结构的生成逻辑
+2. 设计稳定的 nodeId 规则，并让 Mermaid 与 mappings 严格共用
+3. 再在此基础上接入 LangChain
+4. 最后视需要引入 LangGraph 处理校验重试和多轮状态
+
+## 启动方式
+
+```bash
+npm run dev
+```
+
+- 前端默认在 `http://localhost:5173`
+- 后端默认在 `http://localhost:3000`
 
 ## 注意点
 
-- 当前 `agent.ts` 还是 mock 结果
-- 当前前端展示的是占位数据
-- 文档已经比代码更完整，后续实现要尽量对齐文档，而不是反过来让文档失真
+- 现有文档比最初骨架阶段更接近真实代码，但仍需要持续和代码保持同步
+- 新会话不要默认假设“更真实 mock 解析器”或“LangChain 已接入”，当前仓库还没有这些实现

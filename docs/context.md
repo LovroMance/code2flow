@@ -2,78 +2,60 @@
 
 ## 项目一句话
 
-Code2Flow 是一个将 JavaScript、TypeScript、Vue 前端代码转换成 Mermaid 流程图，并建立节点到代码行映射的 Agent 项目。
+Code2Flow 是一个把 JavaScript、TypeScript、Vue 前端代码转换成 Mermaid 流程图，并建立节点到代码行映射关系的 Agent 项目。
 
 ## 当前目标
 
-- 先完成阶段一 MVP
-- 保持总体规划不变
-- 优先把前后端主链路所需基础设施搭稳
+- 继续围绕阶段一 MVP 推进
+- 保持阶段一 / 阶段二总体规划不变
+- 在现有可运行骨架上逐步把 mock 替换成更真实的解析与模型能力
 
-## 当前仓库状态
+## 当前代码状态
 
-- 已完成文档拆分：
-  - `docs/阶段一.md`
-  - `docs/阶段二.md`
-- 已补充 AI / 协作规范：
-  - `AGENTS.md`
-  - `docs/prompt-spec.md`
-  - `docs/scripts-plan.md`
-- 已搭好前后端骨架：
-  - `frontend/`：Vue 3 + Vite
-  - `backend/`：Express + TypeScript
-- 已改为 npm workspaces：
-  - 根目录执行一次 `npm install` 即可安装全部依赖
+- 前端已经有工作台页面：
+  - 代码输入区
+  - 流程图展示区
+  - 节点映射列表
+  - 状态区与操作按钮
+- 前端已经接入：
+  - Monaco Editor
+  - Mermaid 渲染
+  - 点击节点联动到代码行高亮
+  - `fetch` 读取 SSE
+  - `axios` 调用普通接口
+- 后端已经接入：
+  - `GET /api/health`
+  - `POST /api/generate-flow`
+  - Zod 请求校验
+  - SSE 返回 `mermaid / mappings / done / error`
+- 当前 Agent 仍然是 mock 结果，不是真实 LangChain / LangGraph 推理
 
-## 阶段一必须完成的能力
+## 当前技术栈
 
-- 代码输入
-- Agent 生成 Mermaid 流程图
-- 节点到代码行映射
-- 点击节点高亮代码
-- SSE 流式返回
-- Mermaid 结果校验与重试
-
-## 阶段二增强能力
-
-- 对话式追问
-- 多轮会话上下文
-- 更强的 Vue 响应式逻辑识别
-- 更完整的解释性输出
-
-## 技术栈
-
-### 前端
-
-- Vue 3
-- TypeScript
-- Vite
-- Monaco Editor
-- Mermaid.js
-- TailwindCSS
-
-### 后端
-
-- Node.js
-- Express
-- TypeScript
-- LangGraph
-- LangChain OpenAI
-- Zod
+- 前端：Vue 3、TypeScript、Vite、Monaco Editor、Mermaid、Axios
+- 后端：Node.js、Express、TypeScript、Zod
+- 预留能力：LangChain、LangGraph
 
 ## 当前约束
 
-- 只使用 Vue / 通用前端示例，不使用 React 示例
-- Prompt 输出必须是严格 JSON
+- 只使用 Vue / 通用前端示例，不引入 React 专项示例
+- Prompt 输出必须保持严格 JSON 协议
 - Mermaid 输出必须可渲染
-- 所有节点都要能映射回代码行
-- 阶段一不要提前塞入阶段二复杂能力
+- 节点必须能映射回代码行
+- 阶段一优先做闭环，不提前塞入阶段二复杂对话能力
 
-## 新会话建议入口
+## 重要提醒
 
-新的协作会话建议优先读取：
+- 这个仓库之前做过一轮更激进的实验性改动，后续又回退到了当前 commit
+- 新会话不要默认假设“更真实解析器”“LangChain 接入”“性能重构”等实验性修改仍然存在
+- 以当前文件内容为准，不以历史对话记忆为准
+
+## 新会话建议阅读顺序
 
 1. `docs/context.md`
-2. `AGENTS.md`
-3. `docs/阶段一.md`
-4. `docs/prompt-spec.md`
+2. `docs/session-handoff.md`
+3. `AGENTS.md`
+4. `docs/current-status.md`
+5. `docs/architecture.md`
+6. `docs/阶段一.md`
+7. `docs/prompt-spec.md`
