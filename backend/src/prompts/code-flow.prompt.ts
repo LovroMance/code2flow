@@ -1,4 +1,4 @@
-export function generatePrompt(code: string) {
+export function buildCodeFlowPrompt(code: string) {
   return `
 你是一个前端代码分析专家。请分析输入的 JavaScript、TypeScript 或 Vue 代码，提取关键控制流，并输出 Mermaid 流程图与节点到代码行的映射。
 

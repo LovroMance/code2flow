@@ -16,6 +16,3 @@ export const GenerationRequestSchema = z.object({
   code: z.string().min(1),
   thread_id: z.string().optional()
 })
-
-export type NodeMapping = z.infer<typeof NodeMappingSchema>
-export type GenerationResult = z.infer<typeof GenerationResultSchema>

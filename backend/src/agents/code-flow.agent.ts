@@ -1,13 +1,13 @@
-import { generatePrompt } from './prompts'
-import { GenerationResult } from './types'
-import { validateMermaid } from './utils/mermaidValidator'
+import type { FlowGenerationResult } from '../domain/flow/types'
+import { buildCodeFlowPrompt } from '../prompts/code-flow.prompt'
+import { validateMermaid } from '../utils/mermaidValidator'
 
-export function createAgent() {
+export function createCodeFlowAgent() {
   return {
-    async generate(code: string): Promise<GenerationResult> {
-      const prompt = generatePrompt(code)
+    async generate(code: string): Promise<FlowGenerationResult> {
+      const prompt = buildCodeFlowPrompt(code)
 
-      const result: GenerationResult = {
+      const result: FlowGenerationResult = {
         mermaid:
           'flowchart TD\nA[开始] --> B[读取代码]\nB --> C{分析结构}\nC --> D[输出流程图]\nD --> E[返回映射]',
         mappings: [

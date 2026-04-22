@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@guolao/vue-monaco-editor": "^1.5.5",
+    "axios": "^1.11.0",
     "mermaid": "^11.11.0",
     "monaco-editor": "^0.52.2",
     "vue": "^3.5.16"
