@@ -1,0 +1,164 @@
+:root {
+  font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  color: #12212c;
+  background:
+    radial-gradient(circle at top left, rgba(255, 231, 204, 0.95), transparent 28%),
+    radial-gradient(circle at right, rgba(181, 226, 210, 0.85), transparent 32%),
+    linear-gradient(160deg, #f7f4ed 0%, #edf5f2 100%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+button,
+textarea {
+  font: inherit;
+}
+
+#app {
+  min-height: 100vh;
+}
+
+.app-shell {
+  padding: 32px;
+}
+
+.hero {
+  max-width: 920px;
+  margin: 0 auto 24px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #476072;
+}
+
+.hero h1 {
+  margin: 0;
+  font-size: clamp(32px, 5vw, 54px);
+  line-height: 1.05;
+}
+
+.hero-copy {
+  max-width: 720px;
+  margin: 14px 0 0;
+  color: #37505c;
+  font-size: 16px;
+  line-height: 1.7;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+.panel {
+  min-height: 560px;
+  padding: 20px;
+  border: 1px solid rgba(18, 33, 44, 0.08);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 16px 36px rgba(56, 79, 92, 0.08);
+  backdrop-filter: blur(14px);
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.panel-header h2,
+.mapping-list h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.badge {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #d9efe6;
+  color: #1d5b4f;
+  font-size: 12px;
+}
+
+.editor-shell,
+.diagram-shell {
+  height: calc(100% - 48px);
+}
+
+.editor-textarea,
+.diagram-code {
+  width: 100%;
+  min-height: 420px;
+  padding: 18px;
+  border: 1px solid rgba(18, 33, 44, 0.1);
+  border-radius: 18px;
+  background: #13232e;
+  color: #edf6f3;
+  line-height: 1.6;
+}
+
+.editor-textarea {
+  resize: vertical;
+}
+
+.diagram-code {
+  margin: 0 0 18px;
+  white-space: pre-wrap;
+}
+
+.mapping-list ul {
+  display: grid;
+  gap: 10px;
+  padding: 0;
+  margin: 12px 0 0;
+  list-style: none;
+}
+
+.mapping-list li {
+  display: grid;
+  gap: 4px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(18, 33, 44, 0.05);
+}
+
+.mapping-list strong {
+  font-size: 13px;
+  color: #1e4f63;
+}
+
+.mapping-list span,
+.mapping-list em {
+  font-style: normal;
+  color: #314651;
+}
+
+@media (max-width: 960px) {
+  .app-shell {
+    padding: 20px;
+  }
+
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .panel {
+    min-height: auto;
+  }
+}

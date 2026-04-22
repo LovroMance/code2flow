@@ -1,0 +1,28 @@
+node_modules/
+dist/
+.DS_Store
+.vite/
+coverage/
+*.log
+.eslintcache
+.idea/
+.turbo/
+.cache/
+.vscode/
+
+# Environment files
+.env
+.env.*
+frontend/.env
+frontend/.env.*
+backend/.env
+backend/.env.*
+!.env.example
+!frontend/.env.example
+!backend/.env.example
+
+# Local secrets and machine-only config
+*.pem
+*.key
+*.crt
+secrets/
