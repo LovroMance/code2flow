@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onBeforeUnmount, ref } from 'vue'
 import { useMermaidRenderer } from '../model/useMermaidRenderer'
 
 const props = defineProps<{
@@ -18,6 +18,14 @@ const { diagramElement, renderError } = useMermaidRenderer(
 )
 
 const scale = ref(1)
+const viewportElement = ref<HTMLElement | null>(null)
+const isDragging = ref(false)
+const offsetX = ref(0)
+const offsetY = ref(0)
+let dragStartX = 0
+let dragStartY = 0
+let startOffsetX = 0
+let startOffsetY = 0
 
 function zoomIn() {
   scale.value = Math.min(2.5, Number((scale.value + 0.1).toFixed(2)))
@@ -29,6 +37,8 @@ function zoomOut() {
 
 function resetView() {
   scale.value = 1
+  offsetX.value = 0
+  offsetY.value = 0
 }
 
 function handleWheel(event: WheelEvent) {
@@ -41,6 +51,54 @@ function handleWheel(event: WheelEvent) {
 
   zoomOut()
 }
+
+function handlePointerDown(event: PointerEvent) {
+  if (!viewportElement.value || event.button !== 0) {
+    return
+  }
+
+  const target = event.target as HTMLElement | null
+
+  if (target?.closest('button')) {
+    return
+  }
+
+  isDragging.value = true
+  dragStartX = event.clientX
+  dragStartY = event.clientY
+  startOffsetX = offsetX.value
+  startOffsetY = offsetY.value
+
+  viewportElement.value.setPointerCapture(event.pointerId)
+}
+
+function handlePointerMove(event: PointerEvent) {
+  if (!viewportElement.value || !isDragging.value) {
+    return
+  }
+
+  const deltaX = event.clientX - dragStartX
+  const deltaY = event.clientY - dragStartY
+
+  offsetX.value = startOffsetX + deltaX
+  offsetY.value = startOffsetY + deltaY
+}
+
+function stopDragging(event?: PointerEvent) {
+  if (!isDragging.value) {
+    return
+  }
+
+  isDragging.value = false
+
+  if (viewportElement.value && event) {
+    viewportElement.value.releasePointerCapture(event.pointerId)
+  }
+}
+
+onBeforeUnmount(() => {
+  isDragging.value = false
+})
 </script>
 
 <template>
@@ -60,8 +118,21 @@ function handleWheel(event: WheelEvent) {
           </button>
         </div>
         <div class="diagram-stage-grid" />
-        <div class="diagram-viewport" @wheel="handleWheel">
-          <div class="diagram-render" :style="{ transform: `scale(${scale})` }">
+        <div
+          ref="viewportElement"
+          class="diagram-viewport"
+          :class="{ 'diagram-viewport-dragging': isDragging }"
+          @wheel="handleWheel"
+          @pointerdown="handlePointerDown"
+          @pointermove="handlePointerMove"
+          @pointerup="stopDragging"
+          @pointercancel="stopDragging"
+          @pointerleave="stopDragging"
+        >
+          <div
+            class="diagram-render"
+            :style="{ transform: `translate(${offsetX}px, ${offsetY}px) scale(${scale})` }"
+          >
             <div ref="diagramElement" class="diagram-render-content"></div>
           </div>
         </div>
