@@ -57,9 +57,14 @@ function handlePointerDown(event: PointerEvent) {
     return
   }
 
-  const target = event.target as HTMLElement | null
+  const target = event.target instanceof Element ? event.target : null
 
   if (target?.closest('button')) {
+    return
+  }
+
+  // 点击 Mermaid 节点时保留原生节点点击行为，不进入画布拖动。
+  if (target?.closest('.node, g.node, .label, .edgeLabel, .cluster')) {
     return
   }
 

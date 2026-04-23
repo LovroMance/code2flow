@@ -39,6 +39,8 @@ export const CODE_FLOW_PROMPT_RULES = `
 10. kind 只能使用 start、action、decision、return、end 这 5 个枚举值
 11. mermaid 字段不能为空，必须是完整可渲染的 Mermaid flowchart TD 字符串
 12. mappings 数组中的每个节点都必须在 mermaid 中真实出现
+13. mappings 的 lineStart 和 lineEnd 必须落在实际执行代码行，不能落在注释行、空行或只包含大括号的行
+14. 如果节点前面有说明性注释，description 可以参考注释语义，但映射必须指向注释后的第一条真实代码语句
 `.trim()
 
 export function buildCodeFlowPrompt(code: string) {

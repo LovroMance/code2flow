@@ -4,6 +4,7 @@ import { streamCodeFlowWithLangChain } from '../ai/chains/code-flow.chain'
 import { generateCodeFlowWithGraph } from '../ai/graph/code-flow.graph'
 import { buildCodeFlowPrompt } from '../prompts/code-flow.prompt'
 import { validateMermaid } from '../utils/mermaidValidator'
+import { normalizeFlowResultAgainstCode } from '../utils/mappingNormalizer'
 
 export function createCodeFlowAgent() {
   return {
@@ -72,7 +73,7 @@ export function createCodeFlowAgent() {
       }
 
       void prompt
-      return result
+      return normalizeFlowResultAgainstCode(code, result)
     },
 
     async stream(

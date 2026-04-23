@@ -5,6 +5,7 @@ import { extractPartialMermaid, parseCodeFlowTextResult } from '../parsers/code-
 import { buildCodeFlowSystemPrompt } from '../prompts/code-flow.system.prompt'
 import { buildCodeFlowUserPrompt } from '../prompts/code-flow.user.prompt'
 import { validateMermaid } from '../../utils/mermaidValidator'
+import { normalizeFlowResultAgainstCode } from '../../utils/mappingNormalizer'
 
 export async function generateCodeFlowWithLangChain(code: string): Promise<FlowGenerationResult> {
   // 先准备模型实例和本次调用需要的提示词。
@@ -27,7 +28,7 @@ export async function generateCodeFlowWithLangChain(code: string): Promise<FlowG
   // console.log(rawText)
 
   // 把模型文本解析成项目内部统一的结构化结果。
-  return parseCodeFlowTextResult(rawText)
+  return normalizeFlowResultAgainstCode(code, parseCodeFlowTextResult(rawText))
 }
 
 export async function streamCodeFlowWithLangChain(
@@ -78,7 +79,7 @@ export async function streamCodeFlowWithLangChain(
   console.log('[code-flow][langchain][raw-output]')
   console.log(rawText)
 
-  return parseCodeFlowTextResult(rawText)
+  return normalizeFlowResultAgainstCode(code, parseCodeFlowTextResult(rawText))
 }
 
 function extractText(
