@@ -1,4 +1,4 @@
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { NodeMapping } from '../../../entities/flow/model/types'
 import { ensureMermaid } from '../../../shared/lib/mermaid/setup'
 import { buildInteractiveMermaid } from './buildInteractiveMermaid'
@@ -43,6 +43,25 @@ export function useMermaidRenderer(
       }
 
       diagramElement.value.innerHTML = svg
+      const svgElement = diagramElement.value.querySelector('svg')
+
+      if (svgElement instanceof SVGSVGElement) {
+        const viewBoxWidth = svgElement.viewBox.baseVal.width
+        const viewBoxHeight = svgElement.viewBox.baseVal.height
+
+        svgElement.removeAttribute('width')
+
+        if (viewBoxWidth > 0) {
+          svgElement.style.width = `${viewBoxWidth}px`
+        }
+
+        if (viewBoxHeight > 0) {
+          svgElement.style.height = `${viewBoxHeight}px`
+        } else {
+          svgElement.style.height = 'auto'
+        }
+      }
+
       bindFunctions?.(diagramElement.value)
     } catch (error) {
       renderError.value = error instanceof Error ? error.message : 'Mermaid 渲染失败'
@@ -56,10 +75,14 @@ export function useMermaidRenderer(
   watch(
     [mermaidSource, mappings],
     () => {
-      void renderDiagram()
+      void nextTick(() => renderDiagram())
     },
-    { immediate: true }
+    { immediate: true, flush: 'post' }
   )
+
+  onMounted(() => {
+    void nextTick(() => renderDiagram())
+  })
 
   onBeforeUnmount(() => {
     if (window.code2flowNodeClick === onSelectNode) {

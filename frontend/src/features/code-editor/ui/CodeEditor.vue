@@ -30,6 +30,12 @@ const editorOptions: editor.IStandaloneEditorConstructionOptions = {
 
 function handleMount(instance: editor.IStandaloneCodeEditor) {
   monacoEditorRef.value = instance
+
+  const input = instance.getDomNode()?.querySelector('textarea.inputarea')
+  if (input instanceof HTMLTextAreaElement) {
+    input.id = 'code2flow-editor-input'
+    input.name = 'code2flow-editor-input'
+  }
 }
 
 function updateValue(value: string | undefined) {

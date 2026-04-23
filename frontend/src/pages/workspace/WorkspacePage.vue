@@ -19,14 +19,10 @@ const {
   status,
   statusText,
   clearWorkspace,
-  findMappingByNodeId,
-  selectedNodeId,
-  selectNode
+  findMappingByNodeId
 } = useWorkspacePage()
 
 function handleSelectNode(nodeId: string) {
-  selectNode(nodeId)
-
   const mapping = findMappingByNodeId(nodeId)
   if (!mapping) {
     return
@@ -107,12 +103,7 @@ function handleSelectNode(nodeId: string) {
               {{ statusText }}
             </span>
           </div>
-          <FlowDiagram
-            :mermaid="mermaid"
-            :mappings="mappings"
-            :selected-node-id="selectedNodeId"
-            @select-node="handleSelectNode"
-          />
+          <FlowDiagram :mermaid="mermaid" :mappings="mappings" @select-node="handleSelectNode" />
         </section>
       </section>
     </main>

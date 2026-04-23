@@ -14,8 +14,12 @@ export async function generateCodeFlowWithLangChain(code: string): Promise<FlowG
     new SystemMessage(systemPrompt),
     new HumanMessage(userPrompt)
   ])
+
   const rawText =
     typeof response.content === 'string' ? response.content : extractText(response.content)
+
+  console.log('[code-flow][langchain][raw-output]')
+  console.log(rawText)
 
   return parseCodeFlowTextResult(rawText)
 }

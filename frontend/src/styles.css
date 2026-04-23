@@ -175,9 +175,13 @@ textarea {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(420px, 0.85fr);
   gap: 20px;
+  align-items: stretch;
 }
 
 .panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   padding: 20px;
   border: 1px solid var(--border-soft);
   border-radius: 24px;
@@ -186,11 +190,15 @@ textarea {
 }
 
 .editor-panel {
-  min-height: 760px;
+  height: clamp(560px, calc(100vh - 250px), 760px);
 }
 
 .analysis-panel {
   min-width: 0;
+}
+
+.diagram-panel {
+  height: clamp(560px, calc(100vh - 250px), 760px);
 }
 
 .panel-header {
@@ -209,9 +217,7 @@ textarea {
   color: var(--text-soft);
 }
 
-.panel-header h2,
-.mapping-list h3,
-.mapping-header h3 {
+.panel-header h2 {
   margin: 0;
   font-size: 18px;
   color: var(--text-strong);
@@ -233,15 +239,18 @@ textarea {
 }
 
 .editor-shell {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
   gap: 14px;
-  height: calc(100% - 58px);
+  min-height: 0;
+  height: 100%;
 }
 
 .editor-instance {
+  flex: 1;
   min-height: 0;
-  height: 100%;
+  height: 0;
   overflow: hidden;
   border: 1px solid rgba(91, 141, 168, 0.18);
   border-radius: 18px;
@@ -270,20 +279,23 @@ textarea {
 }
 
 .diagram-shell {
-  display: grid;
-  grid-template-rows: minmax(0, 1.1fr) auto;
-  gap: 18px;
-  height: calc(100% - 58px);
-  min-height: 720px;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
 }
 
 .diagram-preview {
+  flex: 1;
   min-height: 0;
+  overflow: hidden;
 }
 
 .diagram-stage {
   position: relative;
-  min-height: 370px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   height: 100%;
   overflow: hidden;
   border: 1px solid rgba(91, 141, 168, 0.18);
@@ -291,9 +303,46 @@ textarea {
   background: #0a141d;
 }
 
+.diagram-toolbar {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 14px 14px 0;
+}
+
+.diagram-tool-button {
+  min-width: 36px;
+  height: 36px;
+  border: 1px solid rgba(91, 141, 168, 0.2);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-main);
+  cursor: pointer;
+}
+
+.diagram-tool-button:hover {
+  border-color: rgba(84, 194, 240, 0.4);
+  background: rgba(84, 194, 240, 0.08);
+}
+
+.diagram-tool-button-wide {
+  min-width: 84px;
+  padding: 0 10px;
+}
+
+.diagram-zoom-label {
+  min-width: 52px;
+  text-align: center;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
 .diagram-stage-grid {
   position: absolute;
-  inset: 0;
+  inset: 0 0 0 0;
   background-image:
     linear-gradient(rgba(96, 126, 146, 0.08) 1px, transparent 1px),
     linear-gradient(90deg, rgba(96, 126, 146, 0.08) 1px, transparent 1px);
@@ -323,21 +372,42 @@ textarea {
 .diagram-render {
   position: relative;
   z-index: 1;
-  display: grid;
-  place-items: center;
-  min-height: 100%;
-  padding: 20px;
+  display: inline-block;
+  margin: 0 auto;
+  transform-origin: top left;
+  will-change: transform;
+}
+
+.diagram-viewport {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  flex: 1;
+  min-height: 0;
   overflow: auto;
+  padding: 20px 24px 24px;
 }
 
-.diagram-render svg {
-  width: 100%;
+.diagram-render-content {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  min-height: 100%;
+}
+
+.diagram-render-content svg {
+  width: auto;
+  max-width: none;
   height: auto;
+  display: block;
+  margin: 0 auto;
 }
 
-.diagram-render [id*='flowchart-'],
-.diagram-render .node,
-.diagram-render g.node {
+.diagram-render-content [id*='flowchart-'],
+.diagram-render-content .node,
+.diagram-render-content g.node {
   cursor: pointer;
 }
 
@@ -352,78 +422,15 @@ textarea {
   color: #ffb7b7;
 }
 
-.mapping-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.mapping-header span {
-  color: var(--text-soft);
-  font-size: 13px;
-}
-
-.mapping-list ul {
-  display: grid;
-  gap: 10px;
-  padding: 0;
-  margin: 12px 0 0;
-  list-style: none;
-}
-
-.mapping-list li {
-  display: grid;
-  gap: 4px;
-  padding: 14px 16px;
-  border-radius: 16px;
-  border: 1px solid rgba(91, 141, 168, 0.14);
-  background: rgba(15, 31, 44, 0.76);
-  cursor: pointer;
-  transition:
-    border-color 0.2s ease,
-    transform 0.2s ease,
-    background 0.2s ease;
-}
-
-.mapping-list li:hover {
-  transform: translateY(-1px);
-  border-color: rgba(84, 194, 240, 0.28);
-}
-
-.mapping-item-active {
-  border-color: rgba(84, 194, 240, 0.42) !important;
-  background: rgba(17, 44, 62, 0.95) !important;
-}
-
-.mapping-list strong {
-  font-size: 13px;
-  color: #81d4f5;
-}
-
-.mapping-list span,
-.mapping-list em {
-  font-style: normal;
-  color: var(--text-soft);
-}
-
-.mapping-empty {
-  margin-top: 12px;
-  padding: 18px;
-  border: 1px dashed rgba(91, 141, 168, 0.24);
-  border-radius: 16px;
-  color: var(--text-soft);
-  line-height: 1.6;
-}
-
 @media (max-width: 1100px) {
   .status-strip,
   .workspace-shell {
     grid-template-columns: 1fr;
   }
 
-  .diagram-shell {
-    min-height: auto;
+  .editor-panel,
+  .diagram-panel {
+    height: 720px;
   }
 }
 
@@ -450,6 +457,10 @@ textarea {
   }
 
   .editor-panel {
-    min-height: auto;
+    height: 640px;
+  }
+
+  .diagram-panel {
+    height: 640px;
   }
 }

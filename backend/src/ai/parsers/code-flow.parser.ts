@@ -1,7 +1,18 @@
+import { ZodError } from 'zod'
 import { GenerationResultSchema } from '../../domain/flow/schema'
 
 export function parseCodeFlowResult(payload: unknown) {
-  const result = GenerationResultSchema.parse(payload)
+  let result
+
+  try {
+    result = GenerationResultSchema.parse(payload)
+  } catch (error) {
+    if (error instanceof ZodError) {
+      throw new Error(`Model output does not match schema: ${JSON.stringify(error.issues)}`)
+    }
+
+    throw error
+  }
 
   validateNodeMappings(result.mermaid, result.mappings)
   return result
@@ -20,7 +31,14 @@ export function parseCodeFlowTextResult(rawText: string) {
     )
   }
 
-  return parseCodeFlowResult(parsed)
+  try {
+    return parseCodeFlowResult(parsed)
+  } catch (error) {
+    const preview = cleaned.slice(0, 600)
+    const message = error instanceof Error ? error.message : 'Unknown parser error'
+
+    throw new Error(`${message}. Raw output preview: ${preview}`)
+  }
 }
 
 function cleanJsonText(rawText: string) {

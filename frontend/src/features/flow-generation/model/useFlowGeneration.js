@@ -1,0 +1,52 @@
+import { computed, ref } from 'vue'
+import { streamGenerateFlow } from '../../../shared/api/flow-stream.api'
+const EMPTY_MERMAID = 'flowchart TD\nA[等待输入代码] --> B[点击生成流程图]\nB --> C[展示结果]'
+const LOADING_MERMAID = 'flowchart TD\nA[请求已发送] --> B[等待 Agent 返回结果]'
+export function useFlowGeneration() {
+  const status = ref('idle')
+  const mermaid = ref(EMPTY_MERMAID)
+  const mappings = ref([])
+  const errorMessage = ref('')
+  const isLoading = computed(() => status.value === 'streaming')
+  function resetOutput() {
+    status.value = 'idle'
+    mermaid.value = EMPTY_MERMAID
+    mappings.value = []
+    errorMessage.value = ''
+  }
+  async function generateFlow(code) {
+    status.value = 'streaming'
+    mermaid.value = LOADING_MERMAID
+    mappings.value = []
+    errorMessage.value = ''
+    await streamGenerateFlow(code, handleStreamEvent)
+    if (status.value === 'streaming') {
+      status.value = 'done'
+    }
+  }
+  function handleStreamEvent(event) {
+    if (event.type === 'mermaid' && typeof event.content === 'string') {
+      mermaid.value = event.content
+    }
+    if (event.type === 'mappings' && Array.isArray(event.content)) {
+      mappings.value = event.content
+    }
+    if (event.type === 'error' && typeof event.content === 'string') {
+      status.value = 'error'
+      errorMessage.value = event.content
+      throw new Error(event.content)
+    }
+    if (event.type === 'done') {
+      status.value = 'done'
+    }
+  }
+  return {
+    errorMessage,
+    generateFlow,
+    isLoading,
+    mappings,
+    mermaid,
+    resetOutput,
+    status
+  }
+}
