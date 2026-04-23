@@ -1,6 +1,8 @@
 import type { FlowStreamEvent } from '../../entities/flow/model/types'
 
 export async function streamGenerateFlow(code: string, onEvent: (event: FlowStreamEvent) => void) {
+  console.log(`[code-flow][frontend][stream] request-start codeLength=${code.length}`)
+
   const response = await fetch('/api/generate-flow', {
     method: 'POST',
     headers: {
@@ -12,6 +14,8 @@ export async function streamGenerateFlow(code: string, onEvent: (event: FlowStre
   if (!response.ok || !response.body) {
     throw new Error('请求失败，无法读取后端返回。')
   }
+
+  console.log('[code-flow][frontend][stream] response-opened')
 
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
@@ -35,7 +39,11 @@ export async function streamGenerateFlow(code: string, onEvent: (event: FlowStre
         continue
       }
 
-      onEvent(JSON.parse(dataLine.slice(6)) as FlowStreamEvent)
+      const event = JSON.parse(dataLine.slice(6)) as FlowStreamEvent
+      console.log(`[code-flow][frontend][stream] event=${event.type}`)
+      onEvent(event)
     }
   }
+
+  console.log('[code-flow][frontend][stream] response-complete')
 }

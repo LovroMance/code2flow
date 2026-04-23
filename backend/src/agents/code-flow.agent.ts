@@ -1,5 +1,6 @@
 import type { FlowGenerationResult } from '../domain/flow/types'
 import { generateCodeFlowWithLangChain } from '../ai/chains/code-flow.chain'
+import { streamCodeFlowWithLangChain } from '../ai/chains/code-flow.chain'
 import { generateCodeFlowWithGraph } from '../ai/graph/code-flow.graph'
 import { buildCodeFlowPrompt } from '../prompts/code-flow.prompt'
 import { validateMermaid } from '../utils/mermaidValidator'
@@ -71,6 +72,21 @@ export function createCodeFlowAgent() {
       }
 
       void prompt
+      return result
+    },
+
+    async stream(
+      code: string,
+      onPartialMermaid: (mermaid: string) => void
+    ): Promise<FlowGenerationResult> {
+      const provider = process.env.CODE2FLOW_AGENT_PROVIDER ?? 'mock'
+
+      if (provider === 'langchain') {
+        return streamCodeFlowWithLangChain(code, onPartialMermaid)
+      }
+
+      const result = await this.generate(code)
+      onPartialMermaid(result.mermaid)
       return result
     }
   }

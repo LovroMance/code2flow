@@ -21,6 +21,10 @@ backend/.env.*
 !frontend/.env.example
 !backend/.env.example
 
+# Frontend source should keep authoring files only; block generated JS mirrors in src/
+frontend/src/**/*.js
+frontend/src/**/*.vue.js
+
 # Local secrets and machine-only config
 *.pem
 *.key

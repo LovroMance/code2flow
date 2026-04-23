@@ -18,11 +18,14 @@ export function useMermaidRenderer(
 ) {
   const diagramElement = ref<HTMLElement | null>(null)
   const renderError = ref('')
+  let latestRequestId = 0
 
   async function renderDiagram() {
     if (!diagramElement.value) {
       return
     }
+
+    const requestId = ++latestRequestId
 
     const mermaid = ensureMermaid()
     const baseSource = mermaidSource()
@@ -38,7 +41,7 @@ export function useMermaidRenderer(
         buildInteractiveMermaid(baseSource, currentMappings)
       )
 
-      if (!diagramElement.value) {
+      if (!diagramElement.value || requestId !== latestRequestId) {
         return
       }
 
@@ -63,12 +66,18 @@ export function useMermaidRenderer(
       }
 
       bindFunctions?.(diagramElement.value)
+      console.log(
+        `[code-flow][frontend][render] success id=${id} sourceLength=${baseSource.length} mappings=${currentMappings.length}`
+      )
     } catch (error) {
-      renderError.value = error instanceof Error ? error.message : 'Mermaid 渲染失败'
-
-      if (diagramElement.value) {
-        diagramElement.value.innerHTML = ''
+      if (requestId !== latestRequestId) {
+        return
       }
+
+      renderError.value = error instanceof Error ? error.message : 'Mermaid 渲染失败'
+      console.log(
+        `[code-flow][frontend][render] failed sourceLength=${baseSource.length} mappings=${currentMappings.length} message=${renderError.value}`
+      )
     }
   }
 
