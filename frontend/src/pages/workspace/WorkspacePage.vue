@@ -56,36 +56,46 @@ function handleSelectNode(nodeId: string) {
 <template>
   <div class="app-shell">
     <section class="workspace-stage">
-      <header class="topbar">
-        <div class="topbar-identity">
-          <p class="eyebrow">Code2Flow</p>
-          <div class="topbar-title-row">
-            <h1>代码流程分析台</h1>
-            <div class="topbar-status-line">
-              <span class="micro-pill">阶段 {{ 'Stage 1' }}</span>
-              <span class="micro-pill" :class="{ 'micro-pill-active': status !== 'idle' }">
-                Agent {{ statusText }}
-              </span>
-              <span class="micro-pill" :class="{ 'micro-pill-active': healthStatus === 'online' }">
-                Backend {{ healthStatus }}
-              </span>
-            </div>
+      <p v-if="errorMessage" class="error-banner">
+        {{ errorMessage }}
+      </p>
+
+      <section class="hero-panel">
+        <input
+          ref="fileInputRef"
+          class="sr-only-input"
+          type="file"
+          accept=".js,.ts,.vue,.jsx,.tsx,.java,.c,.cpp,.h,.hpp,.py,.go,.rs,.cs,.php,text/plain"
+          @change="handleFileChange"
+        />
+        <div class="hero-copy">
+          <p class="hero-kicker">Analysis Command Deck</p>
+          <h1>CODE2FLOW</h1>
+          <div class="topbar-status-line hero-status-line">
+            <span class="micro-pill">Stage {{ '01' }}</span>
+            <span class="micro-pill" :class="{ 'micro-pill-active': status !== 'idle' }">
+              Agent {{ statusText }}
+            </span>
+            <span class="micro-pill" :class="{ 'micro-pill-active': healthStatus === 'online' }">
+              Backend {{ healthStatus }}
+            </span>
           </div>
+          <p class="hero-body">
+            Upload source, inspect the detected language, and let Code2Flow turn control paths into
+            a renderable diagram without leaving the workspace.
+          </p>
         </div>
 
-        <div class="topbar-actions">
-          <input
-            ref="fileInputRef"
-            class="sr-only-input"
-            type="file"
-            accept=".js,.ts,.vue,.jsx,.tsx,.java,.c,.cpp,.h,.hpp,.py,.go,.rs,.cs,.php,text/plain"
-            @change="handleFileChange"
-          />
-          <button class="ghost-button" type="button" @click="openFilePicker">上传代码文件</button>
-          <button class="ghost-button" type="button" @click="loadSample">导入示例</button>
-          <button class="ghost-button" type="button" @click="clearWorkspace">清空画布</button>
+        <div class="hero-cta-row">
+          <div class="hero-action-group">
+            <button class="primary-chip-button" type="button" @click="openFilePicker">
+              {{ uploadFileName ? 'Replace Source File' : 'Upload Source File' }}
+            </button>
+            <button class="ghost-button" type="button" @click="loadSample">导入示例</button>
+            <button class="ghost-button" type="button" @click="clearWorkspace">清空画布</button>
+          </div>
           <button
-            class="primary-button"
+            class="hero-run-button"
             type="button"
             :disabled="isLoading || !code.trim()"
             @click="handleGenerate"
@@ -93,15 +103,37 @@ function handleSelectNode(nodeId: string) {
             {{ isLoading ? '生成中...' : '生成流程图' }}
           </button>
         </div>
-      </header>
 
-      <p v-if="errorMessage" class="error-banner">
-        {{ errorMessage }}
-      </p>
+        <div class="hero-metrics">
+          <article class="metric-card hover-card">
+            <span class="metric-label">Source</span>
+            <strong class="metric-title">
+              {{ uploadFileName ? uploadFileName : 'Direct Input Mode' }}
+            </strong>
+            <span class="metric-value" :class="{ 'metric-value-active': !!uploadFileName }">
+              {{ uploadFileName ? 'File imported' : 'Paste or upload code' }}
+            </span>
+          </article>
+
+          <article class="metric-card hover-card">
+            <span class="metric-label">Language Sync</span>
+            <strong class="metric-title">{{ detectedLanguage }}</strong>
+            <span class="metric-value metric-value-active">Auto synced with Monaco</span>
+          </article>
+
+          <article class="metric-card hover-card">
+            <span class="metric-label">Run State</span>
+            <strong class="metric-title">SSE + LangChain</strong>
+            <span class="metric-value" :class="{ 'metric-value-active': status !== 'idle' }">
+              {{ status !== 'idle' ? 'Streaming active' : 'Ready to generate' }}
+            </span>
+          </article>
+        </div>
+      </section>
 
       <main class="workspace-shell">
-        <section class="editor-panel panel">
-          <div class="panel-header">
+        <section class="editor-panel panel workspace-shell-card">
+          <div class="panel-header panel-header-compact">
             <div>
               <p class="panel-kicker">Input</p>
               <h2>代码输入区</h2>
@@ -109,7 +141,7 @@ function handleSelectNode(nodeId: string) {
             <span class="badge badge-active">
               {{
                 uploadFileName
-                  ? `已导入 ${uploadFileName} · ${detectedLanguage}`
+                  ? `Imported · ${detectedLanguage}`
                   : `Monaco Ready · ${detectedLanguage}`
               }}
             </span>
@@ -123,15 +155,19 @@ function handleSelectNode(nodeId: string) {
         </section>
 
         <section class="analysis-panel">
-          <section class="panel diagram-panel">
-            <div class="panel-header">
+          <section class="panel diagram-panel workspace-shell-card">
+            <div class="panel-header panel-header-compact">
               <div>
-                <p class="panel-kicker">Diagram</p>
+                <p class="panel-kicker">Output Device</p>
                 <h2>流程图输出区</h2>
               </div>
               <span class="badge" :class="{ 'badge-active': status !== 'idle' }">
                 {{ statusText }}
               </span>
+            </div>
+            <div class="diagram-device-copy">
+              <span class="diagram-device-label">Live Render</span>
+              <p>Mermaid stream, node mapping, and editor linkage stay intact inside the device.</p>
             </div>
             <FlowDiagram :mermaid="mermaid" :mappings="mappings" @select-node="handleSelectNode" />
           </section>

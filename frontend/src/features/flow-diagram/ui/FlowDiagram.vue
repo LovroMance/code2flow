@@ -109,7 +109,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="diagram-shell">
     <div class="diagram-preview">
-      <div class="diagram-stage">
+      <div class="diagram-stage device-frame">
         <div class="diagram-toolbar">
           <button type="button" class="diagram-tool-button" @click="zoomOut">-</button>
           <span class="diagram-zoom-label">{{ Math.round(scale * 100) }}%</span>

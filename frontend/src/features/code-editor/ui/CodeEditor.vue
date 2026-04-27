@@ -163,8 +163,8 @@ defineExpose<CodeEditorExpose>({
           </option>
         </select>
       </label>
-      <span class="editor-chip">50 - 500 行</span>
-      <span class="editor-chip">结构化输出</span>
+      <span class="editor-chip">Source Lines 50 - 500</span>
+      <span class="editor-chip">Structured Output</span>
     </div>
     <div class="editor-instance">
       <MonacoEditor
@@ -184,8 +184,10 @@ defineExpose<CodeEditorExpose>({
       </MonacoEditor>
     </div>
     <div class="editor-footer">
-      <span>Monaco 已接入，支持后续行号联动与高亮装饰。</span>
-      <span>当前语言会跟随识别结果自动切换，也可以手动调整。</span>
+      <span
+        >Monaco editor stays live for direct edits, upload import, and line-focus feedback.</span
+      >
+      <span>Language mode follows detection and can still be overridden manually.</span>
     </div>
   </div>
 </template>
