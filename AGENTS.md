@@ -27,8 +27,8 @@
 
 - Product milestone planning: `docs/阶段一.md`, `docs/阶段二.md`
 - Prompt and output contract: `docs/prompt-spec.md`
-- Dev workflow and script conventions: `docs/scripts-plan.md`
-- Current repo state and handoff: `docs/current-status.md`, `docs/session-handoff.md`
+- Current architecture and implementation shape: `docs/architecture.md`
+- Current dev workflow and runnable scripts: root `package.json`, `frontend/package.json`, `backend/package.json`
 
 ## Non-Negotiable Rules
 
@@ -84,8 +84,8 @@
   - `POST /api/generate-flow`
   - Zod request validation
   - SSE response writing
-  - mock code-flow agent
-- Current agent is still mock-based; do not assume LangChain is wired yet
+  - LangChain / LangGraph code-flow generation path
+- Current agent is no longer mock-based; assume `langchain` or `graph` provider is used
 
 ## Working Style
 

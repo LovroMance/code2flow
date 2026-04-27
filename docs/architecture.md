@@ -49,7 +49,7 @@ code2flow-agent/
 
 - 接收代码分析请求
 - 构造 Prompt
-- 调用 mock Agent 或后续真实 Agent 流程
+- 调用 LangChain 或 LangGraph 代码流分析流程
 - 校验结构化输出
 - 校验 Mermaid 语法
 - 用 SSE 返回结果
@@ -81,10 +81,10 @@ code2flow-agent/
 ## 阶段一推荐实现顺序
 
 1. 保持当前前后端协议稳定
-2. 把固定 mock 结果升级为更贴近真实代码结构的生成逻辑
-3. 设计稳定的 nodeId 规则
-4. 在不破坏前端联动的前提下接入 LangChain
-5. 再考虑用 LangGraph 处理重试和会话状态
+2. 设计稳定的 nodeId 规则
+3. 持续优化 LangChain 输出质量与稳定性
+4. 用 LangGraph 承接重试和校验流程
+5. 再考虑会话状态等阶段二能力
 
 ## 阶段二扩展点
 
