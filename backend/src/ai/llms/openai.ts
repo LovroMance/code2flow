@@ -7,11 +7,6 @@ export function createOpenAIModel() {
     configuration: {
       baseURL: process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com'
     },
-    modelKwargs: {
-      response_format: {
-        type: 'json_object'
-      }
-    },
     maxTokens: 4000,
     temperature: 0
   })

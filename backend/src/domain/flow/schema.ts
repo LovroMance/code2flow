@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { SupportedLanguageSchema } from './language'
 
 export const NodeKindSchema = z.enum(['start', 'action', 'decision', 'return', 'end'])
 
@@ -29,6 +30,7 @@ export const NodeMappingSchema = z
   )
 
 export const GenerationResultSchema = z.object({
+  detectedLanguage: SupportedLanguageSchema,
   mermaid: z.string(),
   mappings: z.array(NodeMappingSchema)
 })

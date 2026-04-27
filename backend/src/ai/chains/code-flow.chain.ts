@@ -1,107 +1,239 @@
 import type { FlowGenerationResult } from '../../domain/flow/types'
-import { HumanMessage, SystemMessage } from '@langchain/core/messages'
+import {
+  HumanMessage,
+  SystemMessage,
+  ToolMessage,
+  type AIMessageChunk,
+  type BaseMessage
+} from '@langchain/core/messages'
 import { createOpenAIModel } from '../llms/openai'
-import { extractPartialMermaid, parseCodeFlowTextResult } from '../parsers/code-flow.parser'
 import { buildCodeFlowSystemPrompt } from '../prompts/code-flow.system.prompt'
 import { buildCodeFlowUserPrompt } from '../prompts/code-flow.user.prompt'
+import {
+  DETECT_LANGUAGE_TOOL_NAME,
+  detectLanguageTool,
+  runDetectLanguage,
+  SUBMIT_CODE_FLOW_RESULT_TOOL_NAME,
+  submitCodeFlowResultTool
+} from '../tools'
+import { normalizeMermaidSource } from '../../utils/mermaidNormalizer'
+import { extractPartialMermaidFromToolArgs } from '../../utils/toolCallResultStreamer'
 import { validateMermaid } from '../../utils/mermaidValidator'
 import { normalizeFlowResultAgainstCode } from '../../utils/mappingNormalizer'
+import { parseFlowGenerationResult } from '../../utils/flowResultValidator'
+
+const MAX_TOOL_ROUNDS = 4
 
 export async function generateCodeFlowWithLangChain(code: string): Promise<FlowGenerationResult> {
-  // 先准备模型实例和本次调用需要的提示词。
-  const model = createOpenAIModel()
-  const systemPrompt = buildCodeFlowSystemPrompt()
-  const userPrompt = buildCodeFlowUserPrompt(code)
-
-  // 调用模型，拿到原始响应内容。
-  const response = await model.invoke([
-    new SystemMessage(systemPrompt),
-    new HumanMessage(userPrompt)
-  ])
-
-  // 把 LangChain 的返回统一整理成纯文本，方便后续解析。
-  const rawText =
-    typeof response.content === 'string' ? response.content : extractText(response.content)
-
-  // 打印原始输出，便于排查模型返回问题。
-  // console.log('[code-flow][langchain][raw-output]')
-  // console.log(rawText)
-
-  // 把模型文本解析成项目内部统一的结构化结果。
-  return normalizeFlowResultAgainstCode(code, parseCodeFlowTextResult(rawText))
+  return runCodeFlowToolLoop(code)
 }
 
 export async function streamCodeFlowWithLangChain(
   code: string,
   onPartialMermaid: (mermaid: string) => void
 ): Promise<FlowGenerationResult> {
-  // 先准备模型实例和本次调用需要的提示词。
-  const model = createOpenAIModel()
-  const systemPrompt = buildCodeFlowSystemPrompt()
-  const userPrompt = buildCodeFlowUserPrompt(code)
+  return runCodeFlowToolLoop(code, onPartialMermaid)
+}
 
-  // 以流式方式消费模型输出，并持续抽取当前已经稳定的 Mermaid 内容。
-  const stream = await model.stream([new SystemMessage(systemPrompt), new HumanMessage(userPrompt)])
+async function runCodeFlowToolLoop(
+  code: string,
+  onPartialMermaid?: (mermaid: string) => void
+): Promise<FlowGenerationResult> {
+  const model = createOpenAIModel().bindTools([detectLanguageTool, submitCodeFlowResultTool], {
+    parallel_tool_calls: false,
+    tool_choice: 'auto'
+  })
 
-  let rawText = ''
+  const messages: BaseMessage[] = [
+    new SystemMessage(buildCodeFlowSystemPrompt()),
+    new HumanMessage(buildCodeFlowUserPrompt(code))
+  ]
+  let hasDetectedLanguage = false
   let lastMermaid = ''
+
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
+    const response = await streamToolCallingRound(model, messages, onPartialMermaid, {
+      getLastMermaid: () => lastMermaid,
+      setLastMermaid: (mermaid) => {
+        lastMermaid = mermaid
+      }
+    })
+    messages.push(response)
+
+    const toolCalls = response.tool_calls ?? []
+
+    if (toolCalls.length === 0) {
+      throw new Error('Model did not call any tools')
+    }
+
+    const toolMessages: ToolMessage[] = []
+
+    for (const toolCall of toolCalls) {
+      const toolCallId = toolCall.id ?? `${toolCall.name}-${round}`
+
+      if (toolCall.name === DETECT_LANGUAGE_TOOL_NAME) {
+        const detected = runDetectLanguage(code)
+        hasDetectedLanguage = true
+        console.log(
+          `[code-flow][langchain][tool] detect_language language=${detected.language} confidence=${detected.confidence}`
+        )
+        toolMessages.push(
+          new ToolMessage({
+            tool_call_id: toolCallId,
+            content: JSON.stringify(detected),
+            status: 'success'
+          })
+        )
+        continue
+      }
+
+      if (toolCall.name === SUBMIT_CODE_FLOW_RESULT_TOOL_NAME) {
+        if (!hasDetectedLanguage) {
+          toolMessages.push(
+            new ToolMessage({
+              tool_call_id: toolCallId,
+              content: 'Call detect_language before submitting the final code flow result.',
+              status: 'error'
+            })
+          )
+          continue
+        }
+
+        const parsed = parseFlowGenerationResult({
+          ...toolCall.args,
+          mermaid:
+            typeof toolCall.args?.mermaid === 'string'
+              ? normalizeMermaidSource(toolCall.args.mermaid)
+              : toolCall.args?.mermaid
+        })
+
+        if (!validateMermaid(parsed.mermaid)) {
+          throw new Error('Generated Mermaid is invalid')
+        }
+
+        console.log(
+          `[code-flow][langchain][tool] submit_code_flow_result language=${parsed.detectedLanguage} mappings=${parsed.mappings.length}`
+        )
+        return normalizeFlowResultAgainstCode(code, parsed)
+      }
+
+      toolMessages.push(
+        new ToolMessage({
+          tool_call_id: toolCallId,
+          content: `Unsupported tool call: ${toolCall.name}`,
+          status: 'error'
+        })
+      )
+    }
+
+    messages.push(...toolMessages)
+  }
+
+  throw new Error('Model did not submit a valid code flow result within the tool-call limit')
+}
+
+async function streamToolCallingRound(
+  model: ReturnType<ReturnType<typeof createOpenAIModel>['bindTools']>,
+  messages: BaseMessage[],
+  onPartialMermaid: ((mermaid: string) => void) | undefined,
+  mermaidState: {
+    getLastMermaid: () => string
+    setLastMermaid: (mermaid: string) => void
+  }
+) {
+  const stream = await model.stream(messages)
+  let fullChunk: AIMessageChunk | null = null
+  const toolCallStateByIndex = new Map<
+    number,
+    {
+      name: string
+      id: string
+      args: string
+    }
+  >()
   let chunkCount = 0
 
   for await (const chunk of stream) {
     chunkCount += 1
-    const chunkText = typeof chunk.content === 'string' ? chunk.content : extractText(chunk.content)
+    fullChunk = fullChunk ? fullChunk.concat(chunk) : chunk
 
-    if (!chunkText) {
-      console.log(`[code-flow][langchain][stream] chunk=${chunkCount} empty`)
-      continue
-    }
+    for (const toolCallChunk of chunk.tool_call_chunks ?? []) {
+      if (toolCallChunk.index === undefined) {
+        continue
+      }
 
-    rawText += chunkText
-    console.log(
-      `[code-flow][langchain][stream] chunk=${chunkCount} textLength=${chunkText.length} rawLength=${rawText.length}`
-    )
+      const previousState = toolCallStateByIndex.get(toolCallChunk.index)
+      const nextState = {
+        name: toolCallChunk.name ?? previousState?.name ?? '',
+        id: toolCallChunk.id ?? previousState?.id ?? `tool-call-${toolCallChunk.index}`,
+        args: (previousState?.args ?? '') + (toolCallChunk.args ?? '')
+      }
+      toolCallStateByIndex.set(toolCallChunk.index, nextState)
 
-    const partialMermaid = extractPartialMermaid(rawText)
+      if (!onPartialMermaid || nextState.name !== SUBMIT_CODE_FLOW_RESULT_TOOL_NAME) {
+        continue
+      }
 
-    if (partialMermaid && partialMermaid !== lastMermaid && validateMermaid(partialMermaid)) {
-      lastMermaid = partialMermaid
-      console.log(
-        `[code-flow][langchain][stream] emit-partial lines=${partialMermaid.split('\n').length} length=${partialMermaid.length}`
-      )
-      onPartialMermaid(partialMermaid)
+      const partialMermaid = extractPartialMermaidFromToolArgs(nextState.args)
+
+      if (
+        partialMermaid &&
+        partialMermaid !== mermaidState.getLastMermaid() &&
+        validateMermaid(partialMermaid)
+      ) {
+        mermaidState.setLastMermaid(partialMermaid)
+        console.log(
+          `[code-flow][langchain][stream] emit-partial chunk=${chunkCount} lines=${partialMermaid.split('\n').length} length=${partialMermaid.length}`
+        )
+        onPartialMermaid(partialMermaid)
+      }
     }
   }
 
-  // 流结束后，对完整输出做最终解析和校验。
-  console.log(
-    `[code-flow][langchain][stream] completed chunks=${chunkCount} rawLength=${rawText.length}`
-  )
-  console.log('[code-flow][langchain][raw-output]')
-  console.log(rawText)
+  if (!fullChunk) {
+    throw new Error('Model stream ended without producing any chunks')
+  }
 
-  return normalizeFlowResultAgainstCode(code, parseCodeFlowTextResult(rawText))
+  if ((fullChunk.tool_calls?.length ?? 0) === 0 && toolCallStateByIndex.size > 0) {
+    fullChunk.tool_calls = Array.from(toolCallStateByIndex.entries())
+      .sort(([leftIndex], [rightIndex]) => leftIndex - rightIndex)
+      .map(([, state]) => buildToolCallFromState(state))
+      .filter((toolCall): toolCall is ToolCall => toolCall !== null)
+  }
+
+  return fullChunk
 }
 
-function extractText(
-  content: typeof import('@langchain/core/messages').AIMessage.prototype.content
-) {
-  if (Array.isArray(content)) {
-    // 把分段响应提取并拼成一段完整文本。
-    return content
-      .map((item) => {
-        if (typeof item === 'string') {
-          return item
-        }
-
-        if ('text' in item && typeof item.text === 'string') {
-          return item.text
-        }
-
-        return ''
-      })
-      .join('')
+function buildToolCallFromState(state: {
+  name: string
+  id: string
+  args: string
+}): ToolCall | null {
+  if (!state.name) {
+    return null
   }
 
-  // 没有可提取文本时返回空串兜底。
-  return ''
+  try {
+    const parsedArgs = JSON.parse(state.args)
+
+    if (!parsedArgs || typeof parsedArgs !== 'object' || Array.isArray(parsedArgs)) {
+      return null
+    }
+
+    return {
+      name: state.name,
+      id: state.id,
+      args: parsedArgs,
+      type: 'tool_call'
+    }
+  } catch {
+    return null
+  }
+}
+
+type ToolCall = {
+  name: string
+  args: Record<string, unknown>
+  id?: string
+  type?: 'tool_call'
 }

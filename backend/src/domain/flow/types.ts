@@ -5,11 +5,13 @@ import type {
   NodeKindSchema,
   NodeMappingSchema
 } from './schema'
+import type { SupportedLanguageSchema } from './language'
 
 export type NodeKind = z.infer<typeof NodeKindSchema>
 export type NodeMapping = z.infer<typeof NodeMappingSchema>
 export type FlowGenerationResult = z.infer<typeof GenerationResultSchema>
 export type FlowGenerationRequest = z.infer<typeof GenerationRequestSchema>
+export type SupportedLanguage = z.infer<typeof SupportedLanguageSchema>
 
 export interface FlowStreamEvent {
   type: 'mermaid' | 'mappings' | 'done' | 'error'
