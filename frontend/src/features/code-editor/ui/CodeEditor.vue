@@ -1,20 +1,36 @@
 <script setup lang="ts">
 import { Editor as MonacoEditor } from '@guolao/vue-monaco-editor'
 import type { editor } from 'monaco-editor'
-import { shallowRef } from 'vue'
-import type { NodeMapping } from '../../../entities/flow/model/types'
+import { computed, shallowRef } from 'vue'
+import type { NodeMapping, SupportedLanguage } from '../../../entities/flow/model/types'
 import type { CodeEditorExpose } from '../model/types'
 
-defineProps<{
+const props = defineProps<{
   modelValue: string
+  language: SupportedLanguage
 }>()
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
+  'update:language': [value: SupportedLanguage]
 }>()
 
 const monacoEditorRef = shallowRef<editor.IStandaloneCodeEditor | null>(null)
 let decorationIds: string[] = []
+const languageOptions: Array<{ value: SupportedLanguage; label: string }> = [
+  { value: 'javascript', label: 'JavaScript' },
+  { value: 'typescript', label: 'TypeScript' },
+  { value: 'vue', label: 'Vue' },
+  { value: 'java', label: 'Java' },
+  { value: 'c', label: 'C' },
+  { value: 'cpp', label: 'C++' },
+  { value: 'python', label: 'Python' },
+  { value: 'go', label: 'Go' },
+  { value: 'rust', label: 'Rust' },
+  { value: 'csharp', label: 'C#' },
+  { value: 'php', label: 'PHP' },
+  { value: 'unknown', label: 'Plain Text' }
+]
 
 const editorOptions: editor.IStandaloneEditorConstructionOptions = {
   automaticLayout: true,
@@ -28,6 +44,9 @@ const editorOptions: editor.IStandaloneEditorConstructionOptions = {
   scrollBeyondLastLine: false
 }
 
+const monacoLanguage = computed(() => mapToMonacoLanguage(props.language))
+const editorPath = computed(() => `file:///workspace/input${mapToEditorExtension(props.language)}`)
+
 function handleMount(instance: editor.IStandaloneCodeEditor) {
   monacoEditorRef.value = instance
 
@@ -40,6 +59,56 @@ function handleMount(instance: editor.IStandaloneCodeEditor) {
 
 function updateValue(value: string | undefined) {
   emit('update:modelValue', value ?? '')
+}
+
+function updateLanguage(event: Event) {
+  const target = event.target
+
+  if (!(target instanceof HTMLSelectElement)) {
+    return
+  }
+
+  emit('update:language', target.value as SupportedLanguage)
+}
+
+function mapToMonacoLanguage(language: SupportedLanguage) {
+  switch (language) {
+    case 'vue':
+      return 'html'
+    case 'unknown':
+      return 'plaintext'
+    default:
+      return language
+  }
+}
+
+function mapToEditorExtension(language: SupportedLanguage) {
+  switch (language) {
+    case 'typescript':
+      return '.ts'
+    case 'vue':
+      return '.vue'
+    case 'java':
+      return '.java'
+    case 'c':
+      return '.c'
+    case 'cpp':
+      return '.cpp'
+    case 'python':
+      return '.py'
+    case 'go':
+      return '.go'
+    case 'rust':
+      return '.rs'
+    case 'csharp':
+      return '.cs'
+    case 'php':
+      return '.php'
+    case 'unknown':
+      return '.txt'
+    default:
+      return '.js'
+  }
 }
 
 function focusMapping(mapping: NodeMapping) {
@@ -86,16 +155,23 @@ defineExpose<CodeEditorExpose>({
 <template>
   <div class="editor-shell">
     <div class="editor-toolbar">
-      <span class="editor-chip">JavaScript</span>
+      <label class="editor-language-control">
+        <span class="editor-language-label">Language</span>
+        <select class="editor-language-select" :value="language" @change="updateLanguage">
+          <option v-for="option in languageOptions" :key="option.value" :value="option.value">
+            {{ option.label }}
+          </option>
+        </select>
+      </label>
       <span class="editor-chip">50 - 500 行</span>
       <span class="editor-chip">结构化输出</span>
     </div>
     <div class="editor-instance">
       <MonacoEditor
         :value="modelValue"
-        language="javascript"
+        :language="monacoLanguage"
         theme="vs-dark"
-        path="file:///workspace/input.js"
+        :path="editorPath"
         height="100%"
         class-name="code2flow-monaco"
         :options="editorOptions"
@@ -109,7 +185,7 @@ defineExpose<CodeEditorExpose>({
     </div>
     <div class="editor-footer">
       <span>Monaco 已接入，支持后续行号联动与高亮装饰。</span>
-      <span>当前默认按 JavaScript 模式编辑，后续可按语言切换。</span>
+      <span>当前语言会跟随识别结果自动切换，也可以手动调整。</span>
     </div>
   </div>
 </template>

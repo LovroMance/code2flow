@@ -7,6 +7,7 @@ import {
   type BaseMessage
 } from '@langchain/core/messages'
 import { createOpenAIModel } from '../llms/openai'
+import { buildLanguageSpecificSystemPrompt } from '../prompts/code-flow-language.system.prompt'
 import { buildCodeFlowSystemPrompt } from '../prompts/code-flow.system.prompt'
 import { buildCodeFlowUserPrompt } from '../prompts/code-flow.user.prompt'
 import {
@@ -30,14 +31,26 @@ export async function generateCodeFlowWithLangChain(code: string): Promise<FlowG
 
 export async function streamCodeFlowWithLangChain(
   code: string,
-  onPartialMermaid: (mermaid: string) => void
+  callbacks: {
+    onPartialMermaid: (mermaid: string) => void
+    onDetectedLanguage?: (payload: {
+      detectedLanguage: import('../../domain/flow/types').SupportedLanguage
+      confidence?: number
+    }) => void
+  }
 ): Promise<FlowGenerationResult> {
-  return runCodeFlowToolLoop(code, onPartialMermaid)
+  return runCodeFlowToolLoop(code, callbacks)
 }
 
 async function runCodeFlowToolLoop(
   code: string,
-  onPartialMermaid?: (mermaid: string) => void
+  callbacks?: {
+    onPartialMermaid: (mermaid: string) => void
+    onDetectedLanguage?: (payload: {
+      detectedLanguage: import('../../domain/flow/types').SupportedLanguage
+      confidence?: number
+    }) => void
+  }
 ): Promise<FlowGenerationResult> {
   const model = createOpenAIModel().bindTools([detectLanguageTool, submitCodeFlowResultTool], {
     parallel_tool_calls: false,
@@ -49,10 +62,12 @@ async function runCodeFlowToolLoop(
     new HumanMessage(buildCodeFlowUserPrompt(code))
   ]
   let hasDetectedLanguage = false
+  let hasInjectedLanguagePrompt = false
   let lastMermaid = ''
+  let pendingLanguagePrompt: SystemMessage | null = null
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
-    const response = await streamToolCallingRound(model, messages, onPartialMermaid, {
+    const response = await streamToolCallingRound(model, messages, callbacks?.onPartialMermaid, {
       getLastMermaid: () => lastMermaid,
       setLastMermaid: (mermaid) => {
         lastMermaid = mermaid
@@ -74,6 +89,10 @@ async function runCodeFlowToolLoop(
       if (toolCall.name === DETECT_LANGUAGE_TOOL_NAME) {
         const detected = runDetectLanguage(code)
         hasDetectedLanguage = true
+        callbacks?.onDetectedLanguage?.({
+          detectedLanguage: detected.language,
+          confidence: detected.confidence
+        })
         console.log(
           `[code-flow][langchain][tool] detect_language language=${detected.language} confidence=${detected.confidence}`
         )
@@ -84,6 +103,13 @@ async function runCodeFlowToolLoop(
             status: 'success'
           })
         )
+
+        if (!hasInjectedLanguagePrompt) {
+          pendingLanguagePrompt = new SystemMessage(
+            buildLanguageSpecificSystemPrompt(detected.language)
+          )
+          hasInjectedLanguagePrompt = true
+        }
         continue
       }
 
@@ -127,6 +153,11 @@ async function runCodeFlowToolLoop(
     }
 
     messages.push(...toolMessages)
+
+    if (pendingLanguagePrompt) {
+      messages.push(pendingLanguagePrompt)
+      pendingLanguagePrompt = null
+    }
   }
 
   throw new Error('Model did not submit a valid code flow result within the tool-call limit')

@@ -21,17 +21,23 @@ export function createCodeFlowAgent() {
 
     async stream(
       code: string,
-      onPartialMermaid: (mermaid: string) => void
+      callbacks: {
+        onPartialMermaid: (mermaid: string) => void
+        onDetectedLanguage?: (payload: {
+          detectedLanguage: import('../domain/flow/types').SupportedLanguage
+          confidence?: number
+        }) => void
+      }
     ): Promise<FlowGenerationResult> {
       const provider = process.env.CODE2FLOW_AGENT_PROVIDER ?? 'langchain'
 
       if (provider === 'langchain') {
-        return streamCodeFlowWithLangChain(code, onPartialMermaid)
+        return streamCodeFlowWithLangChain(code, callbacks)
       }
 
       if (provider === 'graph') {
         const result = await this.generate(code)
-        onPartialMermaid(result.mermaid)
+        callbacks.onPartialMermaid(result.mermaid)
         return result
       }
 

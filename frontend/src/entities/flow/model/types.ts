@@ -1,4 +1,17 @@
 export type NodeKind = 'start' | 'action' | 'decision' | 'return' | 'end'
+export type SupportedLanguage =
+  | 'javascript'
+  | 'typescript'
+  | 'vue'
+  | 'java'
+  | 'c'
+  | 'cpp'
+  | 'python'
+  | 'go'
+  | 'rust'
+  | 'csharp'
+  | 'php'
+  | 'unknown'
 
 export interface NodeMapping {
   nodeId: string
@@ -12,6 +25,7 @@ export interface NodeMapping {
 }
 
 export interface FlowGenerationResult {
+  detectedLanguage: SupportedLanguage
   mermaid: string
   mappings: NodeMapping[]
 }
@@ -21,7 +35,12 @@ export interface HealthResponse {
   service: string
 }
 
+export interface FlowMetadataEvent {
+  detectedLanguage: SupportedLanguage
+  confidence?: number
+}
+
 export interface FlowStreamEvent {
-  type: 'mermaid' | 'mappings' | 'done' | 'error'
-  content?: string | NodeMapping[]
+  type: 'metadata' | 'mermaid' | 'mappings' | 'done' | 'error'
+  content?: string | NodeMapping[] | FlowMetadataEvent
 }

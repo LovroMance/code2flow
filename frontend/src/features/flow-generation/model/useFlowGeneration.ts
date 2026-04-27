@@ -1,15 +1,22 @@
 import { computed, ref } from 'vue'
-import type { FlowStreamEvent, NodeMapping } from '../../../entities/flow/model/types'
+import type {
+  FlowMetadataEvent,
+  FlowStreamEvent,
+  NodeMapping,
+  SupportedLanguage
+} from '../../../entities/flow/model/types'
 import { streamGenerateFlow } from '../../../shared/api/flow-stream.api'
 
 const EMPTY_MERMAID = 'flowchart TD\nA[等待输入代码] --> B[点击生成流程图]\nB --> C[展示结果]'
 const LOADING_MERMAID = 'flowchart TD\nA[请求已发送] --> B[等待 Agent 返回结果]'
+const DEFAULT_LANGUAGE: SupportedLanguage = 'javascript'
 
 export function useFlowGeneration() {
   const status = ref<'idle' | 'streaming' | 'done' | 'error'>('idle')
   const mermaid = ref(EMPTY_MERMAID)
   const mappings = ref<NodeMapping[]>([])
   const errorMessage = ref('')
+  const detectedLanguage = ref<SupportedLanguage>(DEFAULT_LANGUAGE)
 
   const isLoading = computed(() => status.value === 'streaming')
 
@@ -18,6 +25,10 @@ export function useFlowGeneration() {
     mermaid.value = EMPTY_MERMAID
     mappings.value = []
     errorMessage.value = ''
+  }
+
+  function setDetectedLanguage(language: SupportedLanguage) {
+    detectedLanguage.value = language
   }
 
   async function generateFlow(code: string) {
@@ -36,6 +47,13 @@ export function useFlowGeneration() {
   }
 
   function handleStreamEvent(event: FlowStreamEvent) {
+    if (event.type === 'metadata' && isFlowMetadataEvent(event.content)) {
+      detectedLanguage.value = event.content.detectedLanguage
+      console.log(
+        `[code-flow][frontend][state] metadata-updated language=${event.content.detectedLanguage} confidence=${event.content.confidence ?? 'n/a'}`
+      )
+    }
+
     if (event.type === 'mermaid' && typeof event.content === 'string') {
       mermaid.value = event.content
       console.log(
@@ -63,11 +81,22 @@ export function useFlowGeneration() {
 
   return {
     errorMessage,
+    detectedLanguage,
     generateFlow,
     isLoading,
     mappings,
     mermaid,
     resetOutput,
+    setDetectedLanguage,
     status
   }
+}
+
+function isFlowMetadataEvent(payload: FlowStreamEvent['content']): payload is FlowMetadataEvent {
+  return Boolean(
+    payload &&
+    typeof payload === 'object' &&
+    'detectedLanguage' in payload &&
+    typeof payload.detectedLanguage === 'string'
+  )
 }

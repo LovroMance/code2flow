@@ -10,8 +10,10 @@ const fileInputRef = ref<HTMLInputElement | null>(null)
 
 const {
   code,
+  detectedLanguage,
   errorMessage,
   handleGenerate,
+  handleLanguageChange,
   handleUploadFile,
   healthStatus,
   isLoading,
@@ -105,10 +107,19 @@ function handleSelectNode(nodeId: string) {
               <h2>代码输入区</h2>
             </div>
             <span class="badge badge-active">
-              {{ uploadFileName ? `已导入 ${uploadFileName}` : 'Monaco Ready' }}
+              {{
+                uploadFileName
+                  ? `已导入 ${uploadFileName} · ${detectedLanguage}`
+                  : `Monaco Ready · ${detectedLanguage}`
+              }}
             </span>
           </div>
-          <CodeEditor ref="editorRef" v-model="code" />
+          <CodeEditor
+            ref="editorRef"
+            v-model="code"
+            :language="detectedLanguage"
+            @update:language="handleLanguageChange"
+          />
         </section>
 
         <section class="analysis-panel">

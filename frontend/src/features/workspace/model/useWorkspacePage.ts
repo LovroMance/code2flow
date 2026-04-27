@@ -2,7 +2,7 @@ import { computed, onMounted, ref } from 'vue'
 import { SAMPLE_CODE } from '../config/sampleCode'
 import { getHealth } from '../../../shared/api/system.api'
 import { useFlowGeneration } from '../../flow-generation/model/useFlowGeneration'
-import type { NodeMapping } from '../../../entities/flow/model/types'
+import type { NodeMapping, SupportedLanguage } from '../../../entities/flow/model/types'
 
 const SUPPORTED_FILE_EXTENSIONS = [
   '.js',
@@ -23,14 +23,24 @@ const SUPPORTED_FILE_EXTENSIONS = [
 ] as const
 
 const MAX_UPLOAD_SIZE_BYTES = 200 * 1024
+const DEFAULT_LANGUAGE: SupportedLanguage = 'javascript'
 
 export function useWorkspacePage() {
   const code = ref(SAMPLE_CODE)
   const healthStatus = ref('checking')
   const uploadFileName = ref('')
   const uploadErrorMessage = ref('')
-  const { errorMessage, generateFlow, isLoading, mappings, mermaid, resetOutput, status } =
-    useFlowGeneration()
+  const {
+    detectedLanguage,
+    errorMessage,
+    generateFlow,
+    isLoading,
+    mappings,
+    mermaid,
+    resetOutput,
+    setDetectedLanguage,
+    status
+  } = useFlowGeneration()
 
   const combinedErrorMessage = computed(() => uploadErrorMessage.value || errorMessage.value)
 
@@ -68,6 +78,7 @@ export function useWorkspacePage() {
     code.value = SAMPLE_CODE
     uploadFileName.value = ''
     uploadErrorMessage.value = ''
+    setDetectedLanguage(DEFAULT_LANGUAGE)
     resetOutput()
   }
 
@@ -75,6 +86,7 @@ export function useWorkspacePage() {
     code.value = ''
     uploadFileName.value = ''
     uploadErrorMessage.value = ''
+    setDetectedLanguage(DEFAULT_LANGUAGE)
     resetOutput()
   }
 
@@ -114,11 +126,16 @@ export function useWorkspacePage() {
 
       code.value = content
       uploadFileName.value = normalizedName
+      setDetectedLanguage(inferLanguageFromExtension(fileExtension))
       resetOutput()
     } catch (error) {
       console.error(error)
       uploadErrorMessage.value = '读取文件失败，请稍后重试。'
     }
+  }
+
+  function handleLanguageChange(language: SupportedLanguage) {
+    setDetectedLanguage(language)
   }
 
   function findMappingByNodeId(nodeId: string): NodeMapping | undefined {
@@ -138,8 +155,10 @@ export function useWorkspacePage() {
   return {
     code,
     clearWorkspace,
+    detectedLanguage,
     errorMessage: combinedErrorMessage,
     handleGenerate,
+    handleLanguageChange,
     handleUploadFile,
     healthStatus,
     isLoading,
@@ -150,5 +169,37 @@ export function useWorkspacePage() {
     status,
     statusText,
     uploadFileName
+  }
+}
+
+function inferLanguageFromExtension(extension: string): SupportedLanguage {
+  switch (extension) {
+    case '.ts':
+    case '.tsx':
+      return 'typescript'
+    case '.vue':
+      return 'vue'
+    case '.java':
+      return 'java'
+    case '.c':
+    case '.h':
+      return 'c'
+    case '.cpp':
+    case '.hpp':
+      return 'cpp'
+    case '.py':
+      return 'python'
+    case '.go':
+      return 'go'
+    case '.rs':
+      return 'rust'
+    case '.cs':
+      return 'csharp'
+    case '.php':
+      return 'php'
+    case '.js':
+    case '.jsx':
+    default:
+      return 'javascript'
   }
 }

@@ -23,13 +23,26 @@ export async function postGenerateFlow(req: Request, res: Response) {
       `[code-flow][sse] request-start codeLength=${parsed.data.code.length} threadId=${parsed.data.thread_id ?? 'none'}`
     )
 
-    const result = await streamGenerateFlow(parsed.data.code, (mermaid) => {
-      console.log(
-        `[code-flow][sse] send mermaid partial lines=${mermaid.split('\n').length} length=${mermaid.length}`
-      )
-      writeSseEvent(res, { type: 'mermaid', content: mermaid })
+    const result = await streamGenerateFlow(parsed.data.code, {
+      onPartialMermaid: (mermaid) => {
+        console.log(
+          `[code-flow][sse] send mermaid partial lines=${mermaid.split('\n').length} length=${mermaid.length}`
+        )
+        writeSseEvent(res, { type: 'mermaid', content: mermaid })
+      },
+      onDetectedLanguage: (payload) => {
+        console.log(
+          `[code-flow][sse] send metadata language=${payload.detectedLanguage} confidence=${payload.confidence ?? 'n/a'}`
+        )
+        writeSseEvent(res, { type: 'metadata', content: payload })
+      }
     })
 
+    console.log(`[code-flow][sse] send metadata final language=${result.detectedLanguage}`)
+    writeSseEvent(res, {
+      type: 'metadata',
+      content: { detectedLanguage: result.detectedLanguage }
+    })
     console.log(`[code-flow][sse] send mermaid final length=${result.mermaid.length}`)
     writeSseEvent(res, { type: 'mermaid', content: result.mermaid })
     console.log(`[code-flow][sse] send mappings count=${result.mappings.length}`)

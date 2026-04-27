@@ -8,7 +8,13 @@ export async function generateFlow(code: string) {
 
 export async function streamGenerateFlow(
   code: string,
-  onPartialMermaid: (mermaid: string) => void
+  callbacks: {
+    onPartialMermaid: (mermaid: string) => void
+    onDetectedLanguage?: (payload: {
+      detectedLanguage: import('../domain/flow/types').SupportedLanguage
+      confidence?: number
+    }) => void
+  }
 ) {
-  return codeFlowAgent.stream(code, onPartialMermaid)
+  return codeFlowAgent.stream(code, callbacks)
 }

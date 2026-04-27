@@ -13,7 +13,12 @@ export type FlowGenerationResult = z.infer<typeof GenerationResultSchema>
 export type FlowGenerationRequest = z.infer<typeof GenerationRequestSchema>
 export type SupportedLanguage = z.infer<typeof SupportedLanguageSchema>
 
+export interface FlowMetadataEvent {
+  detectedLanguage: SupportedLanguage
+  confidence?: number
+}
+
 export interface FlowStreamEvent {
-  type: 'mermaid' | 'mappings' | 'done' | 'error'
-  content?: string | NodeMapping[]
+  type: 'metadata' | 'mermaid' | 'mappings' | 'done' | 'error'
+  content?: string | NodeMapping[] | FlowMetadataEvent
 }
