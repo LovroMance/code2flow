@@ -40,6 +40,12 @@ export interface FlowMetadataEvent {
   confidence?: number
 }
 
+export interface FollowUpResponse {
+  thread_id: string
+  question: string
+  explanation: string
+}
+
 export interface FlowStreamEvent {
   type: 'metadata' | 'mermaid' | 'mappings' | 'done' | 'error'
   content?: string | NodeMapping[] | FlowMetadataEvent

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { createInitialCodeFlowGraphState } from './code-flow.state'
+import {
+  applyCodeFlowGraphCheckpoint,
+  createCodeFlowGraphCheckpoint,
+  createInitialCodeFlowGraphState
+} from './code-flow.state'
 import { normalizeFlowNode } from './nodes/normalize-flow.node'
 import { retryNode } from './nodes/retry.node'
 import { validateNode } from './nodes/validate.node'
@@ -16,6 +20,75 @@ describe('code flow graph helpers', () => {
     expect(state.threadId).toBe('thread-1')
     expect(state.retryCount).toBe(0)
     expect(state.maxRetries).toBe(1)
+  })
+
+  it('extracts and reapplies checkpoint state without overwriting current request input', () => {
+    const baseState = createInitialCodeFlowGraphState({
+      code: 'const current = true',
+      threadId: 'thread-1'
+    })
+
+    const checkpoint = createCodeFlowGraphCheckpoint({
+      ...baseState,
+      detectedLanguage: 'javascript',
+      explanation: 'cached explanation',
+      result: {
+        detectedLanguage: 'javascript',
+        mermaid: 'flowchart TD\nn_start_1[开始] --> n_end_1[结束]',
+        mappings: [
+          {
+            nodeId: 'n_start_1',
+            kind: 'start',
+            label: '开始',
+            description: '流程开始',
+            lineStart: 1,
+            lineEnd: 1
+          },
+          {
+            nodeId: 'n_end_1',
+            kind: 'end',
+            label: '结束',
+            description: '流程结束',
+            lineStart: 1,
+            lineEnd: 1
+          }
+        ]
+      }
+    })
+
+    const restored = applyCodeFlowGraphCheckpoint(
+      createInitialCodeFlowGraphState({
+        code: 'const latest = true',
+        threadId: 'thread-1'
+      }),
+      checkpoint
+    )
+
+    expect(restored.code).toBe('const latest = true')
+    expect(restored.detectedLanguage).toBe('javascript')
+    expect(restored.explanation).toBe('cached explanation')
+    expect(restored.result?.mermaid).toContain('flowchart TD')
+  })
+
+  it('restores code from checkpoint when the current request does not provide one', () => {
+    const checkpoint = createCodeFlowGraphCheckpoint({
+      ...createInitialCodeFlowGraphState({
+        code: 'const saved = true',
+        threadId: 'thread-1'
+      }),
+      detectedLanguage: 'javascript'
+    })
+
+    const restored = applyCodeFlowGraphCheckpoint(
+      createInitialCodeFlowGraphState({
+        code: '',
+        threadId: 'thread-1',
+        mode: 'followup'
+      }),
+      checkpoint
+    )
+
+    expect(restored.code).toBe('const saved = true')
   })
 
   it('validates a complete result successfully', async () => {

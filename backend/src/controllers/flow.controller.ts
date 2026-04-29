@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express'
-import { GenerationRequestSchema } from '../domain/flow/schema'
-import { streamGenerateFlow } from '../services/flow-generation.service'
+import { FollowUpRequestSchema, GenerationRequestSchema } from '../domain/flow/schema'
+import { followUpFlow, streamGenerateFlow } from '../services/flow-generation.service'
 import { writeSseEvent } from '../utils/sse'
 
 export async function postGenerateFlow(req: Request, res: Response) {
@@ -61,5 +61,41 @@ export async function postGenerateFlow(req: Request, res: Response) {
     console.log(`[code-flow][sse] send error message=${message}`)
     writeSseEvent(res, { type: 'error', content: message })
     res.end()
+  }
+}
+
+export async function postFollowUpFlow(req: Request, res: Response) {
+  const parsed = FollowUpRequestSchema.safeParse(req.body)
+
+  if (!parsed.success) {
+    res.status(400).json({
+      error: 'Invalid request body',
+      details: parsed.error.flatten()
+    })
+    return
+  }
+
+  try {
+    console.log(
+      `[code-flow][followup] request-start threadId=${parsed.data.thread_id} questionLength=${parsed.data.question.length}`
+    )
+
+    const explanation = await followUpFlow({
+      code: parsed.data.code ?? '',
+      threadId: parsed.data.thread_id,
+      question: parsed.data.question
+    })
+
+    res.json({
+      thread_id: parsed.data.thread_id,
+      question: parsed.data.question,
+      explanation
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown follow-up error'
+
+    res.status(400).json({
+      error: message
+    })
   }
 }

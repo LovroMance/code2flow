@@ -12,18 +12,28 @@ const {
   code,
   detectedLanguage,
   errorMessage,
+  followUpAnswer,
+  followUpQuestion,
+  followUpStatus,
+  followUpStatusText,
   handleGenerate,
+  handleFollowUp,
   handleLanguageChange,
   handleUploadFile,
   healthStatus,
   isLoading,
+  canAskFollowUp,
   loadSample,
   mappings,
   mermaid,
+  resetSession,
   status,
   statusText,
+  threadId,
+  threadLabel,
   clearWorkspace,
   findMappingByNodeId,
+  primeFollowUpQuestionFromNode,
   uploadFileName
 } = useWorkspacePage()
 
@@ -44,7 +54,7 @@ async function handleFileChange(event: Event) {
 }
 
 function handleSelectNode(nodeId: string) {
-  const mapping = findMappingByNodeId(nodeId)
+  const mapping = primeFollowUpQuestionFromNode(nodeId) ?? findMappingByNodeId(nodeId)
   if (!mapping) {
     return
   }
@@ -91,6 +101,7 @@ function handleSelectNode(nodeId: string) {
             <button class="primary-chip-button" type="button" @click="openFilePicker">
               {{ uploadFileName ? 'Replace Source File' : 'Upload Source File' }}
             </button>
+            <button class="ghost-button" type="button" @click="resetSession">新建会话</button>
             <button class="ghost-button" type="button" @click="loadSample">导入示例</button>
             <button class="ghost-button" type="button" @click="clearWorkspace">清空画布</button>
           </div>
@@ -122,10 +133,10 @@ function handleSelectNode(nodeId: string) {
           </article>
 
           <article class="metric-card hover-card">
-            <span class="metric-label">Run State</span>
-            <strong class="metric-title">SSE + LangChain</strong>
+            <span class="metric-label">Session Thread</span>
+            <strong class="metric-title">#{{ threadLabel }}</strong>
             <span class="metric-value" :class="{ 'metric-value-active': status !== 'idle' }">
-              {{ status !== 'idle' ? 'Streaming active' : 'Ready to generate' }}
+              {{ status !== 'idle' ? 'Streaming on current thread' : 'Ready on current thread' }}
             </span>
           </article>
         </div>
@@ -166,10 +177,46 @@ function handleSelectNode(nodeId: string) {
               </span>
             </div>
             <div class="diagram-device-copy">
-              <span class="diagram-device-label">Live Render</span>
+              <span class="diagram-device-label">Live Render · {{ threadId.slice(0, 8) }}</span>
               <p>Mermaid stream, node mapping, and editor linkage stay intact inside the device.</p>
             </div>
             <FlowDiagram :mermaid="mermaid" :mappings="mappings" @select-node="handleSelectNode" />
+          </section>
+
+          <section class="panel followup-panel workspace-shell-card">
+            <div class="panel-header panel-header-compact">
+              <div>
+                <p class="panel-kicker">Follow-up</p>
+                <h2>追问解释区</h2>
+              </div>
+              <span class="badge" :class="{ 'badge-active': followUpStatus !== 'idle' }">
+                {{ followUpStatusText }}
+              </span>
+            </div>
+            <div class="followup-panel-copy">
+              <span class="diagram-device-label">Thread · {{ threadLabel }}</span>
+              <p>在当前会话里追问某个分支、节点或异步链路为什么这样建图。</p>
+            </div>
+            <textarea
+              v-model="followUpQuestion"
+              class="followup-textarea"
+              rows="4"
+              placeholder="例如：为什么这里的 if 被拆成两个节点？这个异步分支为什么单独建图？"
+            />
+            <div class="followup-actions">
+              <button
+                class="ghost-button"
+                type="button"
+                :disabled="!canAskFollowUp || !followUpQuestion.trim()"
+                @click="handleFollowUp"
+              >
+                {{ followUpStatus === 'loading' ? '解释中...' : '提交追问' }}
+              </button>
+            </div>
+            <div class="followup-answer" :class="{ 'followup-answer-active': !!followUpAnswer }">
+              <p v-if="followUpAnswer">{{ followUpAnswer }}</p>
+              <p v-else>先生成流程图，再基于当前 thread 提一个具体问题。</p>
+            </div>
           </section>
         </section>
       </main>

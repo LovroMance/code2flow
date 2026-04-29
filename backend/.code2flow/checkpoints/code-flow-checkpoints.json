@@ -1,0 +1,151 @@
+{
+  "generate:7f93ba9e-69de-4ed4-98fc-4e80a7f406cc": {
+    "code": "async function loadUser() {\n  const user = await fetchUser()\n\n  if (user.isActive) {\n    goToDashboard()\n  } else {\n    showInactiveMessage()\n  }\n}",
+    "detectedLanguage": "javascript",
+    "result": {
+      "detectedLanguage": "javascript",
+      "mermaid": "flowchart TD\nn_start_1[开始] --> n_action_2[获取用户]\nn_action_2 --> n_decision_4{用户已激活?}\nn_decision_4 -->|是| n_action_5[进入仪表盘]\nn_decision_4 -->|否| n_action_7[显示未激活提示]\nn_action_5 --> n_end_9[结束]\nn_action_7 --> n_end_9",
+      "mappings": [
+        {
+          "nodeId": "n_start_1",
+          "kind": "start",
+          "label": "开始",
+          "description": "函数开始",
+          "lineStart": 1,
+          "lineEnd": 1
+        },
+        {
+          "nodeId": "n_action_2",
+          "kind": "action",
+          "label": "获取用户",
+          "description": "调用 fetchUser 获取用户信息",
+          "lineStart": 2,
+          "lineEnd": 2
+        },
+        {
+          "nodeId": "n_decision_4",
+          "kind": "decision",
+          "label": "用户已激活?",
+          "description": "判断用户是否已激活",
+          "lineStart": 4,
+          "lineEnd": 4
+        },
+        {
+          "nodeId": "n_action_5",
+          "kind": "action",
+          "label": "进入仪表盘",
+          "description": "用户已激活，跳转到仪表盘",
+          "lineStart": 5,
+          "lineEnd": 5
+        },
+        {
+          "nodeId": "n_action_7",
+          "kind": "action",
+          "label": "显示未激活提示",
+          "description": "用户未激活，显示提示消息",
+          "lineStart": 7,
+          "lineEnd": 7
+        },
+        {
+          "nodeId": "n_end_9",
+          "kind": "end",
+          "label": "结束",
+          "description": "函数结束",
+          "lineStart": 7,
+          "lineEnd": 7
+        }
+      ]
+    },
+    "explanation": "根据当前的分析结果，我可以给出一些优化建议，但请注意，这些建议是基于已有流程图和节点映射的推断，并非来自代码本身的静态分析。\n\n当前代码的主要结构是：开始 -> 获取用户（异步） -> 判断用户是否激活 -> 分支进入仪表盘或显示未激活提示 -> 结束。从控制流角度看，逻辑是清晰的，但存在以下可优化点：\n\n1. 错误处理缺失：节点映射中，`n_action_2`（获取用户）是异步操作，但图中没有显示任何错误处理分支。如果 `fetchUser()` 失败（例如网络错误），代码会抛出未捕获的异常，导致流程中断。建议在 `loadUser` 函数中添加 try-catch 块，将错误处理作为一个新的分支加入流程。\n\n2. 异步等待的优化：当前 `await fetchUser()` 是顺序执行的，如果 `loadUser` 被多次调用，它们会串行执行。如果业务允许，可以考虑使用 `Promise.all` 或其他并发模式，但这取决于具体场景。\n\n3. 分支逻辑的简化：`if (user.isActive)` 的判断是直接的，但可以进一步封装。例如，将 `goToDashboard()` 和 `showInactiveMessage()` 的逻辑提取为独立的函数或策略模式，使主流程更简洁。\n\n4. 结束节点的位置：节点映射显示 `n_end_9` 的 `lineEnd` 是第7行，但实际代码中函数结束在第9行（假设代码行号连续）。这可能是一个映射误差，但建议确保结束节点正确对应函数末尾。\n\n总结：最直接的优化是增加错误处理分支，使流程图更健壮。其他优化如并发或重构，需要更多上下文才能确定。"
+  },
+  "generate:6ce196e3-e790-4c98-b851-62021d08da7d": {
+    "code": "return {\n  async load(input: { threadId: string; mode: CodeFlowGraphMode }) {\n    const store = await ensureStoreLoaded()\n    return store[buildCheckpointKey(input.threadId, input.mode)] ?? null\n  },\n\n  async save(input: {\n    threadId: string\n    mode: CodeFlowGraphMode\n    checkpoint: CodeFlowGraphCheckpoint\n  }) {\n    const store = await ensureStoreLoaded()\n    store[buildCheckpointKey(input.threadId, input.mode)] = input.checkpoint\n\n    // 串行化写入，避免连续请求并发覆盖 checkpoint 文件。\n    pendingWrite = pendingWrite.then(async () => {\n      await mkdir(dirname(resolvedFilePath), { recursive: true })\n      await writeFile(resolvedFilePath, JSON.stringify(store, null, 2), 'utf8')\n    })\n\n    await pendingWrite\n  }\n}",
+    "detectedLanguage": "javascript",
+    "result": {
+      "detectedLanguage": "javascript",
+      "mermaid": "flowchart TD\nn_start_1[开始: load 函数] --> n_action_2[加载 store]\nn_action_2 --> n_action_3[读取 checkpoint]\nn_action_3 --> n_return_4[返回 checkpoint 或 null]\nn_start_5[开始: save 函数] --> n_action_6[加载 store]\nn_action_6 --> n_action_7[写入 checkpoint 到 store]\nn_action_7 --> n_action_8[串行化写入文件]\nn_action_8 --> n_action_9[等待写入完成]\nn_action_9 --> n_end_10[结束]",
+      "mappings": [
+        {
+          "nodeId": "n_start_1",
+          "kind": "start",
+          "label": "开始: load 函数",
+          "description": "load 函数入口",
+          "lineStart": 2,
+          "lineEnd": 2
+        },
+        {
+          "nodeId": "n_action_2",
+          "kind": "action",
+          "label": "加载 store",
+          "description": "调用 ensureStoreLoaded 加载 store",
+          "lineStart": 3,
+          "lineEnd": 3
+        },
+        {
+          "nodeId": "n_action_3",
+          "kind": "action",
+          "label": "读取 checkpoint",
+          "description": "从 store 中读取指定 threadId 和 mode 的 checkpoint",
+          "lineStart": 4,
+          "lineEnd": 4
+        },
+        {
+          "nodeId": "n_return_4",
+          "kind": "return",
+          "label": "返回 checkpoint 或 null",
+          "description": "返回 checkpoint 或 null",
+          "lineStart": 4,
+          "lineEnd": 4
+        },
+        {
+          "nodeId": "n_start_5",
+          "kind": "start",
+          "label": "开始: save 函数",
+          "description": "save 函数入口",
+          "lineStart": 7,
+          "lineEnd": 7
+        },
+        {
+          "nodeId": "n_action_6",
+          "kind": "action",
+          "label": "加载 store",
+          "description": "调用 ensureStoreLoaded 加载 store",
+          "lineStart": 11,
+          "lineEnd": 11
+        },
+        {
+          "nodeId": "n_action_7",
+          "kind": "action",
+          "label": "写入 checkpoint 到 store",
+          "description": "将 checkpoint 写入 store 内存对象",
+          "lineStart": 12,
+          "lineEnd": 12
+        },
+        {
+          "nodeId": "n_action_8",
+          "kind": "action",
+          "label": "串行化写入文件",
+          "description": "串行化写入，避免并发覆盖 checkpoint 文件",
+          "lineStart": 16,
+          "lineEnd": 16
+        },
+        {
+          "nodeId": "n_action_9",
+          "kind": "action",
+          "label": "等待写入完成",
+          "description": "等待 pendingWrite 完成",
+          "lineStart": 21,
+          "lineEnd": 21
+        },
+        {
+          "nodeId": "n_end_10",
+          "kind": "end",
+          "label": "结束",
+          "description": "save 函数结束",
+          "lineStart": 21,
+          "lineEnd": 21
+        }
+      ]
+    }
+  }
+}

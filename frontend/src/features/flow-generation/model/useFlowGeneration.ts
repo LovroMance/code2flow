@@ -31,14 +31,17 @@ export function useFlowGeneration() {
     detectedLanguage.value = language
   }
 
-  async function generateFlow(code: string) {
+  // 这里统一收口生成请求输入，方便后续继续补 question、mode 等会话字段。
+  async function generateFlow(input: { code: string; threadId?: string }) {
     status.value = 'streaming'
     mermaid.value = LOADING_MERMAID
     mappings.value = []
     errorMessage.value = ''
-    console.log('[code-flow][frontend][state] status=streaming')
+    console.log(
+      `[code-flow][frontend][state] status=streaming threadId=${input.threadId ?? 'none'}`
+    )
 
-    await streamGenerateFlow(code, handleStreamEvent)
+    await streamGenerateFlow(input, handleStreamEvent)
 
     if (status.value === 'streaming') {
       status.value = 'done'

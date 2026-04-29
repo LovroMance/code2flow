@@ -39,3 +39,15 @@ export const GenerationRequestSchema = z.object({
   code: z.string().min(1),
   thread_id: z.string().optional()
 })
+
+export const FollowUpRequestSchema = z.object({
+  thread_id: z.string().min(1),
+  question: z.string().min(1),
+  code: z.string().min(1).optional()
+})
+
+export const FollowUpResponseSchema = z.object({
+  thread_id: z.string(),
+  question: z.string(),
+  explanation: z.string().min(1)
+})

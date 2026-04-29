@@ -1,14 +1,26 @@
 import type { FlowStreamEvent } from '../../entities/flow/model/types'
 
-export async function streamGenerateFlow(code: string, onEvent: (event: FlowStreamEvent) => void) {
-  console.log(`[code-flow][frontend][stream] request-start codeLength=${code.length}`)
+export async function streamGenerateFlow(
+  input: {
+    code: string
+    threadId?: string
+  },
+  onEvent: (event: FlowStreamEvent) => void
+) {
+  console.log(
+    `[code-flow][frontend][stream] request-start codeLength=${input.code.length} threadId=${input.threadId ?? 'none'}`
+  )
 
   const response = await fetch('/api/generate-flow', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({ code })
+    // thread_id 会在后端 graph state 中贯穿整条分析链路，后续也会作为会话恢复的主键。
+    body: JSON.stringify({
+      code: input.code,
+      thread_id: input.threadId
+    })
   })
 
   if (!response.ok || !response.body) {

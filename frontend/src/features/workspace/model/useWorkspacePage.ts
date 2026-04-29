@@ -1,6 +1,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { SAMPLE_CODE } from '../config/sampleCode'
 import { getHealth } from '../../../shared/api/system.api'
+import { postFollowUp } from '../../../shared/api/follow-up.api'
 import { useFlowGeneration } from '../../flow-generation/model/useFlowGeneration'
 import type { NodeMapping, SupportedLanguage } from '../../../entities/flow/model/types'
 
@@ -30,6 +31,11 @@ export function useWorkspacePage() {
   const healthStatus = ref('checking')
   const uploadFileName = ref('')
   const uploadErrorMessage = ref('')
+  const threadId = ref(createThreadId())
+  const followUpQuestion = ref('')
+  const followUpAnswer = ref('')
+  const followUpErrorMessage = ref('')
+  const followUpStatus = ref<'idle' | 'loading' | 'done' | 'error'>('idle')
   const {
     detectedLanguage,
     errorMessage,
@@ -42,7 +48,17 @@ export function useWorkspacePage() {
     status
   } = useFlowGeneration()
 
-  const combinedErrorMessage = computed(() => uploadErrorMessage.value || errorMessage.value)
+  const combinedErrorMessage = computed(
+    () => uploadErrorMessage.value || followUpErrorMessage.value || errorMessage.value
+  )
+  const threadLabel = computed(() => threadId.value.slice(0, 8))
+  const canAskFollowUp = computed(
+    () =>
+      status.value === 'done' &&
+      mappings.value.length > 0 &&
+      !isLoading.value &&
+      followUpStatus.value !== 'loading'
+  )
 
   const statusText = computed(() => {
     if (status.value === 'streaming') {
@@ -60,6 +76,22 @@ export function useWorkspacePage() {
     return 'idle'
   })
 
+  const followUpStatusText = computed(() => {
+    if (followUpStatus.value === 'loading') {
+      return 'thinking'
+    }
+
+    if (followUpStatus.value === 'done') {
+      return 'answered'
+    }
+
+    if (followUpStatus.value === 'error') {
+      return 'error'
+    }
+
+    return 'idle'
+  })
+
   async function handleGenerate() {
     if (!code.value.trim()) {
       return
@@ -68,9 +100,50 @@ export function useWorkspacePage() {
     uploadErrorMessage.value = ''
 
     try {
-      await generateFlow(code.value)
+      await generateFlow({
+        code: code.value,
+        threadId: threadId.value
+      })
     } catch (error) {
       console.error(error)
+    }
+  }
+
+  // 新会话会刷新 threadId，让后端后续接入 checkpoint 时能按线程隔离上下文。
+  function resetSession() {
+    threadId.value = createThreadId()
+    followUpQuestion.value = ''
+    followUpAnswer.value = ''
+    followUpErrorMessage.value = ''
+    followUpStatus.value = 'idle'
+    console.log(`[code-flow][frontend][session] reset threadId=${threadId.value}`)
+  }
+
+  async function handleFollowUp() {
+    if (!canAskFollowUp.value || !followUpQuestion.value.trim()) {
+      return
+    }
+
+    followUpStatus.value = 'loading'
+    followUpErrorMessage.value = ''
+    console.log(
+      `[code-flow][frontend][followup] request-start threadId=${threadId.value} questionLength=${followUpQuestion.value.trim().length}`
+    )
+
+    try {
+      const response = await postFollowUp({
+        threadId: threadId.value,
+        question: followUpQuestion.value.trim(),
+        code: code.value
+      })
+
+      followUpAnswer.value = response.explanation
+      followUpStatus.value = 'done'
+      console.log('[code-flow][frontend][followup] request-done')
+    } catch (error) {
+      console.error(error)
+      followUpStatus.value = 'error'
+      followUpErrorMessage.value = '追问失败，请确认当前会话已经生成过流程图后再试。'
     }
   }
 
@@ -78,6 +151,7 @@ export function useWorkspacePage() {
     code.value = SAMPLE_CODE
     uploadFileName.value = ''
     uploadErrorMessage.value = ''
+    resetSession()
     setDetectedLanguage(DEFAULT_LANGUAGE)
     resetOutput()
   }
@@ -86,6 +160,7 @@ export function useWorkspacePage() {
     code.value = ''
     uploadFileName.value = ''
     uploadErrorMessage.value = ''
+    resetSession()
     setDetectedLanguage(DEFAULT_LANGUAGE)
     resetOutput()
   }
@@ -126,6 +201,7 @@ export function useWorkspacePage() {
 
       code.value = content
       uploadFileName.value = normalizedName
+      resetSession()
       setDetectedLanguage(inferLanguageFromExtension(fileExtension))
       resetOutput()
     } catch (error) {
@@ -140,6 +216,22 @@ export function useWorkspacePage() {
 
   function findMappingByNodeId(nodeId: string): NodeMapping | undefined {
     return mappings.value.find((mapping) => mapping.nodeId === nodeId)
+  }
+
+  // 点击图节点时顺手生成一条带行号和节点标签的追问草稿，方便直接追问。
+  function primeFollowUpQuestionFromNode(nodeId: string) {
+    const mapping = findMappingByNodeId(nodeId)
+
+    if (!mapping) {
+      return undefined
+    }
+
+    followUpQuestion.value = `为什么节点「${mapping.label}」会被画成 ${mapping.kind} 类型？它对应的第 ${mapping.lineStart}-${mapping.lineEnd} 行逻辑在流程图里为什么这样连接？`
+    followUpAnswer.value = ''
+    followUpErrorMessage.value = ''
+    followUpStatus.value = 'idle'
+
+    return mapping
   }
 
   onMounted(async () => {
@@ -157,19 +249,33 @@ export function useWorkspacePage() {
     clearWorkspace,
     detectedLanguage,
     errorMessage: combinedErrorMessage,
+    followUpAnswer,
+    followUpQuestion,
+    followUpStatus,
+    followUpStatusText,
     handleGenerate,
+    handleFollowUp,
     handleLanguageChange,
     handleUploadFile,
     healthStatus,
     isLoading,
+    canAskFollowUp,
     loadSample,
     mappings,
     mermaid,
+    resetSession,
     findMappingByNodeId,
+    primeFollowUpQuestionFromNode,
     status,
     statusText,
+    threadId,
+    threadLabel,
     uploadFileName
   }
+}
+
+function createThreadId() {
+  return crypto.randomUUID()
 }
 
 function inferLanguageFromExtension(extension: string): SupportedLanguage {

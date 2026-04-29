@@ -29,13 +29,28 @@
 - `backend/src/ai/graph/`
   - 已有 `analyze -> validate -> retry` 的最小骨架
 
-当前 graph 存在的主要问题：
+当前进展概览：
 
-- state 过薄，只包含 `code`、`result`、`error`、`retryCount`
-- graph 还没有真正接管“语言检测、分析、校验、归一化”的完整流程
-- `analyzeNode` 仍然直接调用整段 LangChain 主流程，职责边界不够清晰
-- `validateNode` 目前只校验 Mermaid，没有把 schema 校验、mapping 校验一起纳入
-- 还没有为 `thread_id`、追问解释、checkpointer 做状态设计
+- 已完成阶段一：
+  - graph 已接管 `detect -> analyze -> validate -> normalize -> retry` 主流程
+  - schema、Mermaid、mapping 校验已进入 graph
+- 已完成阶段二：
+  - `code-flow.chain.ts` 已拆出可复用的底层分析能力
+  - graph 的 `analyze-flow` 节点已直接复用底层 draft 生成函数
+- 已完成阶段三：
+  - `thread_id` 已透传到 graph state
+  - 已预留 checkpointer 抽象与 checkpoint 快照恢复/保存位置
+- 已完成阶段四最小闭环：
+  - 已有 `followup` mode
+  - 已有 `explain-followup.node.ts`
+  - 已有 `/api/follow-up` 接口
+  - 前端已能在当前 thread 内提交追问并展示解释结果
+
+当前仍待继续增强的点：
+
+- 真实持久化 checkpointer 目前还是内存版，服务重启后上下文会丢失
+- follow-up 解释能力已可用，但还可以继续增强节点级上下文提示与回答稳定性
+- graph 目前仍是手写流程驱动，还没有切到显式的 `StateGraph` API 形式
 
 ## 总体设计思路
 
@@ -360,7 +375,17 @@ START
 
 ## 分阶段实施计划
 
+### 当前阶段状态
+
+- 第一阶段：已完成
+- 第二阶段：已完成
+- 第三阶段：已完成
+- 第四阶段：已完成最小闭环
+- 第五阶段：未开始
+
 ### 第一阶段：把 Graph 基础打稳
+
+状态：已完成
 
 目标：
 
@@ -385,6 +410,8 @@ START
 
 ### 第二阶段：重构 Chain，变成可复用能力层
 
+状态：已完成
+
 目标：
 
 - 让 `code-flow.chain.ts` 不再是“入口黑盒”
@@ -405,6 +432,8 @@ START
 
 ### 第三阶段：把 `thread_id` 真正接入 state
 
+状态：已完成
+
 目标：
 
 - 让接口里的 `thread_id` 不再只是占位字段
@@ -422,6 +451,8 @@ START
 
 ### 第四阶段：增加追问解释能力
 
+状态：已完成最小闭环
+
 目标：
 
 - 支持“为什么这么画”的 follow-up 问答
@@ -438,7 +469,17 @@ START
 - 能基于上次分析结果回答问题
 - 不需要每次都重新全量分析代码
 
+当前实现说明：
+
+- 已新增 `followup` mode 和 `explain-followup.node.ts`
+- 已新增 `/api/follow-up` 接口
+- 已通过内存 checkpointer 复用同一 `threadId` 下的上次分析结果
+- 前端已提供最小追问解释区
+- 后续可以继续增强节点级上下文提示、历史追问列表和解释质量控制
+
 ### 第五阶段：接入 Checkpointer
+
+状态：已完成最小可持久化版本
 
 目标：
 
@@ -454,6 +495,13 @@ START
 
 - 多轮会话能够延续
 - 追问不丢上下文
+
+当前实现说明：
+
+- 已定义 `CodeFlowGraphCheckpointer` 接口
+- 默认实现已切到文件持久化版本，可跨服务重启恢复 thread 上下文
+- 当前默认路径可通过 `CODE2FLOW_CHECKPOINT_FILE` 配置
+- 仍建议后续替换为数据库或更适合多实例部署的持久化后端
 
 ## 推荐优先级
 

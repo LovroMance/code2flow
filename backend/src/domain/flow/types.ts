@@ -1,5 +1,7 @@
 import type { z } from 'zod'
 import type {
+  FollowUpRequestSchema,
+  FollowUpResponseSchema,
   GenerationRequestSchema,
   GenerationResultSchema,
   NodeKindSchema,
@@ -11,6 +13,8 @@ export type NodeKind = z.infer<typeof NodeKindSchema>
 export type NodeMapping = z.infer<typeof NodeMappingSchema>
 export type FlowGenerationResult = z.infer<typeof GenerationResultSchema>
 export type FlowGenerationRequest = z.infer<typeof GenerationRequestSchema>
+export type FlowFollowUpRequest = z.infer<typeof FollowUpRequestSchema>
+export type FlowFollowUpResponse = z.infer<typeof FollowUpResponseSchema>
 export type SupportedLanguage = z.infer<typeof SupportedLanguageSchema>
 
 export interface FlowMetadataEvent {
