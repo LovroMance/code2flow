@@ -60,6 +60,16 @@
   - conditional retry
 - Return SSE events in a predictable event shape
 
+## Code Comment Rules
+
+- Add concise comments for each new module, node, service, or utility when the responsibility is not obvious at a glance
+- Add concise comments above functions or key branches to explain what they are doing and why they exist in the flow
+- Do not comment every line or restate syntax literally
+- Prefer comments that explain intent, role in the pipeline, or why a step is necessary
+- When adding follow-up code later, keep comment density consistent with the existing LangGraph files:
+  - one short comment for the module or function responsibility
+  - one short comment for non-obvious validation, routing, retry, normalization, or streaming behavior when needed
+
 ## Frontend Implementation Rules
 
 - Keep Monaco and Mermaid integration isolated in focused components

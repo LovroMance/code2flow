@@ -1,26 +1,26 @@
 import type { FlowGenerationResult } from '../domain/flow/types'
 import { generateCodeFlowWithLangChain } from '../ai/chains/code-flow.chain'
 import { streamCodeFlowWithLangChain } from '../ai/chains/code-flow.chain'
-import { generateCodeFlowWithGraph } from '../ai/graph/code-flow.graph'
+import { generateCodeFlowWithGraph, streamCodeFlowWithGraph } from '../ai/graph/code-flow.graph'
 
 export function createCodeFlowAgent() {
   return {
-    async generate(code: string): Promise<FlowGenerationResult> {
+    async generate(input: { code: string; threadId?: string }): Promise<FlowGenerationResult> {
       const provider = process.env.CODE2FLOW_AGENT_PROVIDER ?? 'langchain'
 
       if (provider === 'langchain') {
-        return generateCodeFlowWithLangChain(code)
+        return generateCodeFlowWithLangChain(input.code)
       }
 
       if (provider === 'graph') {
-        return generateCodeFlowWithGraph(code)
+        return generateCodeFlowWithGraph(input)
       }
 
       throw new Error(`Unsupported CODE2FLOW_AGENT_PROVIDER: ${provider}`)
     },
 
     async stream(
-      code: string,
+      input: { code: string; threadId?: string },
       callbacks: {
         onPartialMermaid: (mermaid: string) => void
         onDetectedLanguage?: (payload: {
@@ -32,13 +32,11 @@ export function createCodeFlowAgent() {
       const provider = process.env.CODE2FLOW_AGENT_PROVIDER ?? 'langchain'
 
       if (provider === 'langchain') {
-        return streamCodeFlowWithLangChain(code, callbacks)
+        return streamCodeFlowWithLangChain(input.code, callbacks)
       }
 
       if (provider === 'graph') {
-        const result = await this.generate(code)
-        callbacks.onPartialMermaid(result.mermaid)
-        return result
+        return streamCodeFlowWithGraph(input, callbacks)
       }
 
       throw new Error(`Unsupported CODE2FLOW_AGENT_PROVIDER: ${provider}`)

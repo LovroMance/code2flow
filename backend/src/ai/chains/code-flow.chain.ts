@@ -1,4 +1,4 @@
-import type { FlowGenerationResult } from '../../domain/flow/types'
+import type { FlowGenerationResult, SupportedLanguage } from '../../domain/flow/types'
 import {
   HumanMessage,
   SystemMessage,
@@ -26,48 +26,58 @@ import { parseFlowGenerationResult } from '../../utils/flowResultValidator'
 const MAX_TOOL_ROUNDS = 4
 
 export async function generateCodeFlowWithLangChain(code: string): Promise<FlowGenerationResult> {
-  return runCodeFlowToolLoop(code)
+  return generateCodeFlowDraft({ code })
 }
 
 export async function streamCodeFlowWithLangChain(
   code: string,
-  callbacks: {
-    onPartialMermaid: (mermaid: string) => void
-    onDetectedLanguage?: (payload: {
-      detectedLanguage: import('../../domain/flow/types').SupportedLanguage
-      confidence?: number
-    }) => void
-  }
+  callbacks: CodeFlowGenerationCallbacks
 ): Promise<FlowGenerationResult> {
-  return runCodeFlowToolLoop(code, callbacks)
+  return generateCodeFlowDraft({
+    code,
+    ...callbacks
+  })
 }
 
-async function runCodeFlowToolLoop(
-  code: string,
-  callbacks?: {
-    onPartialMermaid: (mermaid: string) => void
-    onDetectedLanguage?: (payload: {
-      detectedLanguage: import('../../domain/flow/types').SupportedLanguage
-      confidence?: number
-    }) => void
-  }
-): Promise<FlowGenerationResult> {
-  const model = createOpenAIModel().bindTools([detectLanguageTool, submitCodeFlowResultTool], {
+export function buildCodeFlowToolModel() {
+  return createOpenAIModel().bindTools([detectLanguageTool, submitCodeFlowResultTool], {
     parallel_tool_calls: false,
     tool_choice: 'auto'
   })
+}
 
+export function buildCodeFlowMessages(input: {
+  code: string
+  detectedLanguageHint?: SupportedLanguage
+}): BaseMessage[] {
   const messages: BaseMessage[] = [
     new SystemMessage(buildCodeFlowSystemPrompt()),
-    new HumanMessage(buildCodeFlowUserPrompt(code))
+    new HumanMessage(buildCodeFlowUserPrompt(input.code))
   ]
+
+  if (input.detectedLanguageHint) {
+    messages.push(new SystemMessage(buildLanguageSpecificSystemPrompt(input.detectedLanguageHint)))
+  }
+
+  return messages
+}
+
+export async function generateCodeFlowDraft(
+  input: {
+    code: string
+    detectedLanguageHint?: SupportedLanguage
+  } & CodeFlowGenerationCallbacks
+): Promise<FlowGenerationResult> {
+  const model = buildCodeFlowToolModel()
+  const messages = buildCodeFlowMessages(input)
+  const code = input.code
   let hasDetectedLanguage = false
-  let hasInjectedLanguagePrompt = false
+  let hasInjectedLanguagePrompt = Boolean(input.detectedLanguageHint)
   let lastMermaid = ''
   let pendingLanguagePrompt: SystemMessage | null = null
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
-    const response = await streamToolCallingRound(model, messages, callbacks?.onPartialMermaid, {
+    const response = await streamToolCallingRound(model, messages, input.onPartialMermaid, {
       getLastMermaid: () => lastMermaid,
       setLastMermaid: (mermaid) => {
         lastMermaid = mermaid
@@ -89,7 +99,7 @@ async function runCodeFlowToolLoop(
       if (toolCall.name === DETECT_LANGUAGE_TOOL_NAME) {
         const detected = runDetectLanguage(code)
         hasDetectedLanguage = true
-        callbacks?.onDetectedLanguage?.({
+        input.onDetectedLanguage?.({
           detectedLanguage: detected.language,
           confidence: detected.confidence
         })
@@ -267,4 +277,12 @@ type ToolCall = {
   args: Record<string, unknown>
   id?: string
   type?: 'tool_call'
+}
+
+export type CodeFlowGenerationCallbacks = {
+  onPartialMermaid?: (mermaid: string) => void
+  onDetectedLanguage?: (payload: {
+    detectedLanguage: SupportedLanguage
+    confidence?: number
+  }) => void
 }
