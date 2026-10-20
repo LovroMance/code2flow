@@ -1,41 +1,54 @@
-import type { CodeFlowGraphInput, CodeFlowGraphRunOptions } from '../ai/graph/code-flow.types'
-import { createFileCodeFlowCheckpointer } from '../ai/graph/checkpointers/file-code-flow.checkpointer'
-import { createCodeFlowAgent } from '../agents/code-flow.agent'
+import type {
+  CodeFlowGraphCallbacks,
+  CodeFlowGraphInput,
+  CodeFlowGraphRunOptions
+} from '../ai/graph/code-flow.types'
+import { runCodeFlowGraph } from '../ai/graph/code-flow.graph'
+import { getCodeFlowCheckpointer } from '../ai/graph/checkpointer'
+import { createTraceCollector, summarizeResult } from '../ai/observability/trace.builder'
+import { getTraceSink, isTracingEnabled } from '../ai/observability/trace.sink'
 
-const codeFlowAgent = createCodeFlowAgent()
-const defaultGraphRunOptions: Omit<CodeFlowGraphRunOptions, 'callbacks'> = {
-  checkpointer: createFileCodeFlowCheckpointer(
-    process.env.CODE2FLOW_CHECKPOINT_FILE ?? '.code2flow/checkpoints/code-flow-checkpoints.json'
-  )
-}
-
-export async function generateFlow(
-  input: CodeFlowGraphInput,
-  options?: Omit<CodeFlowGraphRunOptions, 'callbacks'>
-) {
-  return codeFlowAgent.generate(input, {
-    ...defaultGraphRunOptions,
-    ...options
-  })
+export async function generateFlow(input: CodeFlowGraphInput, options?: CodeFlowGraphRunOptions) {
+  return (await runFlow({ ...input, mode: 'generate' }, options)).result!
 }
 
 export async function streamGenerateFlow(
   input: CodeFlowGraphInput,
-  callbacks: NonNullable<CodeFlowGraphRunOptions['callbacks']>,
-  options?: Omit<CodeFlowGraphRunOptions, 'callbacks'>
+  callbacks: CodeFlowGraphCallbacks,
+  options?: CodeFlowGraphRunOptions
 ) {
-  return codeFlowAgent.stream(input, callbacks, {
-    ...defaultGraphRunOptions,
-    ...options
-  })
+  return generateFlow(input, { ...options, callbacks })
 }
 
-export async function followUpFlow(
-  input: CodeFlowGraphInput,
-  options?: Omit<CodeFlowGraphRunOptions, 'callbacks'>
-) {
-  return codeFlowAgent.followUp(input, {
-    ...defaultGraphRunOptions,
-    ...options
-  })
+export async function followUpFlow(input: CodeFlowGraphInput, options?: CodeFlowGraphRunOptions) {
+  return (await runFlow({ ...input, mode: 'followup' }, options)).explanation
+}
+
+// 一条执行入口覆盖流式、非流式和追问；外部采集器由调用者负责落盘。
+async function runFlow(input: CodeFlowGraphInput, options: CodeFlowGraphRunOptions = {}) {
+  const trace =
+    options.trace ??
+    (isTracingEnabled()
+      ? createTraceCollector({ ...input, mode: input.mode ?? 'generate' })
+      : undefined)
+  try {
+    const state = await runCodeFlowGraph(input, {
+      ...options,
+      trace,
+      checkpointer: options.checkpointer ?? (input.threadId ? getCodeFlowCheckpointer() : undefined)
+    })
+    if (input.mode !== 'followup' && state.result) trace?.setResult(summarizeResult(state.result))
+    return state
+  } catch (error) {
+    trace?.setError(error instanceof Error ? error.message : String(error))
+    throw error
+  } finally {
+    if (trace && !options.trace) {
+      try {
+        await getTraceSink().write(await trace.finish())
+      } catch (error) {
+        console.warn('[code2flow][trace] write failed:', error)
+      }
+    }
+  }
 }

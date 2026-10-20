@@ -1,0 +1,17 @@
+flowchart LR
+Idle["idle"] -->|点击生成| Streaming["streaming · 清空 mappings"]
+Streaming --> Meta["metadata · 更新语言"]
+Meta --> Streaming
+Streaming --> Mermaid["mermaid · 替换完整图源并渲染"]
+Mermaid --> Streaming
+Streaming --> Mapping["mappings · 更新最终映射"]
+Mapping --> Streaming
+Streaming -->|"SSE done"| Done["done"]
+Streaming -->|"SSE error"| Error["error · 显示消息并抛错"]
+Streaming -->|"流结束仍在 streaming"| Done
+Streaming -.->|"非 2xx / 断网 / JSON 解析失败"| Stuck["抛给页面 · 可能仍为 streaming"]
+Done -->|重新生成| Streaming
+Error -->|重新生成| Streaming
+Done -->|重置输出| Idle
+classDef warning fill:#fff7ed,stroke:#c2410c,color:#7c2d12
+class Stuck warning

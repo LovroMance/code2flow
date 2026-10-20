@@ -1,0 +1,75 @@
+{
+  "date": "2026-10-20",
+  "versions": {
+    "langchain": "1.5.18",
+    "@langchain/core": "1.2.18",
+    "@langchain/langgraph": "1.5.1",
+    "@langchain/openai": "1.6.2",
+    "@langchain/langgraph-checkpoint-sqlite": "1.1.0",
+    "zod": "4.6.7"
+  },
+  "tests": {
+    "passed": 37,
+    "failed": 0,
+    "success": true
+  },
+  "typecheck": "passed",
+  "lint": {
+    "exitCode": 0,
+    "errors": 0,
+    "existingFrontendWarnings": 57
+  },
+  "fullBuild": "passed",
+  "compiledProductionStartup": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "service": "code2flow-backend"
+    }
+  },
+  "realProviderCalled": false,
+  "statistics": [
+    {
+      "name": "后端业务源码",
+      "before": 3456,
+      "after": 2565,
+      "delta": -891,
+      "reductionPercent": 25.78
+    },
+    {
+      "name": "后端测试与夹具",
+      "before": 667,
+      "after": 743,
+      "delta": 76,
+      "reductionPercent": -11.39
+    },
+    {
+      "name": "后端全部 TypeScript",
+      "before": 4123,
+      "after": 3308,
+      "delta": -815,
+      "reductionPercent": 19.77
+    },
+    {
+      "name": "AI、编排与生成服务（业务）",
+      "before": 1868,
+      "after": 982,
+      "delta": -886,
+      "reductionPercent": 47.43
+    },
+    {
+      "name": "前端 TS/Vue/CSS",
+      "before": 2204,
+      "after": 2205,
+      "delta": 1,
+      "reductionPercent": -0.05
+    },
+    {
+      "name": "前后端全部源码",
+      "before": 6327,
+      "after": 5513,
+      "delta": -814,
+      "reductionPercent": 12.87
+    }
+  ]
+}

@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref } from 'vue'
 import { useMermaidRenderer } from '../model/useMermaidRenderer'
+import type { NodeMapping } from '../../../entities/flow/model/types'
 
 const props = defineProps<{
   mermaid: string
-  mappings: Array<{ nodeId: string }>
+  mappings: NodeMapping[]
 }>()
 
 const emit = defineEmits<{

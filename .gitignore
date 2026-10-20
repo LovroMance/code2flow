@@ -30,3 +30,8 @@ frontend/src/**/*.vue.js
 *.key
 *.crt
 secrets/
+
+# Observability traces and evaluation reports (contain user code fingerprints)
+backend/.code2flow/traces/
+backend/.code2flow/eval/
+backend/.code2flow/checkpoints/*.sqlite*

@@ -1,21 +1,10 @@
 import { z } from 'zod'
 import { SupportedLanguageSchema, type SupportedLanguage } from '../../domain/flow/language'
 
-export const DETECT_LANGUAGE_TOOL_NAME = 'detect_language'
-
-export const DetectLanguageToolSchema = z.object({})
-
 export const DetectLanguageResultSchema = z.object({
   language: SupportedLanguageSchema,
   confidence: z.number().min(0).max(1)
 })
-
-export const detectLanguageTool = {
-  name: DETECT_LANGUAGE_TOOL_NAME,
-  description:
-    'Detect the programming language of the provided code before generating any flow result.',
-  schema: DetectLanguageToolSchema
-}
 
 export function runDetectLanguage(code: string) {
   const normalized = code.replace(/\r\n/g, '\n')

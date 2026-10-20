@@ -1,0 +1,15 @@
+flowchart TB
+subgraph Local["已实现 · 本地开发"]
+Browser["浏览器 localhost:5173"] --> Vite["Vite dev server · Vue / Monaco / Mermaid"]
+Vite -->|"/api 代理"| Express["Express localhost:3000"]
+Express --> LLM["DeepSeek 兼容端点"]
+Express --> Disk[("backend 工作目录下 .code2flow")]
+end
+subgraph Deploy["建议 · 生产部署边界"]
+Client["浏览器"] -.-> Static["静态前端构建产物"]
+Client -.-> Gateway["同源网关 /api · 放行 SSE"]
+Gateway -.-> Server["Node 单实例服务"]
+Server -.-> Volume[("持久化卷 · checkpoint / traces")]
+Server -.-> Model["模型端点"]
+end
+Note["若改为前后端分域：需配置 API URL 与 CORS；当前未启用 cors"] -.-> Gateway

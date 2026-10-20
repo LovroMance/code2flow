@@ -1,6 +1,9 @@
 {
   "name": "code2flow-backend",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "version": "0.1.0",
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -8,16 +11,22 @@
     "start": "node dist/index.js",
     "lint": "eslint src --ext .ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "typecheck:tests": "tsc -p tsconfig.tests.json --noEmit",
+    "eval": "tsx src/eval/run-baseline.ts",
+    "eval:ab": "tsx src/eval/compare-reports.ts",
+    "eval:traces": "tsx src/eval/analyze-traces.ts"
   },
   "dependencies": {
-    "@langchain/core": "^0.3.27",
-    "@langchain/langgraph": "^0.4.9",
-    "@langchain/openai": "^0.6.8",
+    "@langchain/core": "1.2.18",
+    "@langchain/langgraph": "1.5.1",
+    "@langchain/langgraph-checkpoint-sqlite": "1.1.0",
+    "@langchain/openai": "1.6.2",
     "cors": "^2.8.5",
     "dotenv": "^17.2.2",
     "express": "^4.21.2",
-    "zod": "^3.24.1"
+    "langchain": "1.5.18",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",

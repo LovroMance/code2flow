@@ -1,0 +1,246 @@
+{
+  "date": "2026-10-20",
+  "counting": "物理行，含注释和空行；测试夹具单列；排除 node_modules、dist、生成 JS、文档和锁文件",
+  "backendFiles": {
+    "before": 59,
+    "after": 45
+  },
+  "metrics": [
+    {
+      "name": "后端业务源码",
+      "before": 3456,
+      "after": 2565,
+      "delta": -891,
+      "reductionPercent": 25.78
+    },
+    {
+      "name": "后端测试与夹具",
+      "before": 667,
+      "after": 743,
+      "delta": 76,
+      "reductionPercent": -11.39
+    },
+    {
+      "name": "后端全部 TypeScript",
+      "before": 4123,
+      "after": 3308,
+      "delta": -815,
+      "reductionPercent": 19.77
+    },
+    {
+      "name": "AI、编排与生成服务（业务）",
+      "before": 1868,
+      "after": 982,
+      "delta": -886,
+      "reductionPercent": 47.43
+    },
+    {
+      "name": "前端 TS/Vue/CSS",
+      "before": 2204,
+      "after": 2205,
+      "delta": 1,
+      "reductionPercent": -0.05
+    },
+    {
+      "name": "前后端全部源码",
+      "before": 6327,
+      "after": 5513,
+      "delta": -814,
+      "reductionPercent": 12.87
+    }
+  ],
+  "changes": [
+    {
+      "file": "backend/src/agents/code-flow.agent.ts",
+      "before": 68,
+      "after": 0,
+      "delta": -68
+    },
+    {
+      "file": "backend/src/ai/chains/code-flow.chain.ts",
+      "before": 308,
+      "after": 43,
+      "delta": -265
+    },
+    {
+      "file": "backend/src/ai/chains/explain-followup.chain.ts",
+      "before": 85,
+      "after": 28,
+      "delta": -57
+    },
+    {
+      "file": "backend/src/ai/graph/checkpointers/checkpoint-key.ts",
+      "before": 7,
+      "after": 0,
+      "delta": -7
+    },
+    {
+      "file": "backend/src/ai/graph/checkpointers/file-code-flow.checkpointer.test.ts",
+      "before": 55,
+      "after": 0,
+      "delta": -55
+    },
+    {
+      "file": "backend/src/ai/graph/checkpointers/file-code-flow.checkpointer.ts",
+      "before": 66,
+      "after": 0,
+      "delta": -66
+    },
+    {
+      "file": "backend/src/ai/graph/checkpointers/in-memory-code-flow.checkpointer.ts",
+      "before": 20,
+      "after": 0,
+      "delta": -20
+    },
+    {
+      "file": "backend/src/ai/graph/code-flow.graph.test.ts",
+      "before": 231,
+      "after": 215,
+      "delta": -16
+    },
+    {
+      "file": "backend/src/ai/graph/code-flow.graph.ts",
+      "before": 186,
+      "after": 128,
+      "delta": -58
+    },
+    {
+      "file": "backend/src/ai/graph/code-flow.state.ts",
+      "before": 72,
+      "after": 20,
+      "delta": -52
+    },
+    {
+      "file": "backend/src/ai/graph/code-flow.types.ts",
+      "before": 51,
+      "after": 28,
+      "delta": -23
+    },
+    {
+      "file": "backend/src/ai/graph/nodes/analyze-flow.node.ts",
+      "before": 31,
+      "after": 0,
+      "delta": -31
+    },
+    {
+      "file": "backend/src/ai/graph/nodes/detect-language.node.ts",
+      "before": 29,
+      "after": 0,
+      "delta": -29
+    },
+    {
+      "file": "backend/src/ai/graph/nodes/explain-followup.node.ts",
+      "before": 35,
+      "after": 0,
+      "delta": -35
+    },
+    {
+      "file": "backend/src/ai/graph/nodes/normalize-flow.node.ts",
+      "before": 20,
+      "after": 0,
+      "delta": -20
+    },
+    {
+      "file": "backend/src/ai/graph/nodes/retry.node.ts",
+      "before": 15,
+      "after": 0,
+      "delta": -15
+    },
+    {
+      "file": "backend/src/ai/graph/nodes/validate.node.ts",
+      "before": 52,
+      "after": 0,
+      "delta": -52
+    },
+    {
+      "file": "backend/src/ai/graph/routers/code-flow.router.ts",
+      "before": 19,
+      "after": 0,
+      "delta": -19
+    },
+    {
+      "file": "backend/src/ai/llms/openai.ts",
+      "before": 14,
+      "after": 18,
+      "delta": 4
+    },
+    {
+      "file": "backend/src/ai/observability/run-config.ts",
+      "before": 39,
+      "after": 42,
+      "delta": 3
+    },
+    {
+      "file": "backend/src/ai/prompts/code-flow.system.prompt.ts",
+      "before": 5,
+      "after": 0,
+      "delta": -5
+    },
+    {
+      "file": "backend/src/ai/prompts/code-flow.user.prompt.ts",
+      "before": 17,
+      "after": 0,
+      "delta": -17
+    },
+    {
+      "file": "backend/src/ai/tools/detect-language.tool.ts",
+      "before": 172,
+      "after": 161,
+      "delta": -11
+    },
+    {
+      "file": "backend/src/ai/tools/index.ts",
+      "before": 2,
+      "after": 0,
+      "delta": -2
+    },
+    {
+      "file": "backend/src/ai/tools/submit-code-flow-result.tool.ts",
+      "before": 10,
+      "after": 0,
+      "delta": -10
+    },
+    {
+      "file": "backend/src/prompts/code-flow.prompt.ts",
+      "before": 53,
+      "after": 48,
+      "delta": -5
+    },
+    {
+      "file": "backend/src/services/flow-generation.service.ts",
+      "before": 130,
+      "after": 54,
+      "delta": -76
+    },
+    {
+      "file": "backend/src/services/flow-generation.trace.test.ts",
+      "before": 96,
+      "after": 146,
+      "delta": 50
+    },
+    {
+      "file": "backend/src/utils/toolCallResultStreamer.ts",
+      "before": 76,
+      "after": 0,
+      "delta": -76
+    },
+    {
+      "file": "backend/src/ai/graph/checkpointer.ts",
+      "before": 0,
+      "after": 40,
+      "delta": 40
+    },
+    {
+      "file": "backend/src/ai/observability/run-callbacks.ts",
+      "before": 0,
+      "after": 81,
+      "delta": 81
+    },
+    {
+      "file": "backend/src/test/model.fixture.ts",
+      "before": 0,
+      "after": 97,
+      "delta": 97
+    }
+  ]
+}

@@ -1,5 +1,7 @@
 # Code2Flow LangGraph 接入规划
 
+> 2026-10-20：已完成 LangChain / LangGraph 1.x 原生迁移。当前实现以 [architecture.md](./architecture.md) 和 [重构报告](./langchain-langgraph-refactor/重构报告.md) 为准；下文保留为历史规划，其中手写驱动、自定义 checkpointer 和 provider 双通道描述已被替换。
+
 ## 目标
 
 这份文档用于规划 Code2Flow 后端从“以 LangChain 单轮调用为主”逐步升级到“以 LangGraph 状态编排为主”的实现路径。

@@ -147,5 +147,63 @@
         }
       ]
     }
+  },
+  "generate:168f0ac7-8f3a-4587-ac1c-ce661b4335e1": {
+    "code": "async function loadUser() {\n  const user = await fetchUser()\n\n  if (user.isActive) {\n    goToDashboard()\n  } else {\n    showInactiveMessage()\n  }\n}",
+    "detectedLanguage": "javascript",
+    "result": {
+      "detectedLanguage": "javascript",
+      "mermaid": "flowchart TD\nn_start_1[开始] --> n_action_2[获取用户]\nn_action_2 --> n_decision_4{用户已激活?}\nn_decision_4 -->|是| n_action_5[进入仪表盘]\nn_decision_4 -->|否| n_action_7[显示未激活提示]\nn_action_5 --> n_end_9[结束]\nn_action_7 --> n_end_9",
+      "mappings": [
+        {
+          "nodeId": "n_start_1",
+          "kind": "start",
+          "label": "开始",
+          "description": "函数开始",
+          "lineStart": 1,
+          "lineEnd": 1
+        },
+        {
+          "nodeId": "n_action_2",
+          "kind": "action",
+          "label": "获取用户",
+          "description": "调用 fetchUser 获取用户信息",
+          "lineStart": 2,
+          "lineEnd": 2
+        },
+        {
+          "nodeId": "n_decision_4",
+          "kind": "decision",
+          "label": "用户已激活?",
+          "description": "判断用户是否已激活",
+          "lineStart": 4,
+          "lineEnd": 4
+        },
+        {
+          "nodeId": "n_action_5",
+          "kind": "action",
+          "label": "进入仪表盘",
+          "description": "用户已激活，跳转到仪表盘",
+          "lineStart": 5,
+          "lineEnd": 5
+        },
+        {
+          "nodeId": "n_action_7",
+          "kind": "action",
+          "label": "显示未激活提示",
+          "description": "用户未激活，显示提示消息",
+          "lineStart": 7,
+          "lineEnd": 7
+        },
+        {
+          "nodeId": "n_end_9",
+          "kind": "end",
+          "label": "结束",
+          "description": "函数结束",
+          "lineStart": 7,
+          "lineEnd": 7
+        }
+      ]
+    }
   }
 }

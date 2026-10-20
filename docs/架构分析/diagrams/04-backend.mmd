@@ -1,0 +1,17 @@
+flowchart TB
+Entry["index.ts / createApp"] --> Routes["routes · /api 路由"]
+Routes --> Controller["flow.controller · 入参 / 响应"]
+Controller --> Service["flow-generation.service · trace + 默认 checkpointer"]
+Service --> Agent["code-flow.agent · provider 选择"]
+Agent -->|langchain| Chain["code-flow.chain · 最多 4 轮工具调用"]
+Agent -->|graph| Graph["code-flow.graph · 手写状态驱动"]
+Graph --> Nodes["detect / analyze / validate / normalize / retry"]
+Nodes --> Chain
+Graph --> Explain["explain-followup chain"]
+Graph --> CP["checkpointer 接口 · 内存 / 文件"]
+Chain --> LLM["llms/openai · ChatOpenAI"]
+Explain --> LLM
+Chain --> Tools["detect_language / submit_code_flow_result"]
+Chain --> Contract["domain + utils · schema / mapping / Mermaid"]
+Nodes --> Contract
+Service -.-> Obs["observability · collector / JSONL sink"]

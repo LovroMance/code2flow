@@ -1,5 +1,7 @@
 # Code2Flow Prompt Spec
 
+> Implementation update (2026-10-20): generation uses LangChain `createAgent` + `toolStrategy` to submit structured tool arguments, not free-form JSON text. The application detects language before invoking the model; the result includes `detectedLanguage`. Retry feedback is supplied on the next StateGraph analysis attempt. Generation and follow-up rules are centralized in `backend/src/prompts/code-flow.prompt.ts`.
+
 ## Purpose
 
 This document defines the prompt contract for Code2Flow so prompt design, backend schema validation, and frontend rendering all stay aligned.
@@ -39,6 +41,7 @@ Out of scope for the first version:
 
 ```json
 {
+  "detectedLanguage": "typescript",
   "mermaid": "flowchart TD\nn_start_1[Start] --> n_decision_4{Condition}",
   "mappings": [
     {

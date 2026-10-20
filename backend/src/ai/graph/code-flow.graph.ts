@@ -1,148 +1,128 @@
-import type { FlowGenerationResult } from '../../domain/flow/types'
+import { END, REMOVE_ALL_MESSAGES, START, StateGraph } from '@langchain/langgraph'
+import { RemoveMessage } from '@langchain/core/messages'
+import { randomUUID } from 'node:crypto'
+import { CodeFlowState } from './code-flow.state'
 import type { CodeFlowGraphInput, CodeFlowGraphRunOptions } from './code-flow.types'
-import {
-  applyCodeFlowGraphCheckpoint,
-  createCodeFlowGraphCheckpoint,
-  createInitialCodeFlowGraphState
-} from './code-flow.state'
-import { analyzeFlowNode } from './nodes/analyze-flow.node'
-import { detectLanguageNode } from './nodes/detect-language.node'
-import { explainFollowUpNode } from './nodes/explain-followup.node'
-import { normalizeFlowNode } from './nodes/normalize-flow.node'
-import { retryNode } from './nodes/retry.node'
-import { routeAfterValidation, routeByMode } from './routers/code-flow.router'
-import { validateNode } from './nodes/validate.node'
+import { generateCodeFlowDraft } from '../chains/code-flow.chain'
+import { explainCodeFlowFollowUp } from '../chains/explain-followup.chain'
+import { runDetectLanguage } from '../tools/detect-language.tool'
+import { parseFlowGenerationResult } from '../../utils/flowResultValidator'
+import { validateMermaid } from '../../utils/mermaidValidator'
+import { normalizeMermaidSource } from '../../utils/mermaidNormalizer'
+import { normalizeFlowResultAgainstCode } from '../../utils/mappingNormalizer'
+import { resolveRunConfig } from '../observability/run-config'
+import { loadLegacyCheckpoint } from './checkpointer'
+import { createNodeCallbacks } from '../observability/run-callbacks'
 
-// 非流式入口：按 detect -> analyze -> validate -> normalize/retry 的顺序驱动 graph。
-export async function generateCodeFlowWithGraph(
-  input: CodeFlowGraphInput,
-  options?: CodeFlowGraphRunOptions
-): Promise<FlowGenerationResult> {
-  const state = await runCodeFlowGraph(input, options)
-
-  if (!state.result) {
-    throw new Error('Graph finished without a result')
-  }
-
-  return state.result
-}
-
-// 追问入口直接返回 explanation，供 follow-up API 使用。
-export async function explainCodeFlowFollowUpWithGraph(
-  input: CodeFlowGraphInput,
-  options?: Omit<CodeFlowGraphRunOptions, 'callbacks'>
-) {
-  const state = await runCodeFlowGraph(
-    {
-      ...input,
-      mode: 'followup'
-    },
-    options
-  )
-
-  if (!state.explanation) {
-    throw new Error('Graph follow-up finished without an explanation')
-  }
-
-  return state.explanation
-}
-
-// 流式入口与非流式共享同一条 graph 主链，只是在分析阶段额外透出 partial Mermaid。
-export async function streamCodeFlowWithGraph(
-  input: CodeFlowGraphInput,
-  callbacks: NonNullable<CodeFlowGraphRunOptions['callbacks']>,
-  options?: Omit<CodeFlowGraphRunOptions, 'callbacks'>
-): Promise<FlowGenerationResult> {
-  const state = await runCodeFlowGraph(input, {
-    ...options,
-    callbacks
-  })
-
-  if (!state.result) {
-    throw new Error('Graph finished without a result')
-  }
-
-  return state.result
-}
-
-// 统一的 graph 执行入口让非流式和流式共用同一套初始化、checkpoint 和状态迁移逻辑。
-async function runCodeFlowGraph(input: CodeFlowGraphInput, options?: CodeFlowGraphRunOptions) {
-  let state = await initializeCodeFlowGraphState(input, options)
-  const mode = routeByMode(state)
-
-  if (mode === 'followup') {
-    state = await explainFollowUpNode(state)
-    await persistCodeFlowGraphState(state, options)
-
-    if (state.error) {
-      throw new Error(state.error)
-    }
-
-    return state
-  }
-
-  state = await detectLanguageNode(state, {
-    onDetectedLanguage: options?.callbacks?.onDetectedLanguage
-  })
-  await persistCodeFlowGraphState(state, options)
-
-  while (true) {
-    state = await analyzeFlowNode(state, {
-      onPartialMermaid: options?.callbacks?.onPartialMermaid
+// 只保留三个业务节点；框架负责状态合并、条件跳转和 checkpoint 生命周期。
+export function createCodeFlowGraph(options: CodeFlowGraphRunOptions = {}) {
+  return new StateGraph(CodeFlowState)
+    .addNode('analyze', async (state) => {
+      const detected = runDetectLanguage(state.code)
+      if (state.attempts === 0)
+        options.callbacks?.onDetectedLanguage?.({
+          detectedLanguage: detected.language,
+          confidence: detected.confidence
+        })
+      try {
+        const result = await generateCodeFlowDraft(
+          { code: state.code, detectedLanguage: detected.language, feedback: state.error },
+          options
+        )
+        return {
+          result,
+          detectedLanguage: detected.language,
+          error: null,
+          attempts: state.attempts + 1
+        }
+      } catch (error) {
+        return {
+          result: null,
+          detectedLanguage: detected.language,
+          error: error instanceof Error ? error.message : String(error),
+          attempts: state.attempts + 1
+        }
+      }
     })
-    state = await validateNode(state)
-
-    // 流式模式和非流式模式都走同一套路由，避免线程状态被两套逻辑维护。
-    const route = routeAfterValidation(state)
-
-    if (route === 'normalize') {
-      state = await normalizeFlowNode(state)
-      await persistCodeFlowGraphState(state, options)
-
-      return state
-    }
-
-    if (route === 'error') {
-      await persistCodeFlowGraphState(state, options)
-      throw new Error(state.error ?? 'Graph generation failed')
-    }
-
-    state = await retryNode(state)
-    await persistCodeFlowGraphState(state, options)
-  }
+    .addNode('validate', async (state) => {
+      try {
+        if (state.error) throw new Error(state.error)
+        const result = parseFlowGenerationResult(state.result)
+        result.mermaid = normalizeMermaidSource(result.mermaid)
+        if (!validateMermaid(result.mermaid)) throw new Error('Generated Mermaid is invalid')
+        if (result.detectedLanguage !== state.detectedLanguage)
+          throw new Error(`Detected language mismatch: expected ${state.detectedLanguage}`)
+        return { result: normalizeFlowResultAgainstCode(state.code, result), error: null }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        options.trace?.setValidationErrors([message])
+        return { result: null, error: message }
+      }
+    })
+    .addNode('explain', (state) => explainCodeFlowFollowUp(state, options))
+    .addConditionalEdges(START, (state) => (state.mode === 'followup' ? 'explain' : 'analyze'), [
+      'explain',
+      'analyze'
+    ])
+    .addEdge('analyze', 'validate')
+    .addConditionalEdges(
+      'validate',
+      (state) => {
+        options.trace?.setRetryCount(state.attempts - 1)
+        return state.error && state.attempts <= state.maxRetries ? 'analyze' : END
+      },
+      ['analyze', END]
+    )
+    .addEdge('explain', END)
+    .compile({ checkpointer: options.checkpointer })
 }
 
-// 初始化时优先使用本次请求参数，再叠加同线程的历史快照，为后续 checkpoint 接入留标准位置。
-async function initializeCodeFlowGraphState(
+// 新生成清空旧结果和聊天；追问只提交问题，由 LangGraph 自动恢复同线程状态。
+export async function runCodeFlowGraph(
   input: CodeFlowGraphInput,
-  options?: CodeFlowGraphRunOptions
+  options: CodeFlowGraphRunOptions = {}
 ) {
-  const initialState = createInitialCodeFlowGraphState(input)
-
-  if (!options?.checkpointer || !initialState.threadId) {
-    return initialState
+  const graph = createCodeFlowGraph(options)
+  const config = {
+    configurable: { thread_id: input.threadId ?? randomUUID() },
+    recursionLimit: 100,
+    callbacks: createNodeCallbacks(options.trace)
   }
-
-  const checkpoint = await options.checkpointer.load({
-    threadId: initialState.threadId,
-    mode: initialState.mode
-  })
-
-  return applyCodeFlowGraphCheckpoint(initialState, checkpoint)
-}
-
-// 当前阶段先把持久化边界固定住，后面接内存、文件或数据库实现都走这里。
-async function persistCodeFlowGraphState(
-  state: ReturnType<typeof createInitialCodeFlowGraphState>,
-  options?: CodeFlowGraphRunOptions
-) {
-  if (!options?.checkpointer || !state.threadId) {
-    return
+  if (input.mode === 'followup') {
+    let previous = await graph.getState(config)
+    if (!previous.config.configurable?.checkpoint_id && input.threadId) {
+      const legacy = await loadLegacyCheckpoint(input.threadId)
+      if (legacy) {
+        await graph.updateState(
+          config,
+          { ...legacy, detectedLanguage: legacy.result.detectedLanguage },
+          'validate'
+        )
+        previous = await graph.getState(config)
+      }
+    }
+    if (!input.question?.trim()) throw new Error('Missing follow-up question')
+    if (!previous.values.result)
+      throw new Error('Missing previous flow result for follow-up explanation')
+    if (input.code.trim() && input.code !== previous.values.code)
+      throw new Error('代码已变更，请重新生成流程图后再追问。')
+    return graph.invoke({ mode: 'followup', question: input.question, error: null }, config)
   }
-
-  await options.checkpointer.save({
-    threadId: state.threadId,
-    mode: state.mode,
-    checkpoint: createCodeFlowGraphCheckpoint(state)
-  })
+  const state = await graph.invoke(
+    {
+      code: input.code,
+      mode: 'generate',
+      question: '',
+      result: null,
+      explanation: '',
+      error: null,
+      attempts: 0,
+      maxRetries: resolveRunConfig({ maxRetries: input.maxRetries }).maxRetries,
+      messages: [new RemoveMessage({ id: REMOVE_ALL_MESSAGES })]
+    },
+    config
+  )
+  if (state.error || !state.result)
+    throw new Error(state.error ?? 'Graph finished without a result')
+  return state
 }
