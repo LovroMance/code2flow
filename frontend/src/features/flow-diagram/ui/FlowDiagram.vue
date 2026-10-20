@@ -112,9 +112,25 @@ onBeforeUnmount(() => {
     <div class="diagram-preview">
       <div class="diagram-stage device-frame">
         <div class="diagram-toolbar">
-          <button type="button" class="diagram-tool-button" @click="zoomOut">-</button>
+          <button
+            type="button"
+            class="diagram-tool-button"
+            aria-label="缩小流程图"
+            title="缩小流程图"
+            @click="zoomOut"
+          >
+            −
+          </button>
           <span class="diagram-zoom-label">{{ Math.round(scale * 100) }}%</span>
-          <button type="button" class="diagram-tool-button" @click="zoomIn">+</button>
+          <button
+            type="button"
+            class="diagram-tool-button"
+            aria-label="放大流程图"
+            title="放大流程图"
+            @click="zoomIn"
+          >
+            +
+          </button>
           <button
             type="button"
             class="diagram-tool-button diagram-tool-button-wide"

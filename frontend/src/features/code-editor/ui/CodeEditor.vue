@@ -156,15 +156,15 @@ defineExpose<CodeEditorExpose>({
   <div class="editor-shell">
     <div class="editor-toolbar">
       <label class="editor-language-control">
-        <span class="editor-language-label">Language</span>
+        <span class="editor-language-label">语言</span>
         <select class="editor-language-select" :value="language" @change="updateLanguage">
           <option v-for="option in languageOptions" :key="option.value" :value="option.value">
             {{ option.label }}
           </option>
         </select>
       </label>
-      <span class="editor-chip">Source Lines 50 - 500</span>
-      <span class="editor-chip">Structured Output</span>
+      <span class="editor-chip">目标规模 50–500 行</span>
+      <span class="editor-chip">结构化输出</span>
     </div>
     <div class="editor-instance">
       <MonacoEditor
@@ -184,10 +184,8 @@ defineExpose<CodeEditorExpose>({
       </MonacoEditor>
     </div>
     <div class="editor-footer">
-      <span
-        >Monaco editor stays live for direct edits, upload import, and line-focus feedback.</span
-      >
-      <span>Language mode follows detection and can still be overridden manually.</span>
+      <span>支持直接编辑、文件导入与节点行号定位</span>
+      <span>自动识别语言，也可手动选择</span>
     </div>
   </div>
 </template>

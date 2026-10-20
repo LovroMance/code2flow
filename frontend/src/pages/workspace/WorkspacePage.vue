@@ -79,27 +79,24 @@ function handleSelectNode(nodeId: string) {
           @change="handleFileChange"
         />
         <div class="hero-copy">
-          <p class="hero-kicker">Analysis Command Deck</p>
-          <h1>CODE2FLOW</h1>
+          <p class="hero-kicker">代码流程分析工作区</p>
+          <h1>Code2Flow</h1>
           <div class="topbar-status-line hero-status-line">
-            <span class="micro-pill">Stage {{ '01' }}</span>
+            <span class="micro-pill">阶段 {{ '01' }}</span>
             <span class="micro-pill" :class="{ 'micro-pill-active': status !== 'idle' }">
-              Agent {{ statusText }}
+              分析 {{ statusText }}
             </span>
             <span class="micro-pill" :class="{ 'micro-pill-active': healthStatus === 'online' }">
-              Backend {{ healthStatus }}
+              服务 {{ healthStatus }}
             </span>
           </div>
-          <p class="hero-body">
-            Upload source, inspect the detected language, and let Code2Flow turn control paths into
-            a renderable diagram without leaving the workspace.
-          </p>
+          <p class="hero-body">输入代码，生成流程图，点击节点定位源码。</p>
         </div>
 
         <div class="hero-cta-row">
           <div class="hero-action-group">
             <button class="primary-chip-button" type="button" @click="openFilePicker">
-              {{ uploadFileName ? 'Replace Source File' : 'Upload Source File' }}
+              {{ uploadFileName ? '替换代码文件' : '上传代码文件' }}
             </button>
             <button class="ghost-button" type="button" @click="resetSession">新建会话</button>
             <button class="ghost-button" type="button" @click="loadSample">导入示例</button>
@@ -117,26 +114,26 @@ function handleSelectNode(nodeId: string) {
 
         <div class="hero-metrics">
           <article class="metric-card hover-card">
-            <span class="metric-label">Source</span>
-            <strong class="metric-title">
-              {{ uploadFileName ? uploadFileName : 'Direct Input Mode' }}
+            <span class="metric-label">代码来源</span>
+            <strong class="metric-title" :title="uploadFileName">
+              {{ uploadFileName ? uploadFileName : '直接输入' }}
             </strong>
             <span class="metric-value" :class="{ 'metric-value-active': !!uploadFileName }">
-              {{ uploadFileName ? 'File imported' : 'Paste or upload code' }}
+              {{ uploadFileName ? '已导入文件' : '支持粘贴或上传' }}
             </span>
           </article>
 
           <article class="metric-card hover-card">
-            <span class="metric-label">Language Sync</span>
+            <span class="metric-label">当前语言</span>
             <strong class="metric-title">{{ detectedLanguage }}</strong>
-            <span class="metric-value metric-value-active">Auto synced with Monaco</span>
+            <span class="metric-value metric-value-active">已同步编辑器</span>
           </article>
 
           <article class="metric-card hover-card">
-            <span class="metric-label">Session Thread</span>
-            <strong class="metric-title">#{{ threadLabel }}</strong>
+            <span class="metric-label">当前会话</span>
+            <strong class="metric-title" :title="threadId">#{{ threadLabel }}</strong>
             <span class="metric-value" :class="{ 'metric-value-active': status !== 'idle' }">
-              {{ status !== 'idle' ? 'Streaming on current thread' : 'Ready on current thread' }}
+              {{ status !== 'idle' ? '使用当前会话分析' : '会话已就绪' }}
             </span>
           </article>
         </div>
@@ -146,14 +143,12 @@ function handleSelectNode(nodeId: string) {
         <section class="editor-panel panel workspace-shell-card">
           <div class="panel-header panel-header-compact">
             <div>
-              <p class="panel-kicker">Input</p>
-              <h2>代码输入区</h2>
+              <p class="panel-kicker">SOURCE</p>
+              <h2>代码编辑器</h2>
             </div>
             <span class="badge badge-active">
               {{
-                uploadFileName
-                  ? `Imported · ${detectedLanguage}`
-                  : `Monaco Ready · ${detectedLanguage}`
+                uploadFileName ? `已导入 · ${detectedLanguage}` : `编辑器就绪 · ${detectedLanguage}`
               }}
             </span>
           </div>
@@ -169,16 +164,18 @@ function handleSelectNode(nodeId: string) {
           <section class="panel diagram-panel workspace-shell-card">
             <div class="panel-header panel-header-compact">
               <div>
-                <p class="panel-kicker">Output Device</p>
-                <h2>流程图输出区</h2>
+                <p class="panel-kicker">FLOW</p>
+                <h2>流程图</h2>
               </div>
               <span class="badge" :class="{ 'badge-active': status !== 'idle' }">
                 {{ statusText }}
               </span>
             </div>
             <div class="diagram-device-copy">
-              <span class="diagram-device-label">Live Render · {{ threadId.slice(0, 8) }}</span>
-              <p>Mermaid stream, node mapping, and editor linkage stay intact inside the device.</p>
+              <span class="diagram-device-label" :title="threadId"
+                >实时预览 · {{ threadId.slice(0, 8) }}</span
+              >
+              <p>点击节点定位源码 · 支持流式预览与行号映射</p>
             </div>
             <FlowDiagram :mermaid="mermaid" :mappings="mappings" @select-node="handleSelectNode" />
           </section>
@@ -186,22 +183,22 @@ function handleSelectNode(nodeId: string) {
           <section class="panel followup-panel workspace-shell-card">
             <div class="panel-header panel-header-compact">
               <div>
-                <p class="panel-kicker">Follow-up</p>
-                <h2>追问解释区</h2>
+                <p class="panel-kicker">ASK</p>
+                <h2>追问解释</h2>
               </div>
               <span class="badge" :class="{ 'badge-active': followUpStatus !== 'idle' }">
                 {{ followUpStatusText }}
               </span>
             </div>
             <div class="followup-panel-copy">
-              <span class="diagram-device-label">Thread · {{ threadLabel }}</span>
-              <p>在当前会话里追问某个分支、节点或异步链路为什么这样建图。</p>
+              <span class="diagram-device-label" :title="threadId">会话 · {{ threadLabel }}</span>
+              <p>选中节点或输入问题，了解分支与异步逻辑。</p>
             </div>
             <textarea
               v-model="followUpQuestion"
               class="followup-textarea"
               rows="4"
-              placeholder="例如：为什么这里的 if 被拆成两个节点？这个异步分支为什么单独建图？"
+              placeholder="例如：为什么这个分支单独建图？点击图中节点也可预填问题。"
             />
             <div class="followup-actions">
               <button
@@ -215,7 +212,7 @@ function handleSelectNode(nodeId: string) {
             </div>
             <div class="followup-answer" :class="{ 'followup-answer-active': !!followUpAnswer }">
               <p v-if="followUpAnswer">{{ followUpAnswer }}</p>
-              <p v-else>先生成流程图，再基于当前 thread 提一个具体问题。</p>
+              <p v-else>生成流程图后，在这里查看当前会话的解释。</p>
             </div>
           </section>
         </section>
