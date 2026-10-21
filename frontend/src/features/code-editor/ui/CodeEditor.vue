@@ -71,13 +71,15 @@ function mapToEditorExtension(language: SupportedLanguage) {
 
 function focusMapping(mapping: NodeMapping) {
   const editorInstance = monacoEditorRef.value
+  const model = editorInstance?.getModel()
 
-  if (!editorInstance) {
+  if (!editorInstance || !model) {
     return
   }
 
   const startColumn = mapping.columnStart ?? 1
-  const endColumn = mapping.columnEnd ?? 1
+  // 仅有行号时选到最后一行行尾；终点列为 1 会遗漏该行全部文本。
+  const endColumn = mapping.columnEnd ?? model.getLineMaxColumn(mapping.lineEnd)
 
   editorInstance.focus()
   editorInstance.revealLinesInCenter(mapping.lineStart, mapping.lineEnd)
@@ -121,6 +123,7 @@ defineExpose<CodeEditorExpose>({
           </option>
         </select>
       </label>
+      <span class="editor-chip">生成流程图时会自动识别语言</span>
       <span class="editor-chip">目标规模 50–500 行</span>
       <span class="editor-chip">结构化输出</span>
     </div>
@@ -143,7 +146,7 @@ defineExpose<CodeEditorExpose>({
     </div>
     <div class="editor-footer">
       <span>支持直接编辑、文件导入与节点行号定位</span>
-      <span>自动识别语言，也可手动选择</span>
+      <span>可手动选择编辑器高亮语言</span>
     </div>
   </div>
 </template>

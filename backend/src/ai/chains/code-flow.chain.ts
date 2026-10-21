@@ -7,6 +7,7 @@ import { buildLanguageSpecificSystemPrompt } from '../prompts/code-flow-language
 import { createOpenAIModel } from '../llms/openai'
 import { createRunCallbacks } from '../observability/run-callbacks'
 import type { CodeFlowGraphRunOptions } from '../graph/code-flow.types'
+import { numberSourceLines } from '../../utils/numberSourceLines'
 
 // 框架接管工具绑定、消息往返和结构化结果提取；业务层只提供契约和修正反馈。
 export async function generateCodeFlowDraft(
@@ -18,7 +19,7 @@ export async function generateCodeFlowDraft(
     buildLanguageSpecificSystemPrompt(input.detectedLanguage)
   ].join('\n\n')
   const messages = [
-    new HumanMessage(input.code),
+    new HumanMessage(numberSourceLines(input.code)),
     ...(input.feedback
       ? [new SystemMessage(`上次生成未通过校验，请修正以下问题后重新提交：\n${input.feedback}`)]
       : [])

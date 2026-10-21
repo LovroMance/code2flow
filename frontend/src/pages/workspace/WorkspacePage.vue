@@ -72,13 +72,6 @@ function handleSelectNode(nodeId: string) {
       </p>
 
       <section class="hero-panel">
-        <input
-          ref="fileInputRef"
-          class="sr-only-input"
-          type="file"
-          :accept="CODE_FILE_ACCEPT"
-          @change="handleFileChange"
-        />
         <div class="hero-copy">
           <p class="hero-kicker">代码流程分析工作区</p>
           <h1>Code2Flow</h1>
@@ -96,10 +89,6 @@ function handleSelectNode(nodeId: string) {
 
         <div class="hero-cta-row">
           <div class="hero-action-group">
-            <button class="primary-chip-button" type="button" @click="openFilePicker">
-              {{ uploadFileName ? '替换代码文件' : '上传代码文件' }}
-            </button>
-            <button class="ghost-button" type="button" @click="resetSession">新建会话</button>
             <button class="ghost-button" type="button" @click="loadSample">导入示例</button>
             <button class="ghost-button" type="button" @click="clearWorkspace">清空画布</button>
           </div>
@@ -142,6 +131,13 @@ function handleSelectNode(nodeId: string) {
 
       <main class="workspace-shell">
         <section class="editor-panel panel workspace-shell-card">
+          <input
+            ref="fileInputRef"
+            class="sr-only-input"
+            type="file"
+            :accept="CODE_FILE_ACCEPT"
+            @change="handleFileChange"
+          />
           <div class="panel-header panel-header-compact">
             <div>
               <p class="panel-kicker">SOURCE</p>
@@ -152,6 +148,12 @@ function handleSelectNode(nodeId: string) {
                 uploadFileName ? `已导入 · ${detectedLanguage}` : `编辑器就绪 · ${detectedLanguage}`
               }}
             </span>
+          </div>
+          <div class="editor-file-actions">
+            <button class="primary-chip-button" type="button" @click="openFilePicker">
+              {{ uploadFileName ? '替换代码文件' : '上传代码文件' }}
+            </button>
+            <button class="ghost-button" type="button" @click="resetSession">新建会话</button>
           </div>
           <CodeEditor
             ref="editorRef"
