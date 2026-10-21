@@ -50,12 +50,14 @@ export const NodeMappingSchema = z
     path: ['lineEnd']
   })
   .refine(
+    // 跨行范围的终点列可以小于起点列，仅同一行需要比较列号。
     (mapping) =>
+      mapping.lineEnd !== mapping.lineStart ||
       mapping.columnStart === undefined ||
       mapping.columnEnd === undefined ||
       mapping.columnEnd >= mapping.columnStart,
     {
-      message: 'columnEnd must be greater than or equal to columnStart',
+      message: 'columnEnd must be greater than or equal to columnStart on the same line',
       path: ['columnEnd']
     }
   )

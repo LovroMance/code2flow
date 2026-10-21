@@ -32,20 +32,9 @@ export async function runDetectLanguage(code: string): Promise<LanguageDetection
 
   try {
     const raw = await requestLanguageChoice(code, config.data.model, config.data.timeout)
+    console.info('[code-flow][jev] detection-result', raw)
     const answer = LanguageChoiceSchema.parse(raw)
     const uncertain = answer.choice === 'unknown' || answer.confidence < config.data.minConfidence
-    console.info('[code-flow][jev] detection-result', {
-      choice: answer.choice,
-      confidence: answer.confidence,
-      language: uncertain ? 'unknown' : answer.choice,
-      status: uncertain ? 'uncertain' : 'detected',
-      reason:
-        answer.choice === 'unknown' ? 'unknown_choice' : uncertain ? 'low_confidence' : 'accepted',
-      topCandidates: Object.entries(answer.probabilities)
-        .sort((left, right) => right[1] - left[1])
-        .slice(0, 3)
-        .map(([language, probability]) => ({ language, probability }))
-    })
     return {
       language: uncertain ? 'unknown' : answer.choice,
       choice: answer.choice,

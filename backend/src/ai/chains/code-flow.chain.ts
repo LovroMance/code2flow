@@ -55,7 +55,7 @@ export async function generateCodeFlowDraft(
   )
 
   console.log('[code-flow][chain] agent output')
-  console.dir(output, { depth: null })
+  // console.dir(output, { depth: null })
 
   // 语言只取 Jev 结果，模型无需输出，也无法覆盖它；Zod 校验行号等跨字段约束。
   const draft = FlowDraftSchema.parse(output.structuredResponse)
