@@ -10,6 +10,8 @@ import { languages } from 'monaco-editor'
 const props = defineProps<{
   modelValue: string
   language: SupportedLanguage
+  disabled?: boolean
+  documentId?: string
 }>()
 
 const emit = defineEmits<{
@@ -21,7 +23,8 @@ const monacoEditorRef = shallowRef<editor.IStandaloneCodeEditor | null>(null)
 let decorationIds: string[] = []
 const languageOptions = LANGUAGE_OPTIONS
 
-const editorOptions: editor.IStandaloneEditorConstructionOptions = {
+const editorOptions = computed<editor.IStandaloneEditorConstructionOptions>(() => ({
+  readOnly: !!props.disabled,
   automaticLayout: true,
   minimap: { enabled: false },
   fontSize: 14,
@@ -31,10 +34,13 @@ const editorOptions: editor.IStandaloneEditorConstructionOptions = {
     bottom: 16
   },
   scrollBeyondLastLine: false
-}
+}))
 
 const monacoLanguage = computed(() => mapToMonacoLanguage(props.language))
-const editorPath = computed(() => `file:///workspace/input${mapToEditorExtension(props.language)}`)
+// 文档身份跟随会话，语言只更新高亮；避免切换扩展名时复用到旧 Monaco model。
+const editorPath = computed(
+  () => `file:///workspace/${encodeURIComponent(props.documentId ?? 'input')}`
+)
 
 function handleMount(instance: editor.IStandaloneCodeEditor) {
   monacoEditorRef.value = instance
@@ -63,10 +69,6 @@ function updateLanguage(event: Event) {
 function mapToMonacoLanguage(language: SupportedLanguage) {
   const id = LANGUAGE_OPTIONS.find((option) => option.value === language)?.monaco ?? 'plaintext'
   return languages.getLanguages().some((entry) => entry.id === id) ? id : 'plaintext'
-}
-
-function mapToEditorExtension(language: SupportedLanguage) {
-  return LANGUAGE_OPTIONS.find((option) => option.value === language)?.extensions[0] ?? '.txt'
 }
 
 function focusMapping(mapping: NodeMapping) {
@@ -117,15 +119,18 @@ defineExpose<CodeEditorExpose>({
     <div class="editor-toolbar">
       <label class="editor-language-control">
         <span class="editor-language-label">语言</span>
-        <select class="editor-language-select" :value="language" @change="updateLanguage">
+        <select
+          class="editor-language-select"
+          :value="language"
+          :disabled="disabled"
+          @change="updateLanguage"
+        >
           <option v-for="option in languageOptions" :key="option.value" :value="option.value">
             {{ option.label }}
           </option>
         </select>
       </label>
       <span class="editor-chip">生成流程图时会自动识别语言</span>
-      <span class="editor-chip">目标规模 50–500 行</span>
-      <span class="editor-chip">结构化输出</span>
     </div>
     <div class="editor-instance">
       <MonacoEditor

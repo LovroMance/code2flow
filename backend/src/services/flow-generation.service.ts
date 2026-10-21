@@ -7,6 +7,8 @@ import { runCodeFlowGraph } from '../ai/graph/code-flow.graph'
 import { getCodeFlowCheckpointer } from '../ai/graph/checkpointer'
 import { createTraceCollector, summarizeResult } from '../ai/observability/trace.builder'
 import { getTraceSink, isTracingEnabled } from '../ai/observability/trace.sink'
+import { withSessionLock } from './session-lock'
+import { getSessionService } from './session.service'
 
 export async function generateFlow(input: CodeFlowGraphInput, options?: CodeFlowGraphRunOptions) {
   return (await runFlow({ ...input, mode: 'generate' }, options)).result!
@@ -26,6 +28,22 @@ export async function followUpFlow(input: CodeFlowGraphInput, options?: CodeFlow
 
 // 一条执行入口覆盖流式、非流式和追问；外部采集器由调用者负责落盘。
 async function runFlow(input: CodeFlowGraphInput, options: CodeFlowGraphRunOptions = {}) {
+  const threadId = input.threadId
+  if (threadId) {
+    return withSessionLock(threadId, async () => {
+      const sessions = options.checkpointer ? undefined : getSessionService()
+      sessions?.ensure(threadId)
+      try {
+        return await executeFlow(input, options)
+      } finally {
+        sessions?.touch(threadId)
+      }
+    })
+  }
+  return executeFlow(input, options)
+}
+
+async function executeFlow(input: CodeFlowGraphInput, options: CodeFlowGraphRunOptions) {
   const trace =
     options.trace ??
     (isTracingEnabled()

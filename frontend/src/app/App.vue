@@ -8,10 +8,7 @@ const activePage = ref<'workspace' | 'console'>('workspace')
 
 <template>
   <div class="application-shell">
-    <nav
-      class="application-nav"
-      aria-label="主导航"
-    >
+    <nav class="application-nav" aria-label="主导航">
       <span class="application-brand">Code2Flow</span>
       <button
         type="button"
@@ -38,10 +35,13 @@ const activePage = ref<'workspace' | 'console'>('workspace')
 
 <style scoped>
 .application-shell {
-  display: flex;
-  flex-direction: column;
+  /* 固定顶栏与工作区行高，侧栏折叠不能改变主区域的可用高度。 */
+  display: grid;
+  grid-template-rows: 48px minmax(0, 1fr);
+  min-width: 1100px;
   height: 100vh;
   height: 100dvh;
+  min-height: 100dvh;
 }
 .application-nav {
   display: flex;
@@ -70,10 +70,8 @@ const activePage = ref<'workspace' | 'console'>('workspace')
   background: var(--accent-soft);
 }
 .application-content {
-  flex: 1;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
   min-height: 0;
-}
-.application-content :deep(.app-shell) {
-  height: 100%;
 }
 </style>

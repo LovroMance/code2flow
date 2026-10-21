@@ -103,7 +103,7 @@ export async function runCodeFlowGraph(
   if (input.mode === 'followup') {
     let previous = await graph.getState(config)
     if (!previous.config.configurable?.checkpoint_id && input.threadId) {
-      const legacy = await loadLegacyCheckpoint(input.threadId)
+      const legacy = await loadLegacyCheckpoint(input.threadId, options.checkpointer)
       if (legacy) {
         await graph.updateState(
           config,

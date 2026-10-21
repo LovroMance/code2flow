@@ -8,13 +8,34 @@ import { runCodeFlowGraph, createCodeFlowGraph } from '../src/ai/graph/code-flow
 import { createTraceCollector } from '../src/ai/observability/trace.builder'
 import { code, result, createModelServer } from './fixtures/model.fixture'
 
+// 图状态与会话测试使用确定性识别结果，不依赖真实 Jev 密钥或网络。
+vi.mock('../src/ai/tools/detect-language.tool', () => ({
+  runDetectLanguage: vi.fn(async () => ({
+    language: 'javascript',
+    confidence: 1,
+    status: 'detected'
+  }))
+}))
+
 const cleanup: Array<() => Promise<unknown> | unknown> = []
 afterEach(async () => {
   for (const close of cleanup.splice(0).reverse()) await close()
   vi.unstubAllEnvs()
 })
 async function setup(replies: Parameters<typeof createModelServer>[0]) {
-  const server = await createModelServer(replies)
+  // 生成工具只提交图和映射，语言由 Jev 补齐；旧夹具中的语言字段不再传给工具。
+  const server = await createModelServer(
+    replies.map((reply) => {
+      const args = reply.args ?? result
+      return {
+        ...reply,
+        args:
+          typeof args === 'object' && args !== null
+            ? Object.fromEntries(Object.entries(args).filter(([key]) => key !== 'detectedLanguage'))
+            : args
+      }
+    })
+  )
   cleanup.push(server.close)
   return { ...server, options: { model: server.model, checkpointer: new MemorySaver() } }
 }
@@ -95,10 +116,12 @@ describe('native LangChain agent + LangGraph', () => {
   it('honors the environment retry limit and stops at the configured bound', async () => {
     vi.stubEnv('CODE2FLOW_MAX_RETRIES', '0')
     const { options, requests } = await setup([
-      { args: { ...result, detectedLanguage: 'vue' } },
+      { args: { ...result, mermaid: 'graph LR\nn_start_1 --> n_action_1 --> n_end_1' } },
       {}
     ])
-    await expect(runCodeFlowGraph({ code }, options)).rejects.toThrow('Detected language mismatch')
+    await expect(runCodeFlowGraph({ code }, options)).rejects.toThrow(
+      'Generated Mermaid is invalid'
+    )
     expect(requests).toHaveLength(1)
   })
 
@@ -178,6 +201,9 @@ describe('native LangChain agent + LangGraph', () => {
     cleanup.push(() => rm(dir, { recursive: true, force: true }))
     const file = join(dir, 'graph.sqlite')
     const first = SqliteSaver.fromConnString(file)
+    cleanup.push(() => {
+      if (first.db.open) first.db.close()
+    })
     await runCodeFlowGraph({ code, threadId: 'persisted' }, { model, checkpointer: first })
     await runCodeFlowGraph(
       { code, threadId: 'persisted', mode: 'followup', question: '第一次提问' },

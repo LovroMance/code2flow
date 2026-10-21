@@ -1,0 +1,406 @@
+/* 侧栏仅改变主区域可用宽度；主区域沿用原来的面板比例、间距和图形样式。 */
+.session-workbench.app-shell {
+  display: grid;
+  min-width: 1100px;
+  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  gap: 0;
+}
+.session-workbench.sidebar-is-collapsed {
+  grid-template-columns: 52px minmax(0, 1fr);
+}
+.session-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid var(--border);
+  background: var(--bg-inset);
+  padding: 16px 12px 12px;
+}
+.session-sidebar-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px 16px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+.sidebar-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--text-soft);
+  background: transparent;
+}
+.sidebar-toggle:hover {
+  color: var(--text-main);
+  background: var(--accent-soft);
+}
+.session-sidebar-collapsed {
+  padding: 16px 8px;
+}
+.session-sidebar-collapsed .session-sidebar-heading {
+  padding-inline: 0;
+}
+.session-sidebar-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 12px;
+}
+.session-new-button {
+  flex: 0 0 auto;
+  min-height: 38px;
+  text-align: left;
+  padding: 6px 12px;
+  border: 1px solid var(--border-hover);
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 13px;
+}
+.session-search,
+.session-confirm-dialog input {
+  width: 100%;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-page);
+  color: var(--text-main);
+  font: inherit;
+}
+.session-search {
+  font-size: 12px;
+}
+.session-search:focus-visible,
+.session-confirm-dialog input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.session-list-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-inline: 8px;
+  margin-top: 10px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.session-list-heading button {
+  border: 0;
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 11px;
+  padding: 4px;
+}
+.session-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.session-item {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 100%;
+  margin: 0 0 6px;
+  padding: 11px 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-main);
+  background: transparent;
+  text-align: left;
+}
+.session-item:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+.session-item[aria-current='true'] {
+  background: var(--accent-soft);
+  border-color: var(--border);
+  box-shadow: inset 2px 0 var(--accent);
+}
+.session-item[aria-current='true'] strong {
+  color: var(--accent);
+}
+.session-item:disabled {
+  opacity: 0.65;
+}
+.session-item strong {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+}
+.session-item span,
+.session-item time {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.session-list-message {
+  margin: 0;
+  padding: 6px 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.session-list-error {
+  color: #ef9a9a;
+}
+.session-sidebar-footnote {
+  margin: auto 0 0;
+  padding: 12px 8px 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.8;
+}
+.session-workspace.workspace-stage {
+  min-width: 0;
+  height: auto;
+  /* 由外层明确的网格行拉伸，避免百分比高度与内容高度相互依赖。 */
+  align-self: stretch;
+  gap: 0;
+}
+.session-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 78px;
+  flex: 0 0 auto;
+  padding: 12px 20px;
+}
+.session-heading-copy {
+  flex: 1;
+  min-width: 0;
+}
+.session-heading-copy h1 {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-main);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.7;
+}
+.session-heading-copy p {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-heading-copy p span {
+  color: var(--text-muted);
+}
+.session-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.session-header-actions .ghost-button {
+  font-size: 11px;
+  padding: 5px 9px;
+  min-height: 30px;
+}
+.session-save-state {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.session-delete-button {
+  color: #ef9a9a;
+}
+.session-workspace .error-banner {
+  margin: 0 16px 10px;
+  flex: 0 0 auto;
+  max-height: 100px;
+  overflow: auto;
+}
+.source-changed-notice,
+.session-loading-notice {
+  margin: 0 16px 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 7px 10px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #e5c38a;
+  flex: 0 0 auto;
+}
+.session-loading-notice {
+  color: var(--text-soft);
+}
+.session-panels.workspace-shell {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.72fr) minmax(0, 1.28fr);
+  flex: 1 1 0;
+  gap: 14px;
+  min-height: 0;
+  min-width: 0;
+  padding: 0 20px 16px;
+}
+.session-panels .editor-panel {
+  height: auto;
+}
+.session-panels .hero-run-button {
+  min-height: 34px;
+  padding: 6px 12px;
+  background: var(--accent);
+  color: var(--bg-page);
+  border-color: var(--accent);
+  font-size: 12px;
+}
+.session-panels .hero-run-button:hover:not(:disabled) {
+  background: var(--accent);
+  filter: brightness(1.08);
+}
+.editor-clear-button {
+  margin-left: auto;
+}
+.session-panels .editor-chip {
+  white-space: normal;
+}
+.session-panels .editor-footer {
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.session-followup-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.session-context-label {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.session-messages {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 2px 2px 8px;
+  overflow-wrap: anywhere;
+}
+.session-message {
+  margin: 0 0 14px;
+}
+.session-message > span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.session-message p {
+  white-space: pre-wrap;
+  margin: 4px 0 0;
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1.8;
+}
+.message-user p {
+  color: var(--text-main);
+}
+.session-message-empty {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.8;
+  margin: 0;
+}
+.session-question-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-inset);
+}
+.session-question-form textarea {
+  min-width: 0;
+  flex: 1;
+  height: 48px;
+  resize: none;
+  padding: 3px 4px;
+  color: var(--text-main);
+  background: transparent;
+  border: 0;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.session-question-form .ghost-button {
+  min-height: 30px;
+  font-size: 11px;
+  padding: 4px 10px;
+}
+.workspace-statusbar {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 6px 16px;
+}
+.workspace-service-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background: var(--text-muted);
+  border-radius: 50%;
+  margin-right: 6px;
+}
+.workspace-service-dot.service-online {
+  background: var(--accent);
+}
+.session-confirm-dialog::backdrop {
+  background: #0009;
+}
+.session-confirm-dialog {
+  width: min(420px, calc(100vw - 32px));
+  padding: 24px;
+  color: var(--text-main);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.session-confirm-dialog h2 {
+  margin: 0 0 16px;
+  font-size: 17px;
+}
+.session-confirm-dialog p {
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1.8;
+}
+.session-confirm-dialog label {
+  display: block;
+  color: var(--text-soft);
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.session-confirm-dialog div,
+.session-confirm-dialog form > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-workbench button {
+    transition: none;
+  }
+}

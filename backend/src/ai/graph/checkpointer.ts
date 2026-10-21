@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { SqliteSaver } from '@langchain/langgraph-checkpoint-sqlite'
+import type { BaseCheckpointSaver } from '@langchain/langgraph'
 import { z } from 'zod'
 import { GenerationResultSchema } from '../../domain/flow/schema'
 
@@ -20,7 +21,19 @@ export function getCodeFlowCheckpointer() {
 }
 
 // 兼容旧线程：仅在 SQLite 无该线程时导入旧快照，不覆盖或修改原 JSON 文件。
-export async function loadLegacyCheckpoint(threadId: string) {
+export async function loadLegacyCheckpoint(threadId: string, saver?: BaseCheckpointSaver) {
+  if (saver instanceof SqliteSaver) {
+    const hasTombstones = saver.db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'code_flow_deleted_sessions'"
+      )
+      .get()
+    if (
+      hasTombstones &&
+      saver.db.prepare('SELECT id FROM code_flow_deleted_sessions WHERE id = ?').get(threadId)
+    )
+      return undefined
+  }
   const file =
     process.env.CODE2FLOW_CHECKPOINT_FILE ?? '.code2flow/checkpoints/code-flow-checkpoints.json'
   try {

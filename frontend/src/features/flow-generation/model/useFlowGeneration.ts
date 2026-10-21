@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import type {
   FlowMetadataEvent,
+  FlowGenerationResult,
   FlowStreamEvent,
   NodeMapping,
   SupportedLanguage
@@ -31,6 +32,18 @@ export function useFlowGeneration() {
     detectedLanguage.value = language
   }
 
+  function restoreOutput(result: FlowGenerationResult | null, failed = false) {
+    resetOutput()
+    if (result) {
+      mermaid.value = result.mermaid
+      mappings.value = result.mappings
+      status.value = 'done'
+    } else if (failed) {
+      status.value = 'error'
+      errorMessage.value = '上次分析失败，请重新生成流程图。'
+    }
+  }
+
   // 这里统一收口生成请求输入，方便后续继续补 question、mode 等会话字段。
   async function generateFlow(input: { code: string; threadId?: string }) {
     status.value = 'streaming'
@@ -41,11 +54,13 @@ export function useFlowGeneration() {
       `[code-flow][frontend][state] status=streaming threadId=${input.threadId ?? 'none'}`
     )
 
-    await streamGenerateFlow(input, handleStreamEvent)
-
-    if (status.value === 'streaming') {
-      status.value = 'done'
-      console.log('[code-flow][frontend][state] status=done (stream completed)')
+    try {
+      await streamGenerateFlow(input, handleStreamEvent)
+      if (status.value === 'streaming') throw new Error('连接已中断，未收到生成完成事件，请重试。')
+    } catch (error) {
+      status.value = 'error'
+      errorMessage.value = error instanceof Error ? error.message : '生成失败，请重试。'
+      throw error
     }
   }
 
@@ -90,6 +105,7 @@ export function useFlowGeneration() {
     mappings,
     mermaid,
     resetOutput,
+    restoreOutput,
     setDetectedLanguage,
     status
   }

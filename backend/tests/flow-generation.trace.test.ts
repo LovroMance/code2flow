@@ -14,7 +14,11 @@ import { code, result, createModelServer } from './fixtures/model.fixture'
 
 // 此处验证生成与用量链路，语言检测使用固定结果，避免依赖真实 Jev 配置或网络。
 vi.mock('../src/ai/tools/detect-language.tool', () => ({
-  runDetectLanguage: vi.fn(async () => ({ language: 'javascript', confidence: 1, status: 'detected' }))
+  runDetectLanguage: vi.fn(async () => ({
+    language: 'javascript',
+    confidence: 1,
+    status: 'detected'
+  }))
 }))
 
 let dir: string
@@ -42,10 +46,12 @@ afterAll(async () => {
 
 async function useModel(replies: Parameters<typeof createModelServer>[0]) {
   // 生成工具仅提交图和映射，语言由 Jev 补齐。
-  server = await createModelServer(replies.map((reply) => ({
-    ...reply,
-    args: reply.args ?? { mermaid: result.mermaid, mappings: result.mappings }
-  })))
+  server = await createModelServer(
+    replies.map((reply) => ({
+      ...reply,
+      args: reply.args ?? { mermaid: result.mermaid, mappings: result.mappings }
+    }))
+  )
   vi.stubEnv('DEEPSEEK_API_KEY', 'test-only')
   vi.stubEnv('DEEPSEEK_BASE_URL', server.baseURL)
   return server
@@ -85,6 +91,14 @@ describe('HTTP / SSE and service observability', () => {
       question: '为什么这样画',
       explanation: '这是赋值节点。'
     })
+    const restored = await request(app).get('/api/sessions/http-flow').expect(200)
+    expect(restored.body.sourceCode).toBe(code)
+    expect(restored.body.result.mappings).toEqual(result.mappings)
+    expect(restored.body.messages).toEqual([
+      { role: 'user', content: '为什么这样画' },
+      { role: 'assistant', content: '这是赋值节点。' }
+    ])
+    expect(restored.body.busy).toBe(false)
     expect(model.requests).toHaveLength(2)
   })
 
@@ -128,7 +142,10 @@ describe('HTTP / SSE and service observability', () => {
     await generateFlow({ code, maxRetries: 1 }, { trace, model: model.model })
     const recorded = await trace.finish()
     expect(recorded.usage).toMatchObject({
-      llmRounds: 2, reportedRounds: 2, totalTokens: 60, retryCount: 1
+      llmRounds: 2,
+      reportedRounds: 2,
+      totalTokens: 60,
+      retryCount: 1
     })
     expect(recorded.responseModels).toEqual(['deepseek-chat'])
   })
