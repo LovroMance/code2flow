@@ -18,11 +18,15 @@ export function isTracingEnabled() {
 export function getTraceSink(): TraceSink {
   if (!cachedSink) {
     cachedSink = createJsonlTraceSink(
-      process.env.CODE2FLOW_TRACE_FILE ?? resolve('.code2flow/traces/runs.jsonl')
+      getTraceFilePath()
     )
   }
 
   return cachedSink
+}
+
+export function getTraceFilePath() {
+  return resolve(process.env.CODE2FLOW_TRACE_FILE ?? '.code2flow/traces/runs.jsonl')
 }
 
 // 测试里需要重置单例，否则会跨用例复用旧路径。

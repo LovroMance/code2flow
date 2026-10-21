@@ -4,6 +4,7 @@ import type { RunTrace, TraceStep } from './trace.types'
 export interface TraceCollector {
   addStep(step: Omit<TraceStep, 'startedAt' | 'durationMs'> & { durationMs: number }): void
   countLlmRound(): void
+  setResponseModel?(model: string): void
   addUsage(input: { promptTokens?: number; completionTokens?: number; totalTokens?: number }): void
   setRetryCount(count: number): void
   setValidationErrors(errors: string[] | undefined): void

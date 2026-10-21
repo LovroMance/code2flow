@@ -30,6 +30,7 @@ export function createTraceCollector(input: {
   threadId?: string
   maxRetries?: number
   config?: ResolvedRunConfig
+  source?: RunTrace['source']
 }): TraceCollector {
   const config = input.config ?? resolveRunConfig({ maxRetries: input.maxRetries })
   const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
@@ -39,6 +40,8 @@ export function createTraceCollector(input: {
   let promptTokens = 0
   let completionTokens = 0
   let totalTokens = 0
+  let reportedRounds = 0
+  const responseModels = new Set<string>()
   let retryCount = 0
   let validationErrors: string[] = []
   let result: RunTrace['result']
@@ -60,9 +63,21 @@ export function createTraceCollector(input: {
     },
 
     addUsage(usage) {
+      // 只把完整、非负的供应商用量算作一次有效回报，缺失值不能伪装成零。
+      if (
+        ![usage.promptTokens, usage.completionTokens, usage.totalTokens].every(
+          (value) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+        )
+      )
+        return
+      reportedRounds += 1
       promptTokens += usage.promptTokens ?? 0
       completionTokens += usage.completionTokens ?? 0
       totalTokens += usage.totalTokens ?? 0
+    },
+
+    setResponseModel(model) {
+      if (model.trim()) responseModels.add(model)
     },
 
     setRetryCount(count) {
@@ -83,6 +98,8 @@ export function createTraceCollector(input: {
 
     async finish(): Promise<RunTrace> {
       return {
+        source: input.source,
+        responseModels: [...responseModels],
         runId,
         startedAt: new Date(startedAtMs).toISOString(),
         finishedAt: new Date().toISOString(),
@@ -100,6 +117,7 @@ export function createTraceCollector(input: {
         result,
         error,
         usage: {
+          reportedRounds,
           llmRounds,
           promptTokens,
           completionTokens,

@@ -88,6 +88,14 @@ SQLite 当前用于单机或单实例持久化；没有实现同线程并发请�
 
 ## 观测、测试与运行
 
+### Usage 控制台
+
+顶部「工作区 / 控制台」通过本地页面状态切换，工作区保持挂载，因此源码、流程图、问答和生成中的 SSE 不因切换丢失。控制台进入时及手动刷新时，通过 axios 请求 `GET /api/usage`。
+
+查询链路为 usage controller → usage service → JSONL reader，复用 `CODE2FLOW_TRACE_FILE`，不新增数据库。只扫描日志末尾 4 MiB，跳过截断、损坏、追问和明确标记为评估的记录，按开始时间倒序返回最多 50 条；较早日志超出扫描范围时页面提示。响应通过 Zod 白名单契约，不返回源码、原始错误或完整 trace。该接口与现有应用一样是单机使用范围，未增加用户鉴权或按用户隔离，公开部署前需要整体访问控制。
+
+新 trace 标记 online / eval 来源，并记录供应商响应模型名和有效 usage 回报轮数。一次生成内所有重试用量累加；失败仍保留已返回的用量，缺失或部分回报有明确标记。历史记录保留兼容，模型配置只称为请求模型，完整性和来源未知时明确展示。控制台只统计 DeepSeek 生成 token，不含 Jev、追问或金额估算；关闭观测后保留历史可读并提示新请求不再记录。原 SSE 契约保持不变。
+
 service 收口成功/失败和采集器落盘；标准模型回调覆盖生成与追问的轮次和供应商 Token 用量，标准节点回调只记录 analyze / validate / explain。原评估与 A/B 模块继续使用相同 service 和 trace 契约。
 
 Node.js 要求 >=22。根目录 `npm run dev` 同时启动双端，`npm run build` 构建双端，`npm run test:backend` 执行后端测试。集成测试使用本地 OpenAI 兼容 HTTP/SSE 服务，实际经过 ChatOpenAI、createAgent、StateGraph、SQLite、Express，不需要真实模型密钥。

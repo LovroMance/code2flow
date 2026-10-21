@@ -2,6 +2,8 @@ import type { SupportedLanguage } from '../../domain/flow/types'
 
 // 单次 graph 运行的结构化轨迹，是后续评估和 A/B 对比的唯一数据来源。
 export interface RunTrace {
+  source?: 'online' | 'eval'
+  responseModels?: string[]
   runId: string
   startedAt: string
   finishedAt: string
@@ -55,6 +57,7 @@ export interface RunTraceResultSummary {
 
 // 模型调用侧的用量统计，用于观察成本和轮次。
 export interface RunTraceUsage {
+  reportedRounds?: number
   llmRounds: number
   promptTokens: number
   completionTokens: number

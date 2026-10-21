@@ -10,7 +10,12 @@ import { createTraceCollector } from '../src/ai/observability/trace.builder'
 import { getCodeFlowCheckpointer } from '../src/ai/graph/checkpointer'
 import * as checkpointModule from '../src/ai/graph/checkpointer'
 import { resetTraceSinkForTesting } from '../src/ai/observability/trace.sink'
-import { code, createModelServer } from './fixtures/model.fixture'
+import { code, result, createModelServer } from './fixtures/model.fixture'
+
+// 此处验证生成与用量链路，语言检测使用固定结果，避免依赖真实 Jev 配置或网络。
+vi.mock('../src/ai/tools/detect-language.tool', () => ({
+  runDetectLanguage: vi.fn(async () => ({ language: 'javascript', confidence: 1, status: 'detected' }))
+}))
 
 let dir: string
 let server: Awaited<ReturnType<typeof createModelServer>> | undefined
@@ -36,7 +41,11 @@ afterAll(async () => {
 })
 
 async function useModel(replies: Parameters<typeof createModelServer>[0]) {
-  server = await createModelServer(replies)
+  // 生成工具仅提交图和映射，语言由 Jev 补齐。
+  server = await createModelServer(replies.map((reply) => ({
+    ...reply,
+    args: reply.args ?? { mermaid: result.mermaid, mappings: result.mappings }
+  })))
   vi.stubEnv('DEEPSEEK_API_KEY', 'test-only')
   vi.stubEnv('DEEPSEEK_BASE_URL', server.baseURL)
   return server
@@ -110,6 +119,18 @@ describe('HTTP / SSE and service observability', () => {
     expect(recorded.outcome).toBe('error')
     expect(recorded.error).toContain('401')
     expect(recorded.usage.llmRounds).toBe(1)
+    expect(recorded.usage.reportedRounds).toBe(0)
+  })
+
+  it('accumulates provider usage across a real graph retry', async () => {
+    const model = await useModel([{ args: { mermaid: 'invalid', mappings: [] } }, {}])
+    const trace = createTraceCollector({ code, mode: 'generate' })
+    await generateFlow({ code, maxRetries: 1 }, { trace, model: model.model })
+    const recorded = await trace.finish()
+    expect(recorded.usage).toMatchObject({
+      llmRounds: 2, reportedRounds: 2, totalTokens: 60, retryCount: 1
+    })
+    expect(recorded.responseModels).toEqual(['deepseek-chat'])
   })
 
   it('writes actual JSONL traces and records usage for both generation and follow-up', async () => {
@@ -134,6 +155,14 @@ describe('HTTP / SSE and service observability', () => {
       traces.every((trace) => trace.outcome === 'success' && trace.usage.totalTokens === 30)
     ).toBe(true)
     expect(traces[1].steps.map((step: { name: string }) => step.name)).toEqual(['explain'])
+    const usage = await request(app).get('/api/usage').expect(200)
+    expect(usage.body.records).toHaveLength(1)
+    expect(usage.body.records[0]).toMatchObject({
+      totalTokens: 30,
+      completeness: 'complete',
+      responseModels: ['deepseek-chat'],
+      source: 'online'
+    })
   })
 
   it('leaves the trace file absent when tracing is disabled', async () => {

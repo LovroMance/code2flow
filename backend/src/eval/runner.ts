@@ -84,7 +84,8 @@ async function runSingleCase(
   // 评估也必须带采集器，否则报告里的轮次/重试指标全是 0，A/B 就失去意义。
   const trace = createTraceCollector({
     code: evalCase.code,
-    mode: 'generate'
+    mode: 'generate',
+    source: 'eval'
   })
 
   try {

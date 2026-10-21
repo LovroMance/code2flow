@@ -43,6 +43,9 @@ export function createRunCallbacks(trace?: TraceCollector, onPartial?: (source: 
         )
           return
         const usage = generation.message.usage_metadata
+        const responseModel = generation.message.response_metadata.model_name
+          ?? generation.message.response_metadata.model
+        if (typeof responseModel === 'string') trace?.setResponseModel?.(responseModel)
         if (usage)
           trace?.addUsage({
             promptTokens: usage.input_tokens,

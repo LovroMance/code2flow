@@ -29,7 +29,7 @@ async function runFlow(input: CodeFlowGraphInput, options: CodeFlowGraphRunOptio
   const trace =
     options.trace ??
     (isTracingEnabled()
-      ? createTraceCollector({ ...input, mode: input.mode ?? 'generate' })
+      ? createTraceCollector({ ...input, mode: input.mode ?? 'generate', source: 'online' })
       : undefined)
   try {
     const state = await runCodeFlowGraph(input, {
