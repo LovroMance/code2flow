@@ -11,9 +11,16 @@ export function ensureMermaid() {
     startOnLoad: false,
     securityLevel: 'loose',
     theme: 'dark',
+    themeVariables: {
+      fontSize: '16px',
+      fontFamily: 'Aptos, Segoe UI, Microsoft YaHei UI, sans-serif'
+    },
     flowchart: {
-      useMaxWidth: true,
-      htmlLabels: true
+      useMaxWidth: false,
+      htmlLabels: true,
+      nodeSpacing: 32,
+      rankSpacing: 42,
+      padding: 14
     }
   })
 

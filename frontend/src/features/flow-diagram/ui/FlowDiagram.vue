@@ -1,166 +1,177 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useMermaidRenderer } from '../model/useMermaidRenderer'
+import { useDiagramViewport } from '../model/useDiagramViewport'
 import type { NodeMapping } from '../../../entities/flow/model/types'
 
 const props = defineProps<{
   mermaid: string
   mappings: NodeMapping[]
+  isStreaming?: boolean
 }>()
 
-const emit = defineEmits<{
-  'select-node': [nodeId: string]
-}>()
+const emit = defineEmits<{ 'select-node': [nodeId: string] }>()
+const expanded = ref(false)
 
-const { diagramElement, renderError } = useMermaidRenderer(
+async function selectNode(nodeId: string) {
+  // 专注查看时点击节点，回到双栏后再定位源码，避免编辑器被遮住。
+  expanded.value = false
+  await nextTick()
+  emit('select-node', nodeId)
+}
+
+const { diagramElement, renderedSvg, renderError, isRendering } = useMermaidRenderer(
   () => props.mermaid,
   () => props.mappings,
-  (nodeId) => emit('select-node', nodeId)
+  selectNode,
+  () => !!props.isStreaming
 )
+const {
+  viewportElement,
+  camera,
+  isDragging,
+  isOverviewDragging,
+  overviewNodes,
+  overviewEdges,
+  overviewViewBox,
+  visibleRegion,
+  fitView,
+  readView,
+  changeZoom,
+  handleWheel,
+  handleKeydown,
+  handlePointerDown,
+  handlePointerMove,
+  stopDragging,
+  handleOverviewPointerDown,
+  handleOverviewPointerMove,
+  stopOverviewDragging
+} = useDiagramViewport(renderedSvg, () => !!props.isStreaming)
 
-const scale = ref(1)
-const viewportElement = ref<HTMLElement | null>(null)
-const isDragging = ref(false)
-const offsetX = ref(0)
-const offsetY = ref(0)
-let dragStartX = 0
-let dragStartY = 0
-let startOffsetX = 0
-let startOffsetY = 0
-
-function zoomIn() {
-  scale.value = Math.min(2.5, Number((scale.value + 0.1).toFixed(2)))
+function handleEscape(event: KeyboardEvent) {
+  if (event.key === 'Escape') expanded.value = false
 }
-
-function zoomOut() {
-  scale.value = Math.max(0.45, Number((scale.value - 0.1).toFixed(2)))
-}
-
-function resetView() {
-  scale.value = 1
-  offsetX.value = 0
-  offsetY.value = 0
-}
-
-function handleWheel(event: WheelEvent) {
-  event.preventDefault()
-
-  if (event.deltaY < 0) {
-    zoomIn()
-    return
-  }
-
-  zoomOut()
-}
-
-function handlePointerDown(event: PointerEvent) {
-  if (!viewportElement.value || event.button !== 0) {
-    return
-  }
-
-  const target = event.target instanceof Element ? event.target : null
-
-  if (target?.closest('button')) {
-    return
-  }
-
-  // 点击 Mermaid 节点时保留原生节点点击行为，不进入画布拖动。
-  if (target?.closest('.node, g.node, .label, .edgeLabel, .cluster')) {
-    return
-  }
-
-  isDragging.value = true
-  dragStartX = event.clientX
-  dragStartY = event.clientY
-  startOffsetX = offsetX.value
-  startOffsetY = offsetY.value
-
-  viewportElement.value.setPointerCapture(event.pointerId)
-}
-
-function handlePointerMove(event: PointerEvent) {
-  if (!viewportElement.value || !isDragging.value) {
-    return
-  }
-
-  const deltaX = event.clientX - dragStartX
-  const deltaY = event.clientY - dragStartY
-
-  offsetX.value = startOffsetX + deltaX
-  offsetY.value = startOffsetY + deltaY
-}
-
-function stopDragging(event?: PointerEvent) {
-  if (!isDragging.value) {
-    return
-  }
-
-  isDragging.value = false
-
-  if (viewportElement.value && event) {
-    viewportElement.value.releasePointerCapture(event.pointerId)
-  }
-}
-
-onBeforeUnmount(() => {
-  isDragging.value = false
-})
+onMounted(() => document.addEventListener('keydown', handleEscape))
+onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
 </script>
 
 <template>
-  <div class="diagram-shell">
-    <div class="diagram-preview">
-      <div class="diagram-stage device-frame">
-        <div class="diagram-toolbar">
+  <div class="diagram-shell" :class="{ 'diagram-shell-expanded': expanded }">
+    <div class="diagram-stage">
+      <div class="diagram-toolbar">
+        <span class="diagram-toolbar-status" role="status">
+          <span class="diagram-status-dot" :class="{ 'is-updating': isStreaming || isRendering }" />
+          {{ isStreaming ? '正在整理流程' : `${overviewNodes.length} 个节点` }}
+        </span>
+        <div class="diagram-toolbar-actions">
           <button
             type="button"
             class="diagram-tool-button"
             aria-label="缩小流程图"
-            title="缩小流程图"
-            @click="zoomOut"
+            @click="changeZoom(camera.scale / 1.2)"
           >
             −
           </button>
-          <span class="diagram-zoom-label">{{ Math.round(scale * 100) }}%</span>
+          <span class="diagram-zoom-label">{{ Math.round(camera.scale * 100) }}%</span>
           <button
             type="button"
             class="diagram-tool-button"
             aria-label="放大流程图"
-            title="放大流程图"
-            @click="zoomIn"
+            @click="changeZoom(camera.scale * 1.2)"
           >
             +
+          </button>
+          <span class="diagram-toolbar-divider" />
+          <button
+            type="button"
+            class="diagram-tool-button diagram-tool-button-wide"
+            title="查看完整流程结构"
+            @click="fitView"
+          >
+            适应全图
           </button>
           <button
             type="button"
             class="diagram-tool-button diagram-tool-button-wide"
-            @click="resetView"
+            title="以原始字号阅读，配合小地图导航"
+            @click="readView"
           >
-            重置视图
+            100% 阅读
+          </button>
+          <button
+            type="button"
+            class="diagram-tool-button diagram-tool-button-wide diagram-focus-button"
+            :aria-pressed="expanded"
+            @click="expanded = !expanded"
+          >
+            {{ expanded ? '退出专注 · Esc' : '专注视图' }}
           </button>
         </div>
+      </div>
+      <div class="diagram-canvas">
         <div class="diagram-stage-grid" />
         <div
           ref="viewportElement"
           class="diagram-viewport"
           :class="{ 'diagram-viewport-dragging': isDragging }"
+          aria-label="流程图画布，滚轮缩放，拖动空白区域平移"
+          tabindex="0"
+          @keydown="handleKeydown"
           @wheel="handleWheel"
           @pointerdown="handlePointerDown"
           @pointermove="handlePointerMove"
           @pointerup="stopDragging"
           @pointercancel="stopDragging"
-          @pointerleave="stopDragging"
+          @lostpointercapture="stopDragging"
         >
           <div
             class="diagram-render"
-            :style="{ transform: `translate(${offsetX}px, ${offsetY}px) scale(${scale})` }"
+            :style="{ transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.scale})` }"
           >
-            <div ref="diagramElement" class="diagram-render-content"></div>
+            <div ref="diagramElement" class="diagram-render-content" />
           </div>
         </div>
-        <div v-if="renderError" class="diagram-error">
+        <div
+          v-if="overviewNodes.length"
+          class="diagram-overview"
+          :class="{ 'diagram-overview-dragging': isOverviewDragging }"
+        >
+          <div class="diagram-overview-heading"><span>全局导航</span><span>拖动 / 点击</span></div>
+          <svg
+            :viewBox="overviewViewBox"
+            role="img"
+            aria-label="流程图全局导航，可拖动视口框或点击任意位置移动主视图"
+            tabindex="0"
+            @keydown="handleKeydown"
+            @pointerdown="handleOverviewPointerDown"
+            @pointermove="handleOverviewPointerMove"
+            @pointerup="stopOverviewDragging"
+            @pointercancel="stopOverviewDragging"
+            @lostpointercapture="stopOverviewDragging"
+          >
+            <path
+              v-for="(edge, index) in overviewEdges"
+              :key="`edge-${index}`"
+              :d="edge.path"
+              :transform="edge.transform"
+              class="diagram-overview-edge"
+            />
+            <rect
+              v-for="(node, index) in overviewNodes"
+              :key="index"
+              v-bind="node"
+              class="diagram-overview-node"
+              rx="3"
+            />
+            <rect v-bind="visibleRegion" class="diagram-overview-region" />
+          </svg>
+        </div>
+        <div v-if="renderError" class="diagram-error" role="alert">
           {{ renderError }}
         </div>
+      </div>
+      <div class="diagram-footer">
+        <span>滚轮以指针为中心缩放 · 拖动空白处平移</span><span>点击节点定位源码</span>
       </div>
     </div>
   </div>

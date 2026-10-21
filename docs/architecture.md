@@ -8,6 +8,8 @@
 
 前端仍采用 Vue 3 / Monaco / Mermaid，`pages` 组织页面，`features` 提供编辑、生成、画图和追问逻辑，`entities` 定义前端契约，`shared` 提供 API 与库初始化。
 
+流程图使用独立相机控制缩放和平移，提供适应全图、原始字号阅读、专注视图和可点击的全局小地图。流式 SVG 在屏幕外串行渲染并合并高频更新，成功后替换画布；更新时以首节点为锚点保留观察位置，生成结束不强制缩小视图。小地图复用已渲染节点与连线几何，不额外调用 Mermaid。
+
 后端是 Express → controller → service → 原生 StateGraph → LangChain createAgent / ChatOpenAI。所有生成请求走同一状态图，不再按 provider 维护两套驱动。
 
 ```mermaid

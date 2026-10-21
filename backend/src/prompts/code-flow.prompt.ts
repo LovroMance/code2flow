@@ -3,11 +3,25 @@ export const CODE_FLOW_PROMPT_RULES = `
 通过 submit_code_flow_result 工具提交结果，不输出额外文字；字段结构以工具 schema 为准。
 
 生成要求：
-- Mermaid 使用完整可渲染的 flowchart TD，节点标签简洁易懂，可合并连续的线性步骤。
-- 节点标签使用双引号包裹，例如 n_action_2["await fetchUser()"]；标签内的双引号用 #quot; 转义。
+- Mermaid 使用完整可渲染的 flowchart TD。Mermaid 节点标签与 mapping.label 保持一致，使用简短的中文自然语言概括职责，动作节点采用“动作 + 对象”，判断节点采用明确问句。
+- 不直接以函数名、变量名、调用表达式或赋值语句作为节点标签。例如 await fetchUser() 概括为“获取用户信息”，user.isActive 概括为“用户是否已激活？”。description 保留较详细的作用说明，可以引用相关函数名和变量名辅助对照源码。
+- 优先按职责合并同一执行路径上的连续语句，不按代码行或每次函数调用逐个拆节点。同一目的下的数据请求、响应解析和字段提取可以合并；参数准备、临时变量和赋值不必单独成节点。不同职责仍需区分，不为了减少节点而强行合并或设置固定节点数量。
+- 保留关键判断、不同条件分支、循环、异常处理和提前返回等控制流边界，不能跨分支合并，也不能把影响执行路径的判断隐藏在普通动作节点中。异步步骤按源码实际控制关系表达，不补画源码未体现的异常处理或成功/失败分支。
+- 自然语言概括必须有源码依据，不臆造函数内部实现或业务含义；信息不足时使用准确的中性描述。Vue 中独立的事件、watch、computed 和生命周期入口不能合并成虚假的顺序执行流程。
+- 节点标签使用双引号包裹，例如 n_action_2["获取用户信息"]、n_decision_4{"用户是否已激活？"}；标签内的双引号用 #quot; 转义。
 - 图中节点与 mappings 一一对应，nodeId 完全一致；使用 n_<kind>_<lineStart>，同一行有多个节点时加后缀。
 - 行号范围必须对应原始源码的实际执行语句，不指向注释、空行或仅含大括号的行；description 可参考注释。
+- 一个节点可以对应多行代码。合并节点的 lineStart 和 lineEnd 覆盖该职责从第一条到最后一条实际语句，不只映射其中一行；范围内部可以包含空行或注释。不确定跨行节点的列位置时省略 columnStart 和 columnEnd。
 - 根据提供的校验反馈修正结果。
+
+多行源码合并示例（仅说明节点粒度，完整结果仍须包含图中全部节点）：
+第 1 行：const response = await fetch('/api/user')
+第 2 行：const data = await response.json()
+第 3 行：const user = data.user
+这三行共同完成“获取并整理用户信息”，应合并为一个 action 节点，不分别为 response、data 和 user 建节点。
+对应 Mermaid 节点：n_action_1["获取并整理用户信息"]
+对应 mapping：{"nodeId":"n_action_1","kind":"action","label":"获取并整理用户信息","description":"请求用户接口，解析响应并提取用户数据","lineStart":1,"lineEnd":3}
+实际生成时使用输入源码的真实行号；如果后续存在用户状态判断，应另建 decision 节点并保留各分支。
 `.trim()
 
 export const FOLLOW_UP_PROMPT = `你是 Code2Flow 的解释型助手。基于当前源码、已有流程图和历史问答回答用户问题，不要重新生成流程图。

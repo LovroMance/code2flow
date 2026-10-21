@@ -43,10 +43,9 @@ export async function generateCodeFlowDraft(
     // 系统提示词由两部分组成：通用规则 + 语言特定规则
     systemPrompt,
     // 按照 JSON Schema 校验结构化结果，避免模型输出不符合预期的内容。
-    responseFormat: toolStrategy(
-      FlowDraftSchema.meta({ title: 'submit_code_flow_result' }),
-      { handleError: false }
-    ),
+    responseFormat: toolStrategy(FlowDraftSchema.meta({ title: 'submit_code_flow_result' }), {
+      handleError: false
+    }),
     middleware: [modelCallLimitMiddleware({ runLimit: 1, exitBehavior: 'error' })]
   })
   const output = await agent.invoke(
@@ -55,12 +54,15 @@ export async function generateCodeFlowDraft(
   )
 
   console.log('[code-flow][chain] agent output')
-  // console.dir(output, { depth: null })
+  console.dir(output, { depth: null })
 
   // 语言只取 Jev 结果，模型无需输出，也无法覆盖它；Zod 校验行号等跨字段约束。
   const draft = FlowDraftSchema.parse(output.structuredResponse)
-  const result = GenerationResultSchema.parse({ ...draft, detectedLanguage: input.detectedLanguage })
+  const result = GenerationResultSchema.parse({
+    ...draft,
+    detectedLanguage: input.detectedLanguage
+  })
   console.log('[code-flow][chain] validated result')
-  console.dir(result, { depth: null })
+  // console.dir(result, { depth: null })
   return result
 }

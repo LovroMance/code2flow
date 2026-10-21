@@ -1,4 +1,4 @@
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import type { NodeMapping } from '../../../entities/flow/model/types'
 import { ensureMermaid } from '../../../shared/lib/mermaid/setup'
 import { buildInteractiveMermaid } from './buildInteractiveMermaid'
@@ -11,96 +11,93 @@ declare global {
 
 let renderSequence = 0
 
+// 流式更新合并后串行渲染，在屏幕外测量，成功后才替换当前图，避免挤压页面和闪空。
 export function useMermaidRenderer(
   mermaidSource: () => string,
   mappings: () => NodeMapping[],
-  onSelectNode: (nodeId: string) => void
+  onSelectNode: (nodeId: string) => void,
+  isStreaming: () => boolean = () => false
 ) {
   const diagramElement = ref<HTMLElement | null>(null)
+  const renderedSvg = shallowRef<SVGSVGElement | null>(null)
   const renderError = ref('')
-  let latestRequestId = 0
+  const isRendering = ref(false)
+  let revision = 0
+  let disposed = false
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let pending = false
+
+  function scheduleRender() {
+    revision += 1
+    pending = true
+    if (!isStreaming() && timer) {
+      clearTimeout(timer)
+      timer = undefined
+    }
+    if (isRendering.value || timer || disposed) return
+    // 定期提交最新快照，而不是每个 token 都重新计算布局。
+    timer = setTimeout(
+      () => {
+        timer = undefined
+        void renderDiagram()
+      },
+      isStreaming() ? 450 : 0
+    )
+  }
 
   async function renderDiagram() {
-    if (!diagramElement.value) {
-      return
-    }
-
-    const requestId = ++latestRequestId
-
-    const mermaid = ensureMermaid()
-    const baseSource = mermaidSource()
+    if (!diagramElement.value || disposed) return
+    const currentRevision = revision
+    const source = mermaidSource()
     const currentMappings = mappings()
+    pending = false
+    isRendering.value = true
 
-    renderError.value = ''
-    window.code2flowNodeClick = onSelectNode
+    const scratch = document.createElement('div')
+    scratch.setAttribute('aria-hidden', 'true')
+    scratch.style.cssText =
+      'position:fixed;left:-100000px;top:0;width:10000px;visibility:hidden;pointer-events:none;'
+    document.body.append(scratch)
 
     try {
-      const id = `code2flow-mermaid-${renderSequence++}`
-      const { svg, bindFunctions } = await mermaid.render(
-        id,
-        buildInteractiveMermaid(baseSource, currentMappings)
+      window.code2flowNodeClick = onSelectNode
+      const { svg, bindFunctions } = await ensureMermaid().render(
+        `code2flow-mermaid-${renderSequence++}`,
+        buildInteractiveMermaid(source, currentMappings),
+        scratch
       )
-
-      if (!diagramElement.value || requestId !== latestRequestId) {
-        return
-      }
+      if (disposed || !diagramElement.value || currentRevision !== revision) return
 
       diagramElement.value.innerHTML = svg
-      const svgElement = diagramElement.value.querySelector('svg')
-
-      if (svgElement instanceof SVGSVGElement) {
-        const viewBoxWidth = svgElement.viewBox.baseVal.width
-        const viewBoxHeight = svgElement.viewBox.baseVal.height
-
-        svgElement.removeAttribute('width')
-
-        if (viewBoxWidth > 0) {
-          svgElement.style.width = `${viewBoxWidth}px`
-        }
-
-        if (viewBoxHeight > 0) {
-          svgElement.style.height = `${viewBoxHeight}px`
-        } else {
-          svgElement.style.height = 'auto'
-        }
+      const element = diagramElement.value.querySelector('svg')
+      if (element instanceof SVGSVGElement) {
+        const { width, height } = element.viewBox.baseVal
+        element.style.width = `${width}px`
+        element.style.height = `${height}px`
+        element.style.maxWidth = 'none'
+        renderedSvg.value = element
       }
-
       bindFunctions?.(diagramElement.value)
-      console.log(
-        `[code-flow][frontend][render] success id=${id} sourceLength=${baseSource.length} mappings=${currentMappings.length}`
-      )
+      renderError.value = ''
     } catch (error) {
-      if (requestId !== latestRequestId) {
-        return
+      // 不完整的流式片段保留上一张有效图；最终失败仍明确显示错误。
+      if (!disposed && currentRevision === revision && !isStreaming()) {
+        renderError.value = error instanceof Error ? error.message : 'Mermaid 渲染失败'
       }
-
-      renderError.value = error instanceof Error ? error.message : 'Mermaid 渲染失败'
-      console.log(
-        `[code-flow][frontend][render] failed sourceLength=${baseSource.length} mappings=${currentMappings.length} message=${renderError.value}`
-      )
+    } finally {
+      scratch.remove()
+      isRendering.value = false
+      if (pending && !disposed) scheduleRender()
     }
   }
 
-  watch(
-    [mermaidSource, mappings],
-    () => {
-      void nextTick(() => renderDiagram())
-    },
-    { immediate: true, flush: 'post' }
-  )
-
-  onMounted(() => {
-    void nextTick(() => renderDiagram())
-  })
-
+  watch([mermaidSource, mappings, isStreaming], scheduleRender, { flush: 'post' })
+  onMounted(() => void nextTick(scheduleRender))
   onBeforeUnmount(() => {
-    if (window.code2flowNodeClick === onSelectNode) {
-      delete window.code2flowNodeClick
-    }
+    disposed = true
+    if (timer) clearTimeout(timer)
+    if (window.code2flowNodeClick === onSelectNode) delete window.code2flowNodeClick
   })
 
-  return {
-    diagramElement,
-    renderError
-  }
+  return { diagramElement, renderedSvg, renderError, isRendering }
 }

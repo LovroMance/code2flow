@@ -284,7 +284,7 @@ button:not(:disabled) {
 /* 两个主列共享剩余高度；右列保留独立的图形和问答区域。 */
 .workspace-shell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(300px, 0.72fr) minmax(0, 1.28fr);
   gap: 14px;
   flex: 1 1 0;
   min-width: 0;
@@ -302,7 +302,7 @@ button:not(:disabled) {
 }
 .analysis-panel {
   display: grid;
-  grid-template-rows: minmax(180px, 1fr) minmax(210px, 0.5fr);
+  grid-template-rows: minmax(240px, 1fr) 180px;
   gap: 14px;
   min-width: 0;
   min-height: 0;
@@ -470,15 +470,70 @@ button:not(:disabled) {
   z-index: 2;
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 8px;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: #1b2024;
   flex: 0 0 auto;
 }
-.diagram-toolbar::before {
-  content: '滚轮缩放 · 拖动平移';
-  margin-right: auto;
+.diagram-toolbar-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 105px;
+  font-size: 11px;
+  color: var(--text-soft);
+}
+.diagram-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.diagram-status-dot.is-updating {
+  background: #e4be7d;
+}
+.diagram-toolbar-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.diagram-toolbar-divider {
+  height: 18px;
+  width: 1px;
+  background: var(--border);
+  margin-inline: 4px;
+}
+.diagram-canvas {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+  contain: layout paint;
+}
+.diagram-footer {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
   color: var(--text-muted);
   font-size: 10px;
+  background: #1b2024;
+}
+.diagram-shell-expanded {
+  position: fixed;
+  inset: 16px;
+  z-index: 100;
+  box-shadow: 0 0 0 20px #080b0de6;
+}
+.diagram-focus-button {
+  color: var(--accent);
+  border-color: #617c70;
 }
 .diagram-tool-button {
   min-width: 29px;
@@ -516,15 +571,11 @@ button:not(:disabled) {
   background-size: 18px 18px;
 }
 .diagram-viewport {
-  position: relative;
+  position: absolute;
+  inset: 0;
   z-index: 1;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  flex: 1 1 0;
   min-height: 0;
   min-width: 0;
-  padding: 15px 20px 22px;
   overflow: hidden;
   cursor: grab;
   touch-action: none;
@@ -532,12 +583,70 @@ button:not(:disabled) {
 .diagram-viewport-dragging {
   cursor: grabbing;
 }
+.diagram-viewport:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -2px;
+}
 .diagram-render {
   display: inline-block;
-  position: relative;
-  flex-shrink: 0;
+  position: absolute;
+  top: 0;
+  left: 0;
   transform-origin: top left;
   will-change: transform;
+}
+.diagram-overview {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 2;
+  width: 158px;
+  padding: 8px;
+  border: 1px solid #4b5a52;
+  border-radius: 7px;
+  background: #191f23f5;
+  box-shadow: 0 4px 18px #0004;
+}
+.diagram-overview-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  color: var(--text-soft);
+  font-size: 10px;
+}
+.diagram-overview-heading span + span {
+  color: var(--text-muted);
+}
+.diagram-overview svg {
+  display: block;
+  width: 100%;
+  height: 96px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.diagram-overview-dragging svg {
+  cursor: grabbing;
+}
+.diagram-overview-edge {
+  fill: none;
+  stroke: #849d91;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.diagram-overview-node {
+  fill: #5e796c;
+  stroke: #b3c9be;
+  stroke-width: 0.6;
+  vector-effect: non-scaling-stroke;
+}
+.diagram-overview-region {
+  fill: #b8efcf18;
+  stroke: #c3eedb;
+  stroke-width: 1.3;
+  vector-effect: non-scaling-stroke;
+  pointer-events: all;
 }
 .diagram-render-content {
   display: block;
@@ -597,13 +706,14 @@ button:not(:disabled) {
 .followup-panel {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: auto auto 58px minmax(42px, 1fr);
-  gap: 9px 10px;
+  grid-template-rows: auto auto 44px minmax(24px, 1fr);
+  gap: 6px 10px;
+  padding: 10px;
 }
 .followup-panel .panel-header {
   grid-column: 1 / -1;
   margin: 0;
-  padding-bottom: 9px;
+  padding-bottom: 6px;
 }
 .followup-panel-copy {
   grid-column: 1 / -1;
@@ -728,7 +838,7 @@ button:not(:disabled) {
     row-gap: 8px;
   }
   .analysis-panel {
-    grid-template-rows: minmax(160px, 1fr) 200px;
+    grid-template-rows: minmax(200px, 1fr) 170px;
     gap: 10px;
   }
   .followup-panel {
@@ -812,7 +922,7 @@ button:not(:disabled) {
     height: clamp(340px, 53dvh, 500px);
   }
   .analysis-panel {
-    grid-template-rows: 360px 280px;
+    grid-template-rows: 520px 280px;
     gap: 12px;
   }
   .panel {

@@ -178,7 +178,12 @@ function handleSelectNode(nodeId: string) {
               >
               <p>点击节点定位源码 · 支持流式预览与行号映射</p>
             </div>
-            <FlowDiagram :mermaid="mermaid" :mappings="mappings" @select-node="handleSelectNode" />
+            <FlowDiagram
+              :mermaid="mermaid"
+              :mappings="mappings"
+              :is-streaming="isLoading"
+              @select-node="handleSelectNode"
+            />
           </section>
 
           <section class="panel followup-panel workspace-shell-card">
