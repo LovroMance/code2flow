@@ -4,6 +4,7 @@ import type { CodeEditorExpose } from '../../features/code-editor/model/types'
 import CodeEditor from '../../features/code-editor/ui/CodeEditor.vue'
 import FlowDiagram from '../../features/flow-diagram/ui/FlowDiagram.vue'
 import { useWorkspacePage } from '../../features/workspace/model/useWorkspacePage'
+import { CODE_FILE_ACCEPT } from '../../entities/flow/model/languages'
 
 const editorRef = ref<CodeEditorExpose | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
@@ -75,7 +76,7 @@ function handleSelectNode(nodeId: string) {
           ref="fileInputRef"
           class="sr-only-input"
           type="file"
-          accept=".js,.ts,.vue,.jsx,.tsx,.java,.c,.cpp,.h,.hpp,.py,.go,.rs,.cs,.php,text/plain"
+          :accept="CODE_FILE_ACCEPT"
           @change="handleFileChange"
         />
         <div class="hero-copy">

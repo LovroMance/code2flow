@@ -1,6 +1,6 @@
 import { createAgent, modelCallLimitMiddleware, toolStrategy } from 'langchain'
 import { HumanMessage, SystemMessage } from '@langchain/core/messages'
-import { GenerationResultSchema } from '../../domain/flow/schema'
+import { FlowDraftSchema, GenerationResultSchema } from '../../domain/flow/schema'
 import type { SupportedLanguage } from '../../domain/flow/types'
 import { CODE_FLOW_PROMPT_RULES } from '../../prompts/code-flow.prompt'
 import { buildLanguageSpecificSystemPrompt } from '../prompts/code-flow-language.system.prompt'
@@ -44,7 +44,7 @@ export async function generateCodeFlowDraft(
     systemPrompt,
     // 按照 JSON Schema 校验结构化结果，避免模型输出不符合预期的内容。
     responseFormat: toolStrategy(
-      GenerationResultSchema.meta({ title: 'submit_code_flow_result' }),
+      FlowDraftSchema.meta({ title: 'submit_code_flow_result' }),
       { handleError: false }
     ),
     middleware: [modelCallLimitMiddleware({ runLimit: 1, exitBehavior: 'error' })]
@@ -57,8 +57,9 @@ export async function generateCodeFlowDraft(
   console.log('[code-flow][chain] agent output')
   console.dir(output, { depth: null })
 
-  // toolStrategy 做 JSON Schema 校验，Zod 再兜住行号等跨字段约束。
-  const result = GenerationResultSchema.parse(output.structuredResponse)
+  // 语言只取 Jev 结果，模型无需输出，也无法覆盖它；Zod 校验行号等跨字段约束。
+  const draft = FlowDraftSchema.parse(output.structuredResponse)
+  const result = GenerationResultSchema.parse({ ...draft, detectedLanguage: input.detectedLanguage })
   console.log('[code-flow][chain] validated result')
   console.dir(result, { depth: null })
   return result

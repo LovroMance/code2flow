@@ -1,161 +1,69 @@
 import { z } from 'zod'
-import { SupportedLanguageSchema, type SupportedLanguage } from '../../domain/flow/language'
+import { LanguageChoiceSchema, LanguageDetectionSchema } from '../../domain/flow/schema'
+import type { LanguageDetection } from '../../domain/flow/types'
+import { LanguageDetectionConfigError, requestLanguageChoice } from '../clients/jev.client'
 
-export const DetectLanguageResultSchema = z.object({
-  language: SupportedLanguageSchema,
-  confidence: z.number().min(0).max(1)
+export const DetectLanguageResultSchema = LanguageDetectionSchema
+
+const ConfigSchema = z.object({
+  model: z.string().trim().min(1),
+  timeout: z.coerce.number().int().min(1).max(60000),
+  minConfidence: z.coerce.number().min(0).max(1)
 })
 
-export function runDetectLanguage(code: string) {
-  const normalized = code.replace(/\r\n/g, '\n')
-  const candidates = [
-    scoreVue(normalized),
-    scoreTypeScript(normalized),
-    scoreJava(normalized),
-    scoreCpp(normalized),
-    scoreC(normalized),
-    scorePython(normalized),
-    scoreGo(normalized),
-    scoreRust(normalized),
-    scoreCSharp(normalized),
-    scorePhp(normalized),
-    scoreJavaScript(normalized)
-  ].sort((left, right) => right.score - left.score)
-
-  const best = candidates[0]
-
-  if (!best || best.score <= 0) {
-    return DetectLanguageResultSchema.parse({
-      language: 'unknown',
-      confidence: 0.2
+// Jev 只负责分类；临时失败降级为 unknown，流程图仍可使用通用规则生成。
+export async function runDetectLanguage(code: string): Promise<LanguageDetection> {
+  const config = ConfigSchema.safeParse({
+    model: process.env.TYPESAFE_DEFAULT_MODEL ?? 'jev-1.14.0',
+    timeout: process.env.CODE2FLOW_LANGUAGE_TIMEOUT_MS ?? 5000,
+    minConfidence: process.env.CODE2FLOW_LANGUAGE_MIN_CONFIDENCE ?? 0.6
+  })
+  if (!config.success) {
+    console.error('[code-flow][jev] config-error', {
+      invalidFields: config.error.issues.map((issue) => issue.path.join('.'))
     })
+    throw new LanguageDetectionConfigError('Jev 模型、超时或置信度配置无效')
   }
 
-  return DetectLanguageResultSchema.parse({
-    language: best.language,
-    confidence: Math.min(1, Number((best.score / 10).toFixed(2)))
+  console.info('[code-flow][jev] detection-start', {
+    codeLength: code.length,
+    minConfidence: config.data.minConfidence
   })
-}
 
-function scoreVue(code: string) {
-  return scoreLanguage('vue', code, [
-    /<template[\s>]/i,
-    /<script\s+setup/i,
-    /<script[^>]*lang=["']ts["']/i,
-    /from\s+['"]vue['"]/,
-    /\bdefineProps\s*\(/,
-    /\bdefineEmits\s*\(/
-  ])
-}
-
-function scoreTypeScript(code: string) {
-  return scoreLanguage('typescript', code, [
-    /\binterface\s+[A-Z_a-z]\w*/,
-    /\btype\s+[A-Z_a-z]\w*\s*=/,
-    /:\s*(string|number|boolean|void|unknown|never|any|Record<|Promise<)/,
-    /\bimplements\s+[A-Z_a-z]\w*/,
-    /\bimport\s+type\b/,
-    /\bas\s+const\b/
-  ])
-}
-
-function scoreJavaScript(code: string) {
-  return scoreLanguage('javascript', code, [
-    /\bfunction\s+[A-Z_a-z]\w*\s*\(/,
-    /\b(const|let|var)\s+[A-Z_a-z_$][\w$]*\s*=/,
-    /=>\s*{/,
-    /\bmodule\.exports\b/,
-    /\bexport\s+default\b/,
-    /\bconsole\.log\s*\(/
-  ])
-}
-
-function scoreJava(code: string) {
-  return scoreLanguage('java', code, [
-    /\bpublic\s+class\s+[A-Z_a-z]\w*/,
-    /\bpackage\s+[\w.]+;/,
-    /\bpublic\s+static\s+void\s+main\s*\(/,
-    /\bSystem\.out\.println\s*\(/,
-    /\bimport\s+java\./
-  ])
-}
-
-function scoreCpp(code: string) {
-  return scoreLanguage('cpp', code, [
-    /#include\s*<iostream>/,
-    /\bstd::/,
-    /\busing\s+namespace\s+std\s*;/,
-    /\bcout\s*<</,
-    /\bclass\s+[A-Z_a-z]\w*\s*{/,
-    /\btemplate\s*</
-  ])
-}
-
-function scoreC(code: string) {
-  return scoreLanguage('c', code, [
-    /#include\s*<stdio\.h>/,
-    /\bprintf\s*\(/,
-    /\bscanf\s*\(/,
-    /\bint\s+main\s*\(/,
-    /\bmalloc\s*\(/
-  ])
-}
-
-function scorePython(code: string) {
-  return scoreLanguage('python', code, [
-    /^\s*def\s+[A-Z_a-z]\w*\s*\(/m,
-    /^\s*class\s+[A-Z_a-z]\w*\s*[:(]/m,
-    /^\s*import\s+[A-Z_a-z_][\w.]*/m,
-    /^\s*from\s+[A-Z_a-z_][\w.]*\s+import\s+/m,
-    /if\s+__name__\s*==\s*['"]__main__['"]/
-  ])
-}
-
-function scoreGo(code: string) {
-  return scoreLanguage('go', code, [
-    /^\s*package\s+\w+/m,
-    /^\s*func\s+[A-Z_a-z]\w*\s*\(/m,
-    /fmt\.Print/,
-    /^\s*import\s+\(/m,
-    /\bgo\s+[A-Z_a-z]\w*\(/
-  ])
-}
-
-function scoreRust(code: string) {
-  return scoreLanguage('rust', code, [
-    /^\s*fn\s+main\s*\(/m,
-    /\blet\s+mut\s+/,
-    /\bprintln!\s*\(/,
-    /\bimpl\s+[A-Z_a-z]\w*/,
-    /\buse\s+std::/
-  ])
-}
-
-function scoreCSharp(code: string) {
-  return scoreLanguage('csharp', code, [
-    /\busing\s+System\s*;/,
-    /\bnamespace\s+[A-Z_a-z]\w*/,
-    /\bConsole\.WriteLine\s*\(/,
-    /\bpublic\s+class\s+[A-Z_a-z]\w*/,
-    /\bstatic\s+void\s+Main\s*\(/
-  ])
-}
-
-function scorePhp(code: string) {
-  return scoreLanguage('php', code, [
-    /<\?php/,
-    /\becho\s+/,
-    /\$\w+\s*=/,
-    /\bfunction\s+[A-Z_a-z]\w*\s*\(/,
-    /\bnamespace\s+[A-Z_a-z\\]\w*/
-  ])
-}
-
-function scoreLanguage(language: SupportedLanguage, code: string, patterns: RegExp[]) {
-  const score = patterns.reduce((total, pattern) => total + (pattern.test(code) ? 2 : 0), 0)
-
-  return {
-    language,
-    score
+  try {
+    const raw = await requestLanguageChoice(code, config.data.model, config.data.timeout)
+    const answer = LanguageChoiceSchema.parse(raw)
+    const uncertain = answer.choice === 'unknown' || answer.confidence < config.data.minConfidence
+    console.info('[code-flow][jev] detection-result', {
+      choice: answer.choice,
+      confidence: answer.confidence,
+      language: uncertain ? 'unknown' : answer.choice,
+      status: uncertain ? 'uncertain' : 'detected',
+      reason:
+        answer.choice === 'unknown' ? 'unknown_choice' : uncertain ? 'low_confidence' : 'accepted',
+      topCandidates: Object.entries(answer.probabilities)
+        .sort((left, right) => right[1] - left[1])
+        .slice(0, 3)
+        .map(([language, probability]) => ({ language, probability }))
+    })
+    return {
+      language: uncertain ? 'unknown' : answer.choice,
+      choice: answer.choice,
+      confidence: answer.confidence,
+      probabilities: answer.probabilities,
+      status: uncertain ? 'uncertain' : 'detected'
+    }
+  } catch (error) {
+    if (error instanceof LanguageDetectionConfigError) throw error
+    const reason = error instanceof z.ZodError ? 'invalid_response' : 'request_failed'
+    console.warn('[code-flow][jev] detection-fallback', {
+      model: config.data.model,
+      language: 'unknown',
+      reason,
+      errorType: error instanceof Error ? error.name : 'UnknownError',
+      invalidFields:
+        error instanceof z.ZodError ? error.issues.map((issue) => issue.path.join('.')) : undefined
+    })
+    return { language: 'unknown', confidence: 0, status: 'unavailable', reason }
   }
 }

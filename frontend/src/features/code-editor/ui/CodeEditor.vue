@@ -4,6 +4,8 @@ import type { editor } from 'monaco-editor'
 import { computed, shallowRef } from 'vue'
 import type { NodeMapping, SupportedLanguage } from '../../../entities/flow/model/types'
 import type { CodeEditorExpose } from '../model/types'
+import { LANGUAGE_OPTIONS } from '../../../entities/flow/model/languages'
+import { languages } from 'monaco-editor'
 
 const props = defineProps<{
   modelValue: string
@@ -17,20 +19,7 @@ const emit = defineEmits<{
 
 const monacoEditorRef = shallowRef<editor.IStandaloneCodeEditor | null>(null)
 let decorationIds: string[] = []
-const languageOptions: Array<{ value: SupportedLanguage; label: string }> = [
-  { value: 'javascript', label: 'JavaScript' },
-  { value: 'typescript', label: 'TypeScript' },
-  { value: 'vue', label: 'Vue' },
-  { value: 'java', label: 'Java' },
-  { value: 'c', label: 'C' },
-  { value: 'cpp', label: 'C++' },
-  { value: 'python', label: 'Python' },
-  { value: 'go', label: 'Go' },
-  { value: 'rust', label: 'Rust' },
-  { value: 'csharp', label: 'C#' },
-  { value: 'php', label: 'PHP' },
-  { value: 'unknown', label: 'Plain Text' }
-]
+const languageOptions = LANGUAGE_OPTIONS
 
 const editorOptions: editor.IStandaloneEditorConstructionOptions = {
   automaticLayout: true,
@@ -72,43 +61,12 @@ function updateLanguage(event: Event) {
 }
 
 function mapToMonacoLanguage(language: SupportedLanguage) {
-  switch (language) {
-    case 'vue':
-      return 'html'
-    case 'unknown':
-      return 'plaintext'
-    default:
-      return language
-  }
+  const id = LANGUAGE_OPTIONS.find((option) => option.value === language)?.monaco ?? 'plaintext'
+  return languages.getLanguages().some((entry) => entry.id === id) ? id : 'plaintext'
 }
 
 function mapToEditorExtension(language: SupportedLanguage) {
-  switch (language) {
-    case 'typescript':
-      return '.ts'
-    case 'vue':
-      return '.vue'
-    case 'java':
-      return '.java'
-    case 'c':
-      return '.c'
-    case 'cpp':
-      return '.cpp'
-    case 'python':
-      return '.py'
-    case 'go':
-      return '.go'
-    case 'rust':
-      return '.rs'
-    case 'csharp':
-      return '.cs'
-    case 'php':
-      return '.php'
-    case 'unknown':
-      return '.txt'
-    default:
-      return '.js'
-  }
+  return LANGUAGE_OPTIONS.find((option) => option.value === language)?.extensions[0] ?? '.txt'
 }
 
 function focusMapping(mapping: NodeMapping) {

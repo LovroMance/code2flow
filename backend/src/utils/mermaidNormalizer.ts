@@ -1,9 +1,4 @@
 export function normalizeMermaidSource(input: string) {
-  return (
-    input
-      .replace(/\r/g, '')
-      // Mermaid 节点标签里直接出现双引号时容易触发解析问题，先统一转成单引号。
-      .replace(/"/g, "'")
-      .trim()
-  )
+  // 保留标签的双引号，括号等特殊字符需要由 Mermaid 的引号语法保护。
+  return input.replace(/\r/g, '').trim()
 }

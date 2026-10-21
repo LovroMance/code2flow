@@ -1,6 +1,37 @@
 import { z } from 'zod'
 import { SupportedLanguageSchema } from './language'
 
+const ProbabilitySchema = z.number().min(0).max(1)
+
+// Choice 的概率必须完整覆盖候选集，防止把畸形响应当作可靠检测。
+export const LanguageChoiceSchema = z
+  .object({
+    type: z.literal('choice'),
+    choice: SupportedLanguageSchema,
+    confidence: ProbabilitySchema,
+    probabilities: z.record(SupportedLanguageSchema, ProbabilitySchema)
+  })
+  .refine(
+    (answer) => {
+      const values = Object.values(answer.probabilities)
+      const sum = values.reduce((total, value) => total + value, 0)
+      return (
+        Math.abs(sum - 1) < 0.01 &&
+        answer.probabilities[answer.choice] >= Math.max(...values) - 0.000001
+      )
+    },
+    { message: 'Invalid Choice probability distribution' }
+  )
+
+export const LanguageDetectionSchema = z.object({
+  language: SupportedLanguageSchema,
+  choice: SupportedLanguageSchema.optional(),
+  confidence: ProbabilitySchema,
+  probabilities: z.record(SupportedLanguageSchema, ProbabilitySchema).optional(),
+  status: z.enum(['detected', 'uncertain', 'unavailable']),
+  reason: z.string().optional()
+})
+
 export const NodeKindSchema = z.enum(['start', 'action', 'decision', 'return', 'end'])
 
 export const NodeMappingSchema = z
@@ -29,10 +60,14 @@ export const NodeMappingSchema = z
     }
   )
 
-export const GenerationResultSchema = z.object({
-  detectedLanguage: SupportedLanguageSchema,
+// 生成模型只提交流程图和映射，语言由程序使用 Jev 检测结果补齐。
+export const FlowDraftSchema = z.object({
   mermaid: z.string(),
   mappings: z.array(NodeMappingSchema)
+})
+
+export const GenerationResultSchema = FlowDraftSchema.extend({
+  detectedLanguage: SupportedLanguageSchema
 })
 
 export const GenerationRequestSchema = z.object({

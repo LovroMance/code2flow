@@ -5,7 +5,8 @@ import type {
   GenerationRequestSchema,
   GenerationResultSchema,
   NodeKindSchema,
-  NodeMappingSchema
+  NodeMappingSchema,
+  LanguageDetectionSchema
 } from './schema'
 import type { SupportedLanguageSchema } from './language'
 
@@ -16,6 +17,7 @@ export type FlowGenerationRequest = z.infer<typeof GenerationRequestSchema>
 export type FlowFollowUpRequest = z.infer<typeof FollowUpRequestSchema>
 export type FlowFollowUpResponse = z.infer<typeof FollowUpResponseSchema>
 export type SupportedLanguage = z.infer<typeof SupportedLanguageSchema>
+export type LanguageDetection = z.infer<typeof LanguageDetectionSchema>
 
 export interface FlowMetadataEvent {
   detectedLanguage: SupportedLanguage

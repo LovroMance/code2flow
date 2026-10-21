@@ -4,24 +4,10 @@ import { getHealth } from '../../../shared/api/system.api'
 import { postFollowUp } from '../../../shared/api/follow-up.api'
 import { useFlowGeneration } from '../../flow-generation/model/useFlowGeneration'
 import type { NodeMapping, SupportedLanguage } from '../../../entities/flow/model/types'
-
-const SUPPORTED_FILE_EXTENSIONS = [
-  '.js',
-  '.ts',
-  '.vue',
-  '.jsx',
-  '.tsx',
-  '.java',
-  '.c',
-  '.cpp',
-  '.h',
-  '.hpp',
-  '.py',
-  '.go',
-  '.rs',
-  '.cs',
-  '.php'
-] as const
+import {
+  SUPPORTED_FILE_EXTENSIONS,
+  inferLanguageFromExtension
+} from '../../../entities/flow/model/languages'
 
 const MAX_UPLOAD_SIZE_BYTES = 200 * 1024
 const DEFAULT_LANGUAGE: SupportedLanguage = 'javascript'
@@ -276,36 +262,4 @@ export function useWorkspacePage() {
 
 function createThreadId() {
   return crypto.randomUUID()
-}
-
-function inferLanguageFromExtension(extension: string): SupportedLanguage {
-  switch (extension) {
-    case '.ts':
-    case '.tsx':
-      return 'typescript'
-    case '.vue':
-      return 'vue'
-    case '.java':
-      return 'java'
-    case '.c':
-    case '.h':
-      return 'c'
-    case '.cpp':
-    case '.hpp':
-      return 'cpp'
-    case '.py':
-      return 'python'
-    case '.go':
-      return 'go'
-    case '.rs':
-      return 'rust'
-    case '.cs':
-      return 'csharp'
-    case '.php':
-      return 'php'
-    case '.js':
-    case '.jsx':
-    default:
-      return 'javascript'
-  }
 }

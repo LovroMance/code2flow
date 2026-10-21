@@ -12,6 +12,18 @@ export const SupportedLanguageSchema = z.enum([
   'rust',
   'csharp',
   'php',
+  'kotlin',
+  'swift',
+  'objectivec',
+  'dart',
+  'ruby',
+  'scala',
+  'lua',
+  'r',
+  'perl',
+  'shell',
+  'powershell',
+  'sql',
   'unknown'
 ])
 

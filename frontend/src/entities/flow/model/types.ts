@@ -1,17 +1,7 @@
+import type { SupportedLanguage } from './languages'
+export type { SupportedLanguage } from './languages'
+
 export type NodeKind = 'start' | 'action' | 'decision' | 'return' | 'end'
-export type SupportedLanguage =
-  | 'javascript'
-  | 'typescript'
-  | 'vue'
-  | 'java'
-  | 'c'
-  | 'cpp'
-  | 'python'
-  | 'go'
-  | 'rust'
-  | 'csharp'
-  | 'php'
-  | 'unknown'
 
 export interface NodeMapping {
   nodeId: string

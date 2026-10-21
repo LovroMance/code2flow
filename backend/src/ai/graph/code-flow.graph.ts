@@ -18,7 +18,16 @@ import { createNodeCallbacks } from '../observability/run-callbacks'
 export function createCodeFlowGraph(options: CodeFlowGraphRunOptions = {}) {
   return new StateGraph(CodeFlowState)
     .addNode('analyze', async (state) => {
-      const detected = runDetectLanguage(state.code)
+      // 每次新生成只检测一次；生成重试复用当前状态，避免重复请求 Jev。
+      const detected = state.languageDetection ?? (await runDetectLanguage(state.code))
+      if (state.languageDetection) {
+        console.info('[code-flow][jev] detection-reused', {
+          attempt: state.attempts + 1,
+          language: detected.language,
+          confidence: detected.confidence,
+          status: detected.status
+        })
+      }
       if (state.attempts === 0)
         options.callbacks?.onDetectedLanguage?.({
           detectedLanguage: detected.language,
@@ -32,6 +41,7 @@ export function createCodeFlowGraph(options: CodeFlowGraphRunOptions = {}) {
         return {
           result,
           detectedLanguage: detected.language,
+          languageDetection: detected,
           error: null,
           attempts: state.attempts + 1
         }
@@ -39,6 +49,7 @@ export function createCodeFlowGraph(options: CodeFlowGraphRunOptions = {}) {
         return {
           result: null,
           detectedLanguage: detected.language,
+          languageDetection: detected,
           error: error instanceof Error ? error.message : String(error),
           attempts: state.attempts + 1
         }
@@ -50,9 +61,10 @@ export function createCodeFlowGraph(options: CodeFlowGraphRunOptions = {}) {
         const result = parseFlowGenerationResult(state.result)
         result.mermaid = normalizeMermaidSource(result.mermaid)
         if (!validateMermaid(result.mermaid)) throw new Error('Generated Mermaid is invalid')
-        if (result.detectedLanguage !== state.detectedLanguage)
-          throw new Error(`Detected language mismatch: expected ${state.detectedLanguage}`)
-        return { result: normalizeFlowResultAgainstCode(state.code, result), error: null }
+        return {
+          result: normalizeFlowResultAgainstCode(state.code, result),
+          error: null
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         options.trace?.setValidationErrors([message])
@@ -114,6 +126,8 @@ export async function runCodeFlowGraph(
       mode: 'generate',
       question: '',
       result: null,
+      languageDetection: null,
+      detectedLanguage: 'unknown',
       explanation: '',
       error: null,
       attempts: 0,
