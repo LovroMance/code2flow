@@ -1,3 +1,4 @@
+import { ModelOutputValidationError } from '../domain/multifile/errors'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { tool } from '@langchain/core/tools'
@@ -64,7 +65,7 @@ export class SourceContext {
   read(fileId: string, start: number, end: number) {
     this.signal?.throwIfAborted()
     if (this.allowedFileId && fileId !== this.allowedFileId)
-      throw new Error('文件Worker只能读取本文件。')
+      throw new Error('文件分析任务只能读取本文件。')
     const content = this.repository.content(this.snapshot, fileId),
       range = sourceRange(
         fileId,
@@ -123,6 +124,7 @@ export class SourceContext {
     try {
       validateSourceRange(range, range.fileId, content)
     } catch (error) {
+      if (!(error instanceof Error) || error.constructor !== Error) throw error
       // 不自动改写模型范围；给重试提供由原始偏移计算的正确行列，仍须重新通过校验。
       if (
         range.startOffset >= 0 &&
@@ -130,14 +132,14 @@ export class SourceContext {
         range.endOffset <= content.length
       ) {
         const expected = sourceRange(range.fileId, content, range.startOffset, range.endOffset)
-        throw new Error(
+        throw new ModelOutputValidationError(
           `源码范围校验失败：提交行列${range.lineStart}:${range.columnStart}-${range.lineEnd}:${range.columnEnd}与偏移[${range.startOffset},${range.endOffset})不一致，偏移实际对应${expected.lineStart}:${expected.columnStart}-${expected.lineEnd}:${expected.columnEnd}；请直接使用linePositions的原始坐标。`
         )
       }
-      throw error
+      throw new ModelOutputValidationError(error.message)
     }
     if (!evidenceIds.length || evidenceIds.some((id) => !this.accessible.has(id)))
-      throw new Error('引用了任务不可访问的证据。')
+      throw new ModelOutputValidationError('引用了任务不可访问的证据。')
     const ranges = evidenceIds
       .map((id) => this.evidence.get(id)!)
       .filter((e) => e.fileId === range.fileId)
@@ -145,7 +147,7 @@ export class SourceContext {
     let cursor = range.startOffset
     for (const evidence of ranges)
       if (evidence.startOffset <= cursor) cursor = Math.max(cursor, evidence.endOffset)
-    if (cursor < range.endOffset) throw new Error('源码范围没有完整证据。')
+    if (cursor < range.endOffset) throw new ModelOutputValidationError('源码范围没有完整证据。')
   }
   /** 索引角色只获 read_code；核对和追问角色额外获得目录、索引与检索工具。 */
   tools(role: 'index' | 'verify' | 'followup' = 'verify') {

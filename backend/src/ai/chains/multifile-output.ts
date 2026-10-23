@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { SourceRangeSchema } from '../../domain/source/schema'
 import { lineOffsets, validateSourceRange } from '../../utils/sourcePositions'
+import { ModelOutputValidationError } from '../../domain/multifile/errors'
 
 /** 模型只提交行列，避免同时预测行列和字符偏移；内部及对外契约仍保留完整范围。 */
 export function modelResponseSchema(schema: z.ZodType) {
@@ -44,12 +45,18 @@ export function completeModelRanges(
   const content = contentFor(position.fileId)
   const offsets = lineOffsets(content)
   if (offsets[position.lineStart - 1] === undefined || offsets[position.lineEnd - 1] === undefined)
-    throw new Error('源码范围行号越界。')
+    throw new ModelOutputValidationError('源码范围行号越界。')
   if (!('startOffset' in node) && !('endOffset' in node)) {
     node.startOffset = offsets[position.lineStart - 1]! + position.columnStart - 1
     node.endOffset = offsets[position.lineEnd - 1]! + position.columnEnd - 1
   }
   const range = SourceRangeSchema.parse(node)
-  validateSourceRange(range, position.fileId, content, offsets)
+  try {
+    validateSourceRange(range, position.fileId, content, offsets)
+  } catch (error) {
+    if (error instanceof Error && error.constructor === Error)
+      throw new ModelOutputValidationError(error.message)
+    throw error
+  }
   return node
 }

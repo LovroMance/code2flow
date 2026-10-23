@@ -2,6 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { compareEvalReports, renderAbMarkdown } from './ab-compare'
 import type { EvalRunReport } from './runner'
+import { chineseErrorMessage } from '../utils/errorMessage'
 
 // A/B 对比入口：读两份报告，输出 Markdown 对比结论。
 // 用法：npx tsx src/eval/compare-reports.ts --a <a.json> --b <b.json> [--out ab.md]
@@ -63,6 +64,6 @@ function parseArgs(argv: string[]) {
 }
 
 main().catch((error) => {
-  console.error('[ab] failed:', error instanceof Error ? error.message : error)
+  console.error('[ab] 报告对比失败：', chineseErrorMessage(error))
   process.exitCode = 1
 })

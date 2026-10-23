@@ -6,6 +6,7 @@ import { SessionError } from '../services/session-lock'
 import { AnalysisLimitError, ModelConfigurationError } from '../ai/chains/multifile.chain'
 import { LanguageDetectionConfigError } from '../ai/clients/jev.client'
 import { MultiConfigurationError } from '../services/multifile-config'
+import { ModelOutputTruncatedError } from '../domain/multifile/errors'
 
 const Id = z.string().min(1).max(200)
 const params = z.object({ id: Id, snapshotId: Id.optional(), fileId: Id.optional() })
@@ -77,6 +78,7 @@ export function createMultiFileRouter(service: () => MultiFileService = getMulti
       } catch (error) {
         const safe =
           error instanceof AnalysisLimitError ||
+          error instanceof ModelOutputTruncatedError ||
           error instanceof ModelConfigurationError ||
           error instanceof MultiConfigurationError ||
           error instanceof LanguageDetectionConfigError ||
@@ -143,9 +145,11 @@ function handle(action: (req: Request, res: Response) => Promise<void>) {
         )
         .json({
           error:
-            error instanceof SessionError || error instanceof z.ZodError
-              ? error.message
-              : '多文件请求失败，请检查输入及服务配置。'
+            error instanceof z.ZodError
+              ? '请求参数格式无效，请检查字段类型和取值。'
+              : error instanceof SessionError
+                ? error.message
+                : '多文件请求失败，请检查输入及服务配置。'
         })
     }
   }

@@ -56,13 +56,16 @@ export class MultiFileService {
   async saveDraft(id: string, input: z.infer<typeof DraftSchema>) {
     return withSessionLock(id, async () => {
       this.ensure(id)
-      const files = this.repo.validateFiles(
-        input.files,
-        Number(process.env.CODE2FLOW_MULTI_MAX_FILES ?? 20),
-        Number(process.env.CODE2FLOW_MULTI_MAX_TOTAL_BYTES ?? 2097152)
-      )
-      const activePath = normalizeSourcePath(input.activePath)
-      if (!files.some((f) => f.path === activePath)) throw new SessionError('活动文件不存在。', 400)
+      const files = input.files.length
+        ? this.repo.validateFiles(
+            input.files,
+            Number(process.env.CODE2FLOW_MULTI_MAX_FILES ?? 20),
+            Number(process.env.CODE2FLOW_MULTI_MAX_TOTAL_BYTES ?? 2097152)
+          )
+        : []
+      const activePath = files.length ? normalizeSourcePath(input.activePath) : input.activePath
+      if (files.length ? !files.some((f) => f.path === activePath) : activePath !== '')
+        throw new SessionError('活动文件不存在，空工作区的活动路径必须为空。', 400)
       const saved = this.repo.saveDraft(id, { ...input, activePath, files })
       this.sessions.save({ ...this.sessions.get(id)!, updatedAt: new Date().toISOString() })
       return saved
@@ -108,8 +111,9 @@ export class MultiFileService {
         stage: 'prepare',
         detectedLanguage: snapshot.languageDetection?.language ?? 'unknown'
       })
-      const timeout = AbortSignal.timeout(Number(process.env.CODE2FLOW_MULTI_TIMEOUT_MS ?? 900000)),
-        combined = AbortSignal.any([signal, timeout])
+      const failureController = new AbortController(),
+        timeout = AbortSignal.timeout(Number(process.env.CODE2FLOW_MULTI_TIMEOUT_MS ?? 900000)),
+        combined = AbortSignal.any([signal, timeout, failureController.signal])
       const runtime = new AnalysisRuntime(this.repo, snapshot, analysisId, combined, (metadata) =>
         emit('metadata', metadata)
       )
@@ -161,12 +165,15 @@ export class MultiFileService {
         })
         return result
       } catch (error) {
+        const wasAborted = combined.aborted
+        // 一项任务不可继续时，停止同次分析仍在进行的模型和检索请求。
+        failureController.abort()
         // 错误状态也使用官方图更新；取消后不提交迟到结果。
         await graph.updateState(
           this.config(id),
           {
             result: null,
-            error: combined.aborted ? '分析已取消或超时。' : '分析未完成，请检查诊断后重新生成。'
+            error: wasAborted ? '分析已取消或超时。' : '分析未完成，请检查诊断后重新生成。'
           },
           'validateResult'
         )
@@ -207,6 +214,7 @@ export class MultiFileService {
         throw new SessionError('追问必须基于已完成的同一快照。', 409)
       const draft = this.repo.draft(id)
       if (draft) {
+        if (!draft.files.length) throw new SessionError('草稿已清空，请重新生成后追问。', 409)
         const files = this.repo.validateFiles(draft.files)
         if (
           files.length !== snapshot.files.length ||

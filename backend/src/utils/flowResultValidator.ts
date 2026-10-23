@@ -1,5 +1,6 @@
 import { ZodError } from 'zod'
 import { GenerationResultSchema } from '../domain/flow/schema'
+import { schemaIssueMessage } from './errorMessage'
 
 export function parseFlowGenerationResult(payload: unknown) {
   let result
@@ -8,7 +9,9 @@ export function parseFlowGenerationResult(payload: unknown) {
     result = GenerationResultSchema.parse(payload)
   } catch (error) {
     if (error instanceof ZodError) {
-      throw new Error(`Model output does not match schema: ${JSON.stringify(error.issues)}`)
+      throw new Error(
+        `模型输出不符合格式要求：${error.issues.map((issue) => schemaIssueMessage(issue.code, 'expected' in issue ? issue.expected : undefined)).join('；')}`
+      )
     }
 
     throw error
@@ -23,7 +26,7 @@ export function validateNodeMappings(mermaid: string, mappings: Array<{ nodeId: 
 
   for (const mapping of mappings) {
     if (seenNodeIds.has(mapping.nodeId)) {
-      throw new Error(`Duplicate nodeId detected: ${mapping.nodeId}`)
+      throw new Error(`发现重复的节点编号：${mapping.nodeId}`)
     }
 
     seenNodeIds.add(mapping.nodeId)
@@ -31,7 +34,7 @@ export function validateNodeMappings(mermaid: string, mappings: Array<{ nodeId: 
     const nodePattern = new RegExp(`\\b${escapeRegExp(mapping.nodeId)}\\b`)
 
     if (!nodePattern.test(mermaid)) {
-      throw new Error(`Mapping nodeId is missing from Mermaid: ${mapping.nodeId}`)
+      throw new Error(`源码映射对应的节点未出现在流程图中：${mapping.nodeId}`)
     }
   }
 }

@@ -1,10 +1,12 @@
+import { ModelOutputValidationError } from '../domain/multifile/errors'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import {
   AnalysisBudget,
   AnalysisLimitError,
   ModelConfigurationError,
-  runMultiFileChain
+  runMultiFileChain,
+  type AnalysisTaskLog
 } from '../ai/chains/multifile.chain'
 import type { MultiFileRuntime, TaskOutcome } from '../ai/graph/multifile.graph'
 import { runDetectLanguage } from '../ai/tools/detect-language.tool'
@@ -32,6 +34,7 @@ import {
 import { composeMultiFileFlow, validateUnitDraft } from '../utils/composeMultiFileFlow'
 import { mergeFileFragments, FragmentConflictError } from '../utils/mergeFileFragments'
 import { safeErrorDetails } from '../ai/observability/safe-error'
+import { ModelOutputTruncatedError, errorCauses } from '../domain/multifile/errors'
 
 const CachedIndexSchema = z.object({
   index: FileSemanticIndexSchema,
@@ -118,11 +121,8 @@ export class AnalysisRuntime implements MultiFileRuntime {
   async basic() {
     this.signal.throwIfAborted()
     this.progress('basic', 0, this.snapshot.files.length)
-    const maxChars = Math.min(
-      8000,
-      Math.max(500, Math.floor((this.budgetTracker.config.contextTokens - 16000) / 3))
-    )
-    this.chunks = this.repo.basicChunks(this.snapshot, maxChars)
+    const { chunkChars, chunkLines } = this.budgetTracker.config
+    this.chunks = this.repo.basicChunks(this.snapshot, chunkChars, chunkLines)
     this.repo.saveChunks(this.snapshot, this.chunks)
     this.retrieval = new RetrievalService(
       this.repo,
@@ -184,7 +184,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
   }
   /** 检查任务归属、范围和证据；schema 合法并不代表模型真的读过对应源码。 */
   private checkIndex(index: FileSemanticIndex, chunk: CodeChunk, context: SourceContext) {
-    if (index.fileId !== chunk.fileId) throw new Error('分块文件身份错误。')
+    if (index.fileId !== chunk.fileId) throw new ModelOutputValidationError('分块文件身份错误。')
     if (
       missingRanges(
         chunk.endOffset - chunk.startOffset,
@@ -194,7 +194,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
             r.endOffset > chunk.endOffset ||
             r.endOffset <= r.startOffset
           )
-            throw new Error('analyzedRanges超出任务范围。')
+            throw new ModelOutputValidationError('已分析的源码范围超出任务分配范围。')
           return {
             startOffset: r.startOffset - chunk.startOffset,
             endOffset: r.endOffset - chunk.startOffset
@@ -202,15 +202,15 @@ export class AnalysisRuntime implements MultiFileRuntime {
         })
       ).length
     )
-      throw new Error('分配的源码块没有完整处理。')
+      throw new ModelOutputValidationError('分配的源码块没有完整处理。')
     const ids = new Set<string>(),
       calls = new Set<string>()
     for (const unit of index.units) {
       if (unit.complete !== (unit.boundary.startKnown && unit.boundary.endKnown))
-        throw new Error('单元完整状态与边界标记不一致。')
-      if (ids.has(unit.unitId)) throw new Error('临时单元ID重复。')
+        throw new ModelOutputValidationError('单元完整状态与边界标记不一致。')
+      if (ids.has(unit.unitId)) throw new ModelOutputValidationError('临时单元ID重复。')
       ids.add(unit.unitId)
-      if (unit.range.fileId !== index.fileId) throw new Error('单元跨文件。')
+      if (unit.range.fileId !== index.fileId) throw new ModelOutputValidationError('单元跨文件。')
       context.validate(unit.range, unit.evidenceIds)
       for (const control of unit.controlRanges) {
         context.validate(control.range, unit.evidenceIds)
@@ -218,7 +218,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
           control.range.startOffset < unit.range.startOffset ||
           control.range.endOffset > unit.range.endOffset
         )
-          throw new Error('控制位置超出单元。')
+          throw new ModelOutputValidationError('控制位置超出单元。')
       }
       for (const [callIndex, call] of unit.callSites.entries()) {
         context.validate(call.range, call.evidenceIds)
@@ -239,22 +239,33 @@ export class AnalysisRuntime implements MultiFileRuntime {
             textLength: call.text.length,
             rangeLength: source.length
           })
-          throw new Error(
+          throw new ModelOutputValidationError(
             `调用点units[${index.units.indexOf(unit)}].callSites[${callIndex}]的text或targetHint不在其range中；请核对该调用点的行号和范围，text填写原始调用源码，不能写解释、添加分号或改写空格。`
           )
         }
-        if (calls.has(call.callSiteId)) throw new Error('调用点ID重复。')
+        if (calls.has(call.callSiteId)) throw new ModelOutputValidationError('调用点ID重复。')
         calls.add(call.callSiteId)
         if (
           call.range.startOffset < unit.range.startOffset ||
           call.range.endOffset > unit.range.endOffset
         )
-          throw new Error('调用点超出单元。')
+          throw new ModelOutputValidationError('调用点超出单元。')
       }
     }
     for (const ref of index.references) context.validate(ref.range, ref.evidenceIds)
-    for (const item of index.unresolvedItems)
-      validateSourceRange(item.range, index.fileId, this.repo.content(this.snapshot, index.fileId))
+    for (const item of index.unresolvedItems) {
+      try {
+        validateSourceRange(
+          item.range,
+          index.fileId,
+          this.repo.content(this.snapshot, index.fileId)
+        )
+      } catch (error) {
+        if (error instanceof Error && error.constructor === Error)
+          throw new ModelOutputValidationError(error.message)
+        throw error
+      }
+    }
   }
   /** 命中语义缓存后重新登记本次文件与证据身份，不能直接沿用旧 evidenceId。 */
   private rebind(
@@ -288,6 +299,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
   /** 按任务前缀执行索引、核对或生成；返回安全的失败反馈，由 graph 决定是否重试。 */
   async task(id: string, attempts: number, feedback: string | null): Promise<TaskOutcome> {
     let cacheKey: string | undefined
+    const taskLog = { analysisId: this.analysisId, taskId: id, attempt: attempts }
     console.log('[code-flow][v2] task-start', { taskId: id, attempt: attempts })
     try {
       this.signal.throwIfAborted()
@@ -312,12 +324,13 @@ export class AnalysisRuntime implements MultiFileRuntime {
           hasFeedback: feedback !== null
         })
         cacheKey = this.key(chunk)
-        const cached = CachedIndexSchema.safeParse(
-          feedback ? undefined : this.repo.cacheGet(this.snapshot.sessionId, cacheKey)
-        )
+        const cachedValue = feedback
+          ? undefined
+          : this.repo.cacheGet(this.snapshot.sessionId, cacheKey)
+        const cached = cachedValue === undefined ? undefined : CachedIndexSchema.parse(cachedValue)
         let index: FileSemanticIndex
-        if (cached.success) {
-          index = this.rebind(cached.data, chunk, context)
+        if (cached) {
+          index = this.rebind(cached, chunk, context)
           this.budgetTracker.cacheHits++
         } else {
           const code = context.read(chunk.fileId, chunk.startOffset, chunk.endOffset)
@@ -331,7 +344,8 @@ export class AnalysisRuntime implements MultiFileRuntime {
             context,
             this.snapshot.languageDetection!.language,
             this.budgetTracker,
-            feedback ?? undefined
+            feedback ?? undefined,
+            taskLog
           )
         }
         this.checkIndex(index, chunk, context)
@@ -345,7 +359,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
         })
         // 只允许本文件补读，禁止把外部上下文错误当作可移植缓存。
         if ([...context.evidence.values()].some((e) => e.fileId !== chunk.fileId))
-          throw new Error('文件Worker只能读取本文件上下文。')
+          throw new ModelOutputValidationError('文件分析任务只能读取本文件上下文。')
         this.signal.throwIfAborted()
         this.repo.cachePut(this.snapshot.sessionId, this.key(chunk), {
           index,
@@ -358,7 +372,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
           evidence: [...context.evidence.values()]
         })
       } else if (id.startsWith('verify:')) {
-        await this.verify(this.verificationBatches.get(id)!, feedback ?? undefined)
+        await this.verify(this.verificationBatches.get(id)!, feedback ?? undefined, taskLog)
         this.repo.task(this.snapshot, id, attempts, 'complete', {
           referenceIds: this.verificationBatches.get(id)!.map((r) => r.referenceId)
         })
@@ -413,9 +427,11 @@ export class AnalysisRuntime implements MultiFileRuntime {
             context,
             this.snapshot.languageDetection!.language,
             this.budgetTracker,
-            feedback ?? undefined
+            feedback ?? undefined,
+            taskLog
           )
-        if (draft.unitId !== unit.unitId) throw new Error('返回了其他执行单元。')
+        if (draft.unitId !== unit.unitId)
+          throw new ModelOutputValidationError('返回了其他执行单元。')
         validateUnitDraft(draft, context)
         // 生成 chain 仅能引用实际进入本次证据包的源码。
         for (const node of draft.nodes)
@@ -424,7 +440,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
               (e) => e !== code.evidence.evidenceId && !unit.evidenceIds.includes(e)
             )
           )
-            throw new Error('生成引用了未提供的证据。')
+            throw new ModelOutputValidationError('生成引用了未提供的证据。')
         const expected = unit.callSites.filter((call) =>
           this.references.some((r) => r.callSiteId === call.callSiteId && r.status === 'resolved')
         )
@@ -433,7 +449,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
             (call) => !draft.nodes.some((node) => node.callSiteIds.includes(call.callSiteId))
           )
         )
-          throw new Error('已确认调用点没有映射到节点。')
+          throw new ModelOutputValidationError('已确认调用点没有映射到节点。')
         this.signal.throwIfAborted()
         this.drafts.set(unit.unitId, draft)
         this.repo.cachePut(this.snapshot.sessionId, key, draft)
@@ -443,19 +459,26 @@ export class AnalysisRuntime implements MultiFileRuntime {
       return { taskId: id, attempts, error: null, fatal: false }
     } catch (error) {
       this.signal.throwIfAborted()
+      const causes = errorCauses(error)
+      const reason =
+        causes.find(
+          (cause) =>
+            cause instanceof ModelOutputTruncatedError ||
+            cause instanceof AnalysisLimitError ||
+            cause instanceof ModelConfigurationError
+        ) ??
+        causes.find((cause) => cause instanceof ModelOutputValidationError) ??
+        error
+      const retryable = reason instanceof ModelOutputValidationError
       if (cacheKey) this.repo.cacheDelete(this.snapshot.sessionId, cacheKey)
       // 不持久化供应商原始异常，避免请求正文或密钥进入任务记录。
       const safe =
-        error instanceof z.ZodError
-          ? `结构化字段不符合schema，请按工具契约修正：${JSON.stringify(safeErrorDetails(error).issues ?? [])}`
-          : error instanceof AnalysisLimitError || error instanceof ModelConfigurationError
-            ? error.message
-            : error instanceof Error &&
-                /^(分块|分配|临时|调用|单元|控制|文件Worker|生成引用|已确认|返回了|节点|局部|源码|引用了|analyzedRanges)/.test(
-                  error.message
-                )
-              ? error.message
-              : '模型请求或结构校验失败，请核对任务范围与提交字段。'
+        reason instanceof ModelOutputValidationError ||
+        reason instanceof ModelOutputTruncatedError ||
+        reason instanceof AnalysisLimitError ||
+        reason instanceof ModelConfigurationError
+          ? reason.message
+          : '分析遇到不可重试的程序或服务错误，请查看后端错误原因。'
       console.log('[code-flow][v2] task-failed', {
         taskId: id,
         attempt: attempts,
@@ -463,14 +486,16 @@ export class AnalysisRuntime implements MultiFileRuntime {
         analysisId: this.analysisId,
         snapshotId: this.snapshot.snapshotId,
         error: JSON.stringify(safeErrorDetails(error)),
-        diagnostic: safe
+        diagnostic: safe,
+        retryable
       })
       this.repo.task(this.snapshot, id, attempts, 'failed', { diagnostic: safe })
+      if (!retryable) throw reason
       return {
         taskId: id,
         attempts,
         error: safe,
-        fatal: error instanceof AnalysisLimitError || error instanceof ModelConfigurationError
+        fatal: !retryable
       }
     }
   }
@@ -648,7 +673,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
     this.progress('verify', 0, this.verificationBatches.size)
   }
   /** 核对角色可补读跨文件源码，提交后仍需通过候选身份及原始证据校验。 */
-  private async verify(batch: CrossFileReference[], feedback?: string) {
+  private async verify(batch: CrossFileReference[], feedback?: string, task?: AnalysisTaskLog) {
     const facts = batch.map((ref) => {
       const c = this.candidates.find((c) => c.call.callSiteId === ref.callSiteId)!
       return {
@@ -681,12 +706,13 @@ export class AnalysisRuntime implements MultiFileRuntime {
       context,
       this.snapshot.languageDetection!.language,
       this.budgetTracker,
-      feedback
+      feedback,
+      task
     )
     for (const ref of checked.references) {
       const old = batch.find((r) => r.referenceId === ref.referenceId)
       if (!old || ref.sourceUnitId !== old.sourceUnitId || ref.callSiteId !== old.callSiteId)
-        throw new Error('关系核对更改了候选身份。')
+        throw new ModelOutputValidationError('关系核对更改了候选身份。')
       validateResolvedReference(
         ref,
         context,

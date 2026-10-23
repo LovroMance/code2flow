@@ -20,7 +20,7 @@ export const LanguageChoiceSchema = z
         answer.probabilities[answer.choice] >= Math.max(...values) - 0.000001
       )
     },
-    { message: 'Invalid Choice probability distribution' }
+    { message: '分支概率分布无效。' }
   )
 
 export const LanguageDetectionSchema = z.object({
@@ -46,7 +46,7 @@ export const NodeMappingSchema = z
     columnEnd: z.number().int().positive().optional()
   })
   .refine((mapping) => mapping.lineEnd >= mapping.lineStart, {
-    message: 'lineEnd must be greater than or equal to lineStart',
+    message: '结束行号必须大于或等于起始行号。',
     path: ['lineEnd']
   })
   .refine(
@@ -57,7 +57,7 @@ export const NodeMappingSchema = z
       mapping.columnEnd === undefined ||
       mapping.columnEnd >= mapping.columnStart,
     {
-      message: 'columnEnd must be greater than or equal to columnStart on the same line',
+      message: '同一行内的结束列必须大于或等于起始列。',
       path: ['columnEnd']
     }
   )

@@ -2,6 +2,7 @@ import { resolve } from 'node:path'
 import { config as loadEnv } from 'dotenv'
 import { baselineDataset } from './datasets/baseline.dataset'
 import { runEvalDataset } from './runner'
+import { chineseErrorMessage } from '../utils/errorMessage'
 
 // CLI 脚本不经过 src/index.ts，必须自己加载 .env，否则 provider / model 会静默回退成默认值。
 loadEnv({ path: resolve(process.cwd(), '.env') })
@@ -85,6 +86,6 @@ function parseArgs(argv: string[]) {
 }
 
 main().catch((error) => {
-  console.error('[eval] failed:', error instanceof Error ? error.message : error)
+  console.error('[eval] 评估执行失败：', chineseErrorMessage(error))
   process.exitCode = 1
 })

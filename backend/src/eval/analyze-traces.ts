@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type { RunTrace } from '../ai/observability/trace.types'
+import { chineseErrorMessage } from '../utils/errorMessage'
 
 // 轨迹聚合入口：把 runs.jsonl 汇总成一张观察报表。
 // 用法：npx tsx src/eval/analyze-traces.ts [--file .code2flow/traces/runs.jsonl]
@@ -220,6 +221,6 @@ function parseArgs(argv: string[]) {
 }
 
 main().catch((error) => {
-  console.error('[traces] failed:', error instanceof Error ? error.message : error)
+  console.error('[traces] 轨迹统计失败：', chineseErrorMessage(error))
   process.exitCode = 1
 })

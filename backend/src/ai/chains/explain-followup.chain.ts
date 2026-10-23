@@ -20,7 +20,7 @@ export async function explainCodeFlowFollowUp(
     ],
     { callbacks: createRunCallbacks(options.trace) }
   )
-  if (!response.text.trim()) throw new Error('Model returned an empty explanation')
+  if (!response.text.trim()) throw new Error('模型未返回解释内容，请重新追问。')
   return {
     explanation: response.text.trim(),
     messages: [new HumanMessage(state.question), response]

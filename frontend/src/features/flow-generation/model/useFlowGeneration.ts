@@ -10,6 +10,7 @@ import { streamGenerateFlow } from '../../../shared/api/flow-stream.api'
 import { streamMultiFlow } from '../../../shared/api/multifile.api'
 import { ensureMermaid } from '../../../shared/lib/mermaid/setup'
 import type { MultiFileResult } from '../../../entities/flow/model/multifile'
+import { chineseErrorMessage } from '../../../shared/lib/errorMessage'
 
 const EMPTY_MERMAID = 'flowchart TD\nA[等待输入代码] --> B[点击生成流程图]\nB --> C[展示结果]'
 const LOADING_MERMAID = 'flowchart TD\nA[请求已发送] --> B[等待 Agent 返回结果]'
@@ -120,7 +121,7 @@ export function useFlowGeneration() {
       return result
     } catch (error) {
       failRendering(
-        `${error instanceof Error ? error.message : '多文件生成失败。'}${incomplete ? ` 未完成的原始字符范围：${incomplete}` : ''}`
+        `${chineseErrorMessage(error, '多文件生成失败。')}${incomplete ? ` 未完成的原始字符范围：${incomplete}` : ''}`
       )
       throw error
     } finally {
@@ -143,7 +144,7 @@ export function useFlowGeneration() {
       if (status.value === 'streaming') throw new Error('连接已中断，未收到生成完成事件，请重试。')
     } catch (error) {
       status.value = 'error'
-      errorMessage.value = error instanceof Error ? error.message : '生成失败，请重试。'
+      errorMessage.value = chineseErrorMessage(error, '生成失败，请重试。')
       throw error
     }
   }

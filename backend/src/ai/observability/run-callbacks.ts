@@ -3,6 +3,7 @@ import { AIMessageChunk, isAIMessage, isBaseMessage } from '@langchain/core/mess
 import { normalizeMermaidSource } from '../../utils/mermaidNormalizer'
 import { validateMermaid } from '../../utils/mermaidValidator'
 import type { TraceCollector } from './trace.collector'
+import { chineseErrorMessage } from '../../utils/errorMessage'
 
 // 标准回调同时覆盖生成与追问；chunk 拼接和部分 JSON 解析交给 LangChain。
 export function createRunCallbacks(trace?: TraceCollector, onPartial?: (source: string) => void) {
@@ -43,8 +44,9 @@ export function createRunCallbacks(trace?: TraceCollector, onPartial?: (source: 
         )
           return
         const usage = generation.message.usage_metadata
-        const responseModel = generation.message.response_metadata.model_name
-          ?? generation.message.response_metadata.model
+        const responseModel =
+          generation.message.response_metadata.model_name ??
+          generation.message.response_metadata.model
         if (typeof responseModel === 'string') trace?.setResponseModel?.(responseModel)
         if (usage)
           trace?.addUsage({
@@ -77,7 +79,7 @@ export function createNodeCallbacks(trace?: TraceCollector) {
         finish(id, typeof output.error === 'string' ? output.error : undefined)
       },
       handleChainError(error, id) {
-        finish(id, String(error))
+        finish(id, chineseErrorMessage(error))
       }
     })
   ]

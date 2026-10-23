@@ -24,6 +24,7 @@ export async function runDetectLanguage(
   })
   if (!config.success) {
     console.error('[code-flow][jev] config-error', {
+      message: '语言识别配置无效，请检查下列字段',
       invalidFields: config.error.issues.map((issue) => issue.path.join('.'))
     })
     throw new LanguageDetectionConfigError('Jev 模型、超时或置信度配置无效')

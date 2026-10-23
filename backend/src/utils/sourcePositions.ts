@@ -92,19 +92,49 @@ export function validateSourceRange(
   )
     throw new Error('源码偏移与行列不一致，禁止修正越界映射。')
 }
-/** 约 120 行分块、约 20 行重叠，优先在空行切断，同时遵守字符预算。 */
-export function chunkSource(fileId: string, text: string, maxChars = 8000): CodeChunk[] {
+export function chunkerVersion(maxChars: number, maxLines: number) {
+  return `lines${maxLines}-overlap${Math.min(20, Math.floor(maxLines / 3))}-chars${maxChars}-v2`
+}
+
+/** 仅在创建或读取分块时检查一次；允许重叠，但必须有序、有效且覆盖原文全部字符。 */
+export function validateChunks(fileId: string, text: string, chunks: CodeChunk[]) {
+  const offsets = lineOffsets(text)
+  let covered = 0
+  let previousStart = -1
+  for (const chunk of chunks) {
+    validateSourceRange(chunk, fileId, text, offsets)
+    if (
+      chunk.startOffset <= previousStart ||
+      chunk.startOffset > covered ||
+      chunk.endOffset <= covered
+    )
+      throw new Error('分块实现错误：源码范围无序、存在缺口或未向后推进。')
+    covered = chunk.endOffset
+    previousStart = chunk.startOffset
+  }
+  if (covered !== text.length) throw new Error('分块实现错误：没有完整覆盖原始源码。')
+}
+
+/** 使用原文偏移切片；保留少量重叠供跨块边界识别，不改写原始正文。 */
+export function chunkSource(
+  fileId: string,
+  text: string,
+  maxChars = 8000,
+  maxLines = 120
+): CodeChunk[] {
+  if (!Number.isInteger(maxChars) || maxChars < 2 || !Number.isInteger(maxLines) || maxLines < 2)
+    throw new Error('分块配置无效：字符数和行数上限必须为至少2的整数。')
   const lines = lineOffsets(text),
     chunks: CodeChunk[] = []
   const contentHash = sha256(text)
   let start = 0
   while (start < text.length) {
     const line = sourceRange(fileId, text, start, text.length, lines).lineStart - 1
-    let end = Math.min(lines[line + 120] ?? text.length, start + maxChars, text.length)
+    let end = Math.min(lines[line + maxLines] ?? text.length, start + maxChars, text.length)
     end = safeBoundary(text, end)
     if (end < text.length) {
       const candidates = lines
-        .slice(line + 80, line + 121)
+        .slice(line + Math.floor((maxLines * 2) / 3), line + maxLines + 1)
         .filter(
           (offset) => offset > start && offset <= end && /^\s*(?:\r?\n|\r)/.test(text.slice(offset))
         )
@@ -114,13 +144,15 @@ export function chunkSource(fileId: string, text: string, maxChars = 8000): Code
       ...sourceRange(fileId, text, start, end, lines),
       chunkId: `${fileId}_c${chunks.length}`,
       contentHash,
-      chunkerVersion: `lines120-overlap20-chars${maxChars}-v1`
+      chunkerVersion: chunkerVersion(maxChars, maxLines)
     })
     if (end === text.length) break
     const endLine = sourceRange(fileId, text, start, end, lines).lineEnd - 1
-    const overlap = lines[Math.max(line + 1, endLine - 20)] ?? end
+    const overlap =
+      lines[Math.max(line + 1, endLine - Math.min(20, Math.floor(maxLines / 3)))] ?? end
     start = overlap > start && overlap < end ? overlap : end
   }
+  validateChunks(fileId, text, chunks)
   return chunks
 }
 /** 对已分析区间求并集后返回缺口，重叠块不会重复提高覆盖率。 */

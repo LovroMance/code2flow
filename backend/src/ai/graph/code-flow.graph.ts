@@ -13,6 +13,7 @@ import { normalizeFlowResultAgainstCode } from '../../utils/mappingNormalizer'
 import { resolveRunConfig } from '../observability/run-config'
 import { loadLegacyCheckpoint } from './checkpointer'
 import { createNodeCallbacks } from '../observability/run-callbacks'
+import { chineseErrorMessage } from '../../utils/errorMessage'
 
 // 只保留三个业务节点；框架负责状态合并、条件跳转和 checkpoint 生命周期。
 export function createCodeFlowGraph(options: CodeFlowGraphRunOptions = {}) {
@@ -50,7 +51,7 @@ export function createCodeFlowGraph(options: CodeFlowGraphRunOptions = {}) {
           result: null,
           detectedLanguage: detected.language,
           languageDetection: detected,
-          error: error instanceof Error ? error.message : String(error),
+          error: chineseErrorMessage(error, '模型生成失败，请重试。'),
           attempts: state.attempts + 1
         }
       }
@@ -60,13 +61,13 @@ export function createCodeFlowGraph(options: CodeFlowGraphRunOptions = {}) {
         if (state.error) throw new Error(state.error)
         const result = parseFlowGenerationResult(state.result)
         result.mermaid = normalizeMermaidSource(result.mermaid)
-        if (!validateMermaid(result.mermaid)) throw new Error('Generated Mermaid is invalid')
+        if (!validateMermaid(result.mermaid)) throw new Error('生成的流程图语法无效，请重新生成。')
         return {
           result: normalizeFlowResultAgainstCode(state.code, result),
           error: null
         }
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
+        const message = chineseErrorMessage(error, '生成结果校验失败，请重新生成。')
         options.trace?.setValidationErrors([message])
         return { result: null, error: message }
       }
@@ -113,9 +114,8 @@ export async function runCodeFlowGraph(
         previous = await graph.getState(config)
       }
     }
-    if (!input.question?.trim()) throw new Error('Missing follow-up question')
-    if (!previous.values.result)
-      throw new Error('Missing previous flow result for follow-up explanation')
+    if (!input.question?.trim()) throw new Error('请输入追问问题。')
+    if (!previous.values.result) throw new Error('没有可供追问的流程图结果，请先生成流程图。')
     if (input.code.trim() && input.code !== previous.values.code)
       throw new Error('代码已变更，请重新生成流程图后再追问。')
     return graph.invoke({ mode: 'followup', question: input.question, error: null }, config)
@@ -137,6 +137,6 @@ export async function runCodeFlowGraph(
     config
   )
   if (state.error || !state.result)
-    throw new Error(state.error ?? 'Graph finished without a result')
+    throw new Error(state.error ?? '分析流程已结束，但未生成有效结果。')
   return state
 }

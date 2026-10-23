@@ -1,13 +1,14 @@
 import { ChatOpenAI } from '@langchain/openai'
+import { modelOutputTokens } from '../../services/multifile-config'
 
-export function createOpenAIModel() {
+export function createOpenAIModel(maxTokens = modelOutputTokens()) {
   return new ChatOpenAI({
     apiKey: process.env.DEEPSEEK_API_KEY,
     model: process.env.DEEPSEEK_MODEL ?? 'deepseek-chat',
     configuration: {
       baseURL: process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com'
     },
-    maxTokens: 4000,
+    maxTokens,
     streaming: true,
     // 重试由外层 StateGraph 统一计数，避免 SDK 与业务层叠加放大请求次数。
     maxRetries: 0,

@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import mermaid from 'mermaid'
 import DOMPurify from 'dompurify'
-import { parseMultiResult, parseMultiDetail } from '../src/entities/flow/model/multifile'
+import {
+  parseDraft,
+  parseMultiResult,
+  parseMultiDetail
+} from '../src/entities/flow/model/multifile'
 import { streamMultiFlow } from '../src/shared/api/multifile.api'
 import { useFlowGeneration } from '../src/features/flow-generation/model/useFlowGeneration'
 import { mappingSelection } from '../src/features/code-editor/model/mappingSelection'
@@ -57,6 +61,14 @@ const result = {
   }
 }
 afterEach(() => vi.unstubAllGlobals())
+it('空草稿表示工作区已清空，活动路径必须同时为空', () => {
+  expect(parseDraft({ revision: 2, files: [], activePath: '' })).toEqual({
+    revision: 2,
+    files: [],
+    activePath: ''
+  })
+  expect(() => parseDraft({ revision: 2, files: [], activePath: 'a.js' })).toThrow()
+})
 function response(events: unknown[]) {
   return new Response(
     new ReadableStream({

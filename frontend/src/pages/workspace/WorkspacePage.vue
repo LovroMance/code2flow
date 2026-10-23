@@ -16,8 +16,6 @@ const byteSize = (content: string) => new TextEncoder().encode(content).byteLeng
 const {
   code,
   files,
-  pendingFiles,
-  confirmUploadFiles,
   activePath,
   multiResult,
   documentId,
@@ -154,31 +152,6 @@ async function confirmDelete() {
       <p v-if="errorMessage" class="error-banner" role="alert">
         {{ errorMessage }}
       </p>
-      <section v-if="pendingFiles.length" class="multi-file-list panel" aria-label="上传前文件预览">
-        <p>
-          确认后创建多文件会话。普通选择仅提供文件名，请在此补充需要的相对路径。源码分析及已配置的向量服务将读取这些内容。
-        </p>
-        <div v-for="(file, index) in pendingFiles" :key="index" class="multi-file-row">
-          <input v-model="file.path" aria-label="上传文件相对路径" :disabled="isWorkspaceBusy" />
-          <span>{{ byteSize(file.content) }} B</span>
-        </div>
-        <button
-          type="button"
-          class="primary-chip-button"
-          :disabled="isWorkspaceBusy"
-          @click="confirmUploadFiles"
-        >
-          确认文件集合
-        </button>
-        <button
-          type="button"
-          class="ghost-button"
-          :disabled="isWorkspaceBusy"
-          @click="pendingFiles = []"
-        >
-          取消
-        </button>
-      </section>
       <p v-if="sourceChanged" class="source-changed-notice" role="status">
         源码已修改，请重新生成流程图后再定位节点或追问。
       </p>
@@ -230,7 +203,7 @@ async function confirmDelete() {
             <button
               type="button"
               class="ghost-button editor-clear-button"
-              :disabled="isWorkspaceBusy || !code"
+              :disabled="isWorkspaceBusy || (!code && !files.length)"
               @click="clearWorkspace"
             >
               清空源码

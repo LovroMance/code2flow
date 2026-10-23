@@ -69,6 +69,7 @@ export async function requestLanguageChoice(
   } catch (error) {
     const status = (error as { status?: number } | null)?.status
     console.error('[code-flow][jev] request-failed', {
+      message: '语言识别服务请求失败',
       model,
       durationMs: Date.now() - startedAt,
       httpStatus: status,

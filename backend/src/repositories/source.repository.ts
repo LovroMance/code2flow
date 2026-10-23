@@ -14,8 +14,8 @@ import {
   normalizeSourcePath,
   sha256,
   chunkSource,
-  missingRanges,
-  validateSourceRange
+  chunkerVersion,
+  validateChunks
 } from '../utils/sourcePositions'
 import { SessionError } from '../services/session-lock'
 import { SOURCE_LIMITS, MultiConfigurationError } from '../services/multifile-config'
@@ -234,9 +234,9 @@ export class SourceRepository {
     return rows.map((row) => CodeChunkSchema.parse(JSON.parse(JsonRow.parse(row).data)))
   }
   /** 复用正文与切片版本匹配的基础块，并重新绑定当前快照的文件身份。 */
-  basicChunks(snapshot: SourceSnapshot, maxChars = 8000) {
+  basicChunks(snapshot: SourceSnapshot, maxChars = 8000, maxLines = 120) {
     return snapshot.files.flatMap((file) => {
-      const version = `lines120-overlap20-chars${maxChars}-v1`,
+      const version = chunkerVersion(maxChars, maxLines),
         content = this.content(snapshot, file.fileId)
       this.db
         .prepare('INSERT OR IGNORE INTO code_flow_source_positions VALUES(?,?)')
@@ -245,30 +245,22 @@ export class SourceRepository {
         .prepare('SELECT data FROM code_flow_chunk_templates WHERE hash=? AND version=?')
         .get(file.contentHash, version)
       if (row) {
-        try {
-          const chunks = z
-            .array(CodeChunkSchema)
-            .parse(JSON.parse(JsonRow.parse(row).data))
-            .map((chunk, index) => ({
-              ...chunk,
-              fileId: file.fileId,
-              chunkId: `${file.fileId}_c${index}`
-            }))
-          const offsets = this.offsets(snapshot, file.fileId)
-          chunks.forEach((chunk) => {
-            if (chunk.contentHash !== file.contentHash || chunk.chunkerVersion !== version)
-              throw new Error('分块缓存版本不匹配。')
-            validateSourceRange(chunk, file.fileId, content, offsets)
-          })
-          if (missingRanges(content.length, chunks).length) throw new Error('分块缓存缺失范围。')
-          return chunks
-        } catch {
-          this.db
-            .prepare('DELETE FROM code_flow_chunk_templates WHERE hash=? AND version=?')
-            .run(file.contentHash, version)
-        }
+        const chunks = z
+          .array(CodeChunkSchema)
+          .parse(JSON.parse(JsonRow.parse(row).data))
+          .map((chunk, index) => ({
+            ...chunk,
+            fileId: file.fileId,
+            chunkId: `${file.fileId}_c${index}`
+          }))
+        chunks.forEach((chunk) => {
+          if (chunk.contentHash !== file.contentHash || chunk.chunkerVersion !== version)
+            throw new Error('分块缓存版本不匹配。')
+        })
+        validateChunks(file.fileId, content, chunks)
+        return chunks
       }
-      const chunks = chunkSource(file.fileId, content, maxChars)
+      const chunks = chunkSource(file.fileId, content, maxChars, maxLines)
       this.db
         .prepare('INSERT OR REPLACE INTO code_flow_chunk_templates VALUES(?,?,?)')
         .run(file.contentHash, version, JSON.stringify(chunks))

@@ -16,6 +16,7 @@ async function respond(res: Response, action: () => Promise<unknown>, status = 2
       res.status(error.status).json({ error: error.message })
     } else {
       console.error('[code-flow][sessions] request-failed', {
+        message: '会话请求处理失败',
         errorType: error instanceof Error ? error.name : 'UnknownError'
       })
       res.status(500).json({ error: '会话操作失败，请稍后重试。' })

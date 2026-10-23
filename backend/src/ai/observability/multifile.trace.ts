@@ -22,6 +22,9 @@ export async function recordMultiFileTrace(input: {
       'utf8'
     )
   } catch {
-    console.warn('[code-flow][v2] trace-write-failed', { analysisId: input.analysisId })
+    console.warn('[code-flow][v2] trace-write-failed', {
+      message: '分析统计记录写入失败',
+      analysisId: input.analysisId
+    })
   }
 }

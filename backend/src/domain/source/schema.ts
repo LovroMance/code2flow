@@ -77,9 +77,9 @@ export const DraftSchema = z.object({
   // 乐观并发版本，阻止旧保存请求覆盖较新的草稿。
   revision: z.number().int().nonnegative(),
   // 当前全部文件的路径和正文。
-  files: SourceFilesSchema,
+  files: z.array(SourceFileInputSchema).max(1000),
   // 当前编辑文件；切换它不改变源码集合身份。
-  activePath: z.string().min(1)
+  activePath: z.string()
 })
 export type SourceRange = z.infer<typeof SourceRangeSchema>
 export type SourceSnapshot = z.infer<typeof SourceSnapshotSchema>

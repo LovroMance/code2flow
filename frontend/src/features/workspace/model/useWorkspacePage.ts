@@ -1,5 +1,5 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { isAxiosError } from 'axios'
+import { chineseErrorMessage } from '../../../shared/lib/errorMessage'
 import { SAMPLE_CODE } from '../config/sampleCode'
 import { equalSourceFiles, mappingFilePath } from './sourceFiles'
 import { getHealth } from '../../../shared/api/system.api'
@@ -36,16 +36,12 @@ function preference(key: string, value?: string) {
   }
 }
 function message(error: unknown, fallback: string) {
-  if (isAxiosError<{ error?: unknown }>(error) && typeof error.response?.data.error === 'string') {
-    return error.response.data.error
-  }
-  return error instanceof Error && !isAxiosError(error) ? error.message : fallback
+  return chineseErrorMessage(error, fallback)
 }
 
 export function useWorkspacePage() {
   const singleCode = ref(SAMPLE_CODE)
   const files = ref<SourceFileInput[]>([])
-  const pendingFiles = ref<SourceFileInput[]>([])
   const activePath = ref('')
   const multiSnapshot = ref<SourceSnapshot | null>(null)
   const snapshotFiles = ref<SourceFileInput[] | null>(null)
@@ -180,7 +176,7 @@ export function useWorkspacePage() {
             ? await sessionApi.updateSession(threadId.value, input)
             : await sessionApi.createSession(threadId.value, input)
           persisted = true
-          if (files.value.length) {
+          if (files.value.length || multiRevision.value > 0) {
             const saved = await multiApi.saveMultiDraft(threadId.value, {
               revision: multiRevision.value,
               files: files.value.map((f) => ({ ...f })),
@@ -252,14 +248,15 @@ export function useWorkspacePage() {
             }))
           )
         : [])
-    const sourceFiles = multi.snapshot
-      ? await Promise.all(
-          multi.snapshot.files.map(async (f) => ({
-            path: f.path,
-            content: await multiApi.getSourceFile(detail.id, multi.snapshot!.snapshotId, f.fileId)
-          }))
-        )
-      : null
+    const sourceFiles =
+      restoredFiles.length && multi.snapshot
+        ? await Promise.all(
+            multi.snapshot.files.map(async (f) => ({
+              path: f.path,
+              content: await multiApi.getSourceFile(detail.id, multi.snapshot!.snapshotId, f.fileId)
+            }))
+          )
+        : null
     // 恢复期间暂停草稿监听，避免把半套恢复状态写回服务端。
     applying = true
     try {
@@ -270,7 +267,7 @@ export function useWorkspacePage() {
       activePath.value = multi.draft?.activePath ?? restoredFiles[0]?.path ?? ''
       singleCode.value = detail.draftCode
       multiRevision.value = multi.draft?.revision ?? 0
-      multiSnapshot.value = multi.snapshot
+      multiSnapshot.value = restoredFiles.length ? multi.snapshot : null
       snapshotFiles.value = sourceFiles
       setDetectedLanguage(detail.draftLanguage)
       sourceSnapshot.value = detail.result ? detail.sourceCode : null
@@ -501,24 +498,11 @@ export function useWorkspacePage() {
             throw new Error('空文件或二进制内容')
           loaded.push({ path: file.webkitRelativePath || file.name, content })
         } catch (error) {
-          errors.push(`${file.name}：${error instanceof Error ? error.message : '读取失败'}`)
+          errors.push(`${file.name}：${chineseErrorMessage(error, '文件读取失败。')}`)
         }
       }
       if (errors.length) throw new Error(errors.join('；'))
-      pendingFiles.value = loaded
-    } catch (error) {
-      workspaceError.value = message(error, '读取文件失败。')
-    } finally {
-      sessionLoading.value = false
-    }
-  }
-  /** 用户确认预览后才更新正式文件集合，使草稿保存与旧图失效基于同一批文件。 */
-  async function confirmUploadFiles() {
-    if (isWorkspaceBusy.value || !pendingFiles.value.length) return
-    workspaceError.value = ''
-    sessionLoading.value = true
-    try {
-      const loaded = pendingFiles.value.map((f) => ({ ...f, path: f.path.replace(/\\/g, '/') }))
+      for (const file of loaded) file.path = file.path.replace(/\\/g, '/')
       if (
         new Set(loaded.map((f) => f.path)).size !== loaded.length ||
         loaded.some(
@@ -537,7 +521,6 @@ export function useWorkspacePage() {
       activePath.value = loaded[0]!.path
       uploadFileName.value = `${loaded.length}个文件`
       await saveDraft()
-      pendingFiles.value = []
     } catch (error) {
       workspaceError.value = message(error, '读取文件失败。')
     } finally {
@@ -564,14 +547,29 @@ export function useWorkspacePage() {
       activePath.value = files.value[0]!.path
   }
 
-  function clearWorkspace() {
+  async function clearWorkspace() {
     if (isWorkspaceBusy.value) return
+    sessionLoading.value = true
+    workspaceError.value = ''
+    // 保留草稿版本号，把空文件集合保存到原会话，防止刷新后旧文件重新出现。
+    files.value = []
+    activePath.value = ''
+    multiSnapshot.value = null
+    snapshotFiles.value = null
+    uploadFileName.value = ''
     code.value = ''
     sourceSnapshot.value = null
     resetOutput()
     followUpQuestion.value = ''
     followUpMessages.value = []
     followUpStatus.value = 'idle'
+    try {
+      await saveDraft()
+    } catch (error) {
+      workspaceError.value = message(error, '源码已清空，但保存失败，请重试保存。')
+    } finally {
+      sessionLoading.value = false
+    }
   }
 
   function handleLanguageChange(language: SupportedLanguage) {
@@ -631,8 +629,6 @@ export function useWorkspacePage() {
 
   return {
     files,
-    pendingFiles,
-    confirmUploadFiles,
     activePath,
     multiResult,
     handleUploadFiles,

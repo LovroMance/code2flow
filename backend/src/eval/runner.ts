@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { generateFlow } from '../services/flow-generation.service'
+import { chineseErrorMessage } from '../utils/errorMessage'
 import type { TraceSink } from '../ai/observability/trace.collector'
 import { createJsonlTraceSink, createTraceCollector } from '../ai/observability/trace.builder'
 import { resolveRunConfig, type ResolvedRunConfig } from '../ai/observability/run-config'
@@ -103,7 +104,7 @@ async function runSingleCase(
       totalTokens: finished.usage.totalTokens
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'unknown error'
+    const message = chineseErrorMessage(error, '评估执行失败，请检查模型服务和案例。')
     const finished = await trace.finish()
     await traceSink.write(finished)
 

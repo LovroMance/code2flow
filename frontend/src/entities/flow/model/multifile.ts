@@ -245,7 +245,8 @@ export function parseDraft(value: unknown): MultiDraft {
   integer(r.revision)
   str(r.activePath)
   const files = parseSourceFiles(r.files)
-  if (!files.some((f) => f.path === r.activePath)) throw new Error('活动文件不存在。')
+  if (files.length ? !files.some((f) => f.path === r.activePath) : r.activePath !== '')
+    throw new Error('活动文件不存在，空工作区的活动路径必须为空。')
   return { revision: r.revision, activePath: r.activePath, files }
 }
 /** 恢复历史会话时再次核对结果与快照成员，防止错误源码参与定位和追问。 */

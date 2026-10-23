@@ -1,4 +1,11 @@
-/** 只提取错误结构，禁止记录异常原文、工具参数或模型正文。 */
+import {
+  chineseErrorMessage,
+  errorTypeLabel,
+  schemaIssueMessage,
+  schemaFieldPath
+} from '../../utils/errorMessage'
+
+/** 只提取错误结构并附中文说明，禁止记录异常原文、工具参数或模型正文。 */
 export function safeErrorDetails(error: unknown) {
   const fields = new Set([
     'units',
@@ -49,6 +56,7 @@ export function safeErrorDetails(error: unknown) {
     if (typeof value === 'string')
       return {
         type: 'ValidationMessage',
+        message: '结构化字段校验未通过，请检查缺失字段、字段类型或允许取值。',
         categories: [
           ...(/required|missing/i.test(value) ? ['missing_field'] : []),
           ...(/additional|unevaluated/i.test(value) ? ['unexpected_field'] : []),
@@ -57,7 +65,7 @@ export function safeErrorDetails(error: unknown) {
         ]
       }
     if (!value || typeof value !== 'object' || depth > 5 || seen.has(value))
-      return { type: 'UnknownOrCircularError' }
+      return { type: 'UnknownOrCircularError', message: errorTypeLabel('UnknownOrCircularError') }
     seen.add(value)
     const data = value as Record<string, unknown>
     const name = value instanceof Error ? value.constructor.name : data.name
@@ -84,6 +92,8 @@ export function safeErrorDetails(error: unknown) {
         : []
     return {
       type: typeof name === 'string' && /^[A-Za-z][A-Za-z0-9]*Error$/.test(name) ? name : 'Error',
+      typeLabel: errorTypeLabel(typeof name === 'string' ? name : 'Error'),
+      message: chineseErrorMessage(value, '操作失败，请查看错误类型、阶段和字段说明。', false),
       ...(typeof data.status === 'number' ? { status: data.status } : {}),
       categories: categories
         .filter(([, pattern]) => pattern.test(message))
@@ -101,6 +111,7 @@ export function safeErrorDetails(error: unknown) {
               const item =
                 issue && typeof issue === 'object' ? (issue as Record<string, unknown>) : {}
               return {
+                pathLabel: schemaFieldPath(item.path),
                 // 仅保留已知契约字段名，禁止输出模型自行提供的任意属性名。
                 path: Array.isArray(item.path)
                   ? item.path.map((part) =>
@@ -113,6 +124,10 @@ export function safeErrorDetails(error: unknown) {
                   typeof item.code === 'string' && /^\w{1,40}$/.test(item.code)
                     ? item.code
                     : 'unknown',
+                message: schemaIssueMessage(
+                  typeof item.code === 'string' ? item.code : '',
+                  item.expected
+                ),
                 ...(typeof item.expected === 'string' &&
                 ['string', 'number', 'boolean', 'object', 'array'].includes(item.expected)
                   ? { expected: item.expected }

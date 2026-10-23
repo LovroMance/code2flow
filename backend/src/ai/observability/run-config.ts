@@ -18,7 +18,7 @@ export function resolveRunConfig(input?: { maxRetries?: number }): ResolvedRunCo
   const temperature = Number(process.env.DEEPSEEK_TEMPERATURE ?? 0)
   const maxRetries = input?.maxRetries ?? Number(process.env.CODE2FLOW_MAX_RETRIES ?? 1)
   if (!Number.isInteger(maxRetries) || maxRetries < 0 || maxRetries > 10) {
-    throw new Error('CODE2FLOW_MAX_RETRIES must be an integer between 0 and 10')
+    throw new Error('重试次数配置 CODE2FLOW_MAX_RETRIES 必须是 0 到 10 之间的整数。')
   }
 
   return {

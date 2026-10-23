@@ -101,7 +101,7 @@ describe('native LangChain agent + LangGraph', () => {
     const { options } = await setup([
       { args: { ...result, mappings: [{ ...result.mappings[0], lineStart: 2, lineEnd: 1 }] } }
     ])
-    await expect(runCodeFlowGraph({ code, maxRetries: 0 }, options)).rejects.toThrow('lineEnd')
+    await expect(runCodeFlowGraph({ code, maxRetries: 0 }, options)).rejects.toThrow('结束行')
   })
 
   it('passes failed Mermaid validation back to the next attempt', async () => {
@@ -110,7 +110,7 @@ describe('native LangChain agent + LangGraph', () => {
       {}
     ])
     expect((await runCodeFlowGraph({ code, maxRetries: 1 }, options)).attempts).toBe(2)
-    expect(JSON.stringify(requests[1].messages)).toContain('Generated Mermaid is invalid')
+    expect(JSON.stringify(requests[1].messages)).toContain('生成的流程图语法无效')
   })
 
   it('honors the environment retry limit and stops at the configured bound', async () => {
@@ -119,9 +119,7 @@ describe('native LangChain agent + LangGraph', () => {
       { args: { ...result, mermaid: 'graph LR\nn_start_1 --> n_action_1 --> n_end_1' } },
       {}
     ])
-    await expect(runCodeFlowGraph({ code }, options)).rejects.toThrow(
-      'Generated Mermaid is invalid'
-    )
+    await expect(runCodeFlowGraph({ code }, options)).rejects.toThrow('生成的流程图语法无效')
     expect(requests).toHaveLength(1)
   })
 
@@ -170,7 +168,7 @@ describe('native LangChain agent + LangGraph', () => {
         { code: '', threadId: 'other', mode: 'followup', question: '为什么' },
         options
       )
-    ).rejects.toThrow('Missing previous flow result')
+    ).rejects.toThrow('没有可供追问的流程图结果')
     const regenerated = await runCodeFlowGraph({ code, threadId: 'chat' }, options)
     expect(regenerated.messages).toHaveLength(0)
   })
@@ -188,7 +186,7 @@ describe('native LangChain agent + LangGraph', () => {
     ).rejects.toThrow()
     await expect(
       runCodeFlowGraph({ code, threadId: 'stale', mode: 'followup', question: '解释' }, options)
-    ).rejects.toThrow('Missing previous flow result')
+    ).rejects.toThrow('没有可供追问的流程图结果')
   })
 
   it('restores native SQLite state after closing and reopening the database', async () => {

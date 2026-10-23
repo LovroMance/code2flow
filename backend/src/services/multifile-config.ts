@@ -2,6 +2,20 @@ import { z } from 'zod'
 
 export class MultiConfigurationError extends Error {}
 
+/** 模型请求和预算预留共用同一个单次输出上限。 */
+export function modelOutputTokens() {
+  const parsed = z.coerce
+    .number()
+    .int()
+    .positive()
+    .safeParse(process.env.CODE2FLOW_MODEL_MAX_OUTPUT_TOKENS ?? 4000)
+  if (!parsed.success)
+    throw new MultiConfigurationError(
+      '单次模型输出上限 CODE2FLOW_MODEL_MAX_OUTPUT_TOKENS 必须为正整数。'
+    )
+  return parsed.data
+}
+
 /** 统一解析运行预算；上下文窗口必须按真实供应商配置，不能猜测默认值。 */
 export function multiConfig() {
   const positive = z.coerce.number().int().positive()
@@ -21,7 +35,10 @@ export function multiConfig() {
       // 单次模型调用的真实上下文窗口，包含输入和预留输出。
       contextTokens: positive,
       // graph 控制的额外重试次数，不叠加 SDK 自动重试。
-      retries: z.coerce.number().int().min(0).max(10)
+      retries: z.coerce.number().int().min(0).max(10),
+      outputTokens: positive,
+      chunkLines: positive.min(2).max(200),
+      chunkChars: positive.min(256).max(12000)
     })
     .safeParse({
       maxFiles: process.env.CODE2FLOW_MULTI_MAX_FILES ?? 20,
@@ -32,7 +49,10 @@ export function multiConfig() {
       maxOutput: process.env.CODE2FLOW_MULTI_MAX_OUTPUT_TOKENS ?? 80000,
       timeout: process.env.CODE2FLOW_MULTI_TIMEOUT_MS ?? 900000,
       contextTokens: process.env.CODE2FLOW_MODEL_CONTEXT_TOKENS,
-      retries: process.env.CODE2FLOW_MAX_RETRIES ?? 1
+      retries: process.env.CODE2FLOW_MAX_RETRIES ?? 1,
+      outputTokens: modelOutputTokens(),
+      chunkLines: process.env.CODE2FLOW_MULTI_CHUNK_LINES ?? 60,
+      chunkChars: process.env.CODE2FLOW_MULTI_CHUNK_CHARS ?? 2000
     })
   if (!result.success)
     throw new MultiConfigurationError(

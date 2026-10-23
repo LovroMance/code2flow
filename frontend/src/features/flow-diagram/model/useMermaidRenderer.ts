@@ -79,10 +79,10 @@ export function useMermaidRenderer(
       }
       bindFunctions?.(diagramElement.value)
       renderError.value = ''
-    } catch (error) {
+    } catch {
       // 不完整的流式片段保留上一张有效图；最终失败仍明确显示错误。
       if (!disposed && currentRevision === revision && !isStreaming()) {
-        renderError.value = error instanceof Error ? error.message : 'Mermaid 渲染失败'
+        renderError.value = '流程图渲染失败，请重新生成。'
       }
     } finally {
       scratch.remove()

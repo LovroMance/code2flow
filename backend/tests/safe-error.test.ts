@@ -8,7 +8,13 @@ describe('多文件异常诊断脱敏', () => {
       name: 'StructuredOutputParsingError',
       errors: ['required property: secret']
     })
-    expect(details.errors).toEqual([{ type: 'ValidationMessage', categories: ['missing_field'] }])
+    expect(details.errors).toEqual([
+      expect.objectContaining({
+        type: 'ValidationMessage',
+        categories: ['missing_field'],
+        message: expect.stringContaining('校验')
+      })
+    ])
     expect(JSON.stringify(details)).not.toContain('secret')
   })
   it('展开包装异常中的 schema 原因，并保留字段位置', () => {
@@ -36,6 +42,9 @@ describe('多文件异常诊断脱敏', () => {
     const details = safeErrorDetails(error)
     expect(details).toMatchObject({ categories: ['tool_execution'], issues: [{ path: ['*'] }] })
     expect(JSON.stringify(details)).not.toContain('secret')
-    expect(details.cause).toEqual({ type: 'UnknownOrCircularError' })
+    expect(details.cause).toMatchObject({
+      type: 'UnknownOrCircularError',
+      message: expect.stringContaining('原因链')
+    })
   })
 })

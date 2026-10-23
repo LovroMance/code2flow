@@ -9,6 +9,7 @@ import { createTraceCollector, summarizeResult } from '../ai/observability/trace
 import { getTraceSink, isTracingEnabled } from '../ai/observability/trace.sink'
 import { withSessionLock } from './session-lock'
 import { getSessionService } from './session.service'
+import { chineseErrorMessage } from '../utils/errorMessage'
 
 export async function generateFlow(input: CodeFlowGraphInput, options?: CodeFlowGraphRunOptions) {
   return (await runFlow({ ...input, mode: 'generate' }, options)).result!
@@ -58,14 +59,14 @@ async function executeFlow(input: CodeFlowGraphInput, options: CodeFlowGraphRunO
     if (input.mode !== 'followup' && state.result) trace?.setResult(summarizeResult(state.result))
     return state
   } catch (error) {
-    trace?.setError(error instanceof Error ? error.message : String(error))
+    trace?.setError(chineseErrorMessage(error))
     throw error
   } finally {
     if (trace && !options.trace) {
       try {
         await getTraceSink().write(await trace.finish())
       } catch (error) {
-        console.warn('[code2flow][trace] write failed:', error)
+        console.warn('[code2flow][trace] 统计记录写入失败：', chineseErrorMessage(error))
       }
     }
   }

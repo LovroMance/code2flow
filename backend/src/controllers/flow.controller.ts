@@ -2,14 +2,17 @@ import type { Request, Response } from 'express'
 import { FollowUpRequestSchema, GenerationRequestSchema } from '../domain/flow/schema'
 import { followUpFlow, streamGenerateFlow } from '../services/flow-generation.service'
 import { writeSseEvent } from '../utils/sse'
+import { chineseErrorMessage, schemaIssueMessage } from '../utils/errorMessage'
 
 export async function postGenerateFlow(req: Request, res: Response) {
   const parsed = GenerationRequestSchema.safeParse(req.body)
 
   if (!parsed.success) {
     res.status(400).json({
-      error: 'Invalid request body',
-      details: parsed.error.flatten()
+      error: '请求参数格式无效。',
+      details: parsed.error.flatten((issue) =>
+        schemaIssueMessage(issue.code, 'expected' in issue ? issue.expected : undefined)
+      )
     })
     return
   }
@@ -57,7 +60,7 @@ export async function postGenerateFlow(req: Request, res: Response) {
     writeSseEvent(res, { type: 'done' })
     res.end()
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown agent error'
+    const message = chineseErrorMessage(error, '流程图分析失败，请稍后重试。')
     console.log(`[code-flow][sse] send error message=${message}`)
     writeSseEvent(res, { type: 'error', content: message })
     res.end()
@@ -69,8 +72,10 @@ export async function postFollowUpFlow(req: Request, res: Response) {
 
   if (!parsed.success) {
     res.status(400).json({
-      error: 'Invalid request body',
-      details: parsed.error.flatten()
+      error: '请求参数格式无效。',
+      details: parsed.error.flatten((issue) =>
+        schemaIssueMessage(issue.code, 'expected' in issue ? issue.expected : undefined)
+      )
     })
     return
   }
@@ -92,7 +97,7 @@ export async function postFollowUpFlow(req: Request, res: Response) {
       explanation
     })
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown follow-up error'
+    const message = chineseErrorMessage(error, '追问解释失败，请稍后重试。')
 
     res.status(400).json({
       error: message

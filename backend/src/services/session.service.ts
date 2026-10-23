@@ -109,7 +109,7 @@ export class SessionService {
 
   private async summary(metadata: SessionMetadata, snapshot: z.infer<typeof SnapshotSchema>) {
     const draft = this.sources.draft(metadata.id)
-    if (draft) {
+    if (draft?.files.length) {
       const state = await createMultiFileGraph(undefined, this.saver).getState({
         configurable: { thread_id: this.sources.analysisThread(metadata.id)! }
       })

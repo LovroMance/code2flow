@@ -9,7 +9,8 @@ import {
   missingRanges,
   normalizeSourcePath,
   sourceRange,
-  validateSourceRange
+  validateSourceRange,
+  validateChunks
 } from '../src/utils/sourcePositions'
 import { SourceRangeSchema } from '../src/domain/source/schema'
 import { SessionService } from '../src/services/session.service'
@@ -19,7 +20,12 @@ import { RetrievalService, cosine, rrf } from '../src/services/retrieval.service
 import { runDetectLanguage } from '../src/ai/tools/detect-language.tool'
 import { createMultiFileRouter } from '../src/routes/multifile.route'
 import { mergeTaskOutcomes } from '../src/ai/graph/multifile.graph'
-import { AnalysisBudget, runMultiFileChain } from '../src/ai/chains/multifile.chain'
+import {
+  AnalysisBudget,
+  AnalysisLimitError,
+  runMultiFileChain
+} from '../src/ai/chains/multifile.chain'
+import { modelOutputTokens } from '../src/services/multifile-config'
 import { escapeMermaidLabel } from '../src/utils/composeMultiFileFlow'
 import { FileSemanticIndexSchema, type FileSemanticIndex } from '../src/domain/multifile/schema'
 import {
@@ -62,6 +68,9 @@ async function modelServer(
     cycle?: boolean
     fragments?: boolean
     unclosed?: boolean
+    truncated?: boolean
+    unauthorized?: boolean
+    outputLimits?: number[]
   } = {}
 ) {
   const calls: string[] = []
@@ -77,6 +86,14 @@ async function modelServer(
       ),
       payload = input.payload
     calls.push(name ?? 'followup')
+    options.outputLimits?.push(body.max_tokens)
+    if (options.unauthorized) {
+      res.writeHead(401, { 'Content-Type': 'application/json' })
+      res.end(
+        JSON.stringify({ error: { message: 'fixture unauthorized', type: 'authentication_error' } })
+      )
+      return
+    }
     let args: unknown
     if (name === 'submit_file_index') {
       const range = SourceRangeSchema.parse(payload.code.evidence),
@@ -198,7 +215,7 @@ async function modelServer(
       }
       return record
     }
-    args = modelArgs(args)
+    args = options.truncated ? { fileId: payload.file.fileId, units: [] } : modelArgs(args)
     res.writeHead(200, { 'Content-Type': 'text/event-stream' })
     const delta = name
       ? {
@@ -218,7 +235,7 @@ async function modelServer(
         `data: ${JSON.stringify({ id: `r${calls.length}`, object: 'chat.completion.chunk', created: 1, model: 'fixture', choices: [{ index: 0, delta, finish_reason }], usage: finish_reason ? { prompt_tokens: 20, completion_tokens: 30, total_tokens: 50 } : undefined })}\n\n`
       )
     send(delta, null)
-    send({}, name ? 'tool_calls' : 'stop')
+    send({}, options.truncated ? 'length' : name ? 'tool_calls' : 'stop')
     res.end('data: [DONE]\n\n')
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -239,6 +256,26 @@ async function modelServer(
   return calls
 }
 describe('多文件原始位置与上传边界', () => {
+  it('可配置分块完整保留原文，缓存缺块直接抛错而不重建', async () => {
+    const content = '\uFEFF中文😀\r\n' + '  step();\r\n'.repeat(25) + '尾部😀'
+    const chunks = chunkSource('f', content, 256, 4)
+    let cursor = 0
+    const restored = chunks
+      .map((chunk) => {
+        const part = content.slice(cursor, chunk.endOffset)
+        cursor = chunk.endOffset
+        return part
+      })
+      .join('')
+    expect(restored).toBe(content)
+    expect(chunks.every((chunk) => chunk.endOffset - chunk.startOffset <= 256)).toBe(true)
+    expect(() => validateChunks('f', content, chunks.slice(1))).toThrow('分块实现错误')
+    const { service, repo } = await setup()
+    const snapshot = await service.createSnapshot('s', [{ path: 'a.js', content }])
+    repo.basicChunks(snapshot, 256, 4)
+    repo.db.prepare('UPDATE code_flow_chunk_templates SET data = ?').run('[]')
+    expect(() => repo.basicChunks(snapshot, 256, 4)).toThrow('没有完整覆盖')
+  })
   it('读取坐标提示保留CRLF和UTF-16，范围冲突仍拒绝且提供数字反馈', async () => {
     const { service, repo } = await setup()
     const content = '中文😀\r\n  return true\r\n'
@@ -305,6 +342,28 @@ describe('多文件原始位置与上传边界', () => {
   })
 })
 describe('工具、检索与草稿一致性', () => {
+  it('清空草稿经接口持久化为空集合，保留版本校验并拒绝空快照', async () => {
+    const { service, saver } = await setup()
+    const app = express()
+    app.use(
+      '/api/v2',
+      createMultiFileRouter(() => service)
+    )
+    await service.saveDraft('s', {
+      revision: 0,
+      files: [{ path: 'a.js', content: 'run()' }],
+      activePath: 'a.js'
+    })
+    const empty = { revision: 1, files: [], activePath: '' }
+    await request(app).patch('/api/v2/sessions/s/draft').send(empty).expect(200)
+    expect((await new MultiFileService(saver).detail('s')).draft).toEqual({ ...empty, revision: 2 })
+    await request(app).patch('/api/v2/sessions/s/draft').send(empty).expect(409)
+    await request(app)
+      .patch('/api/v2/sessions/s/draft')
+      .send({ ...empty, revision: 2, activePath: 'a.js' })
+      .expect(400)
+    await request(app).post('/api/v2/sessions/s/snapshots').send({ files: [] }).expect(400)
+  })
   it('导入别名定位唯一同名实现；缺少绑定时不按函数同名误连', async () => {
     const { service, repo } = await setup(),
       snapshot = await service.createSnapshot('s', [
@@ -516,6 +575,67 @@ describe('工具、检索与草稿一致性', () => {
   })
 })
 describe('v2真实LangChain、StateGraph、SQLite、HTTP集成', () => {
+  it('输出截断优先于残缺字段错误，不重试、不提交done，输出预算与请求配置一致', async () => {
+    const outputLimits: number[] = []
+    const calls = await modelServer({ truncated: true, outputLimits })
+    vi.stubEnv('CODE2FLOW_MODEL_MAX_OUTPUT_TOKENS', '8192')
+    const { service } = await setup()
+    const snapshot = await service.createSnapshot('s', [{ path: 'a.ts', content: 'b()' }])
+    const app = express()
+    app.use(
+      '/api/v2',
+      createMultiFileRouter(() => service)
+    )
+    const response = await request(app)
+      .post('/api/v2/generate-flow')
+      .send({ thread_id: 's', snapshotId: snapshot.snapshotId })
+    expect(response.text).toContain('8192 token 上限')
+    expect(response.text).toContain('截断')
+    expect(response.text).not.toContain('"type":"done"')
+    expect(calls).toHaveLength(1)
+    expect(outputLimits).toEqual([8192])
+    expect(modelOutputTokens()).toBe(8192)
+    const budget = new AnalysisBudget(new AbortController().signal)
+    expect(budget.reserve('index', 10).output).toBe(8192)
+    expect((await service.detail('s')).result).toBeNull()
+  })
+  it('鉴权失败穿透中间件包装，不重复请求模型', async () => {
+    const calls = await modelServer({ unauthorized: true })
+    const { service } = await setup()
+    const snapshot = await service.createSnapshot('s', [{ path: 'a.ts', content: 'b()' }])
+    await expect(
+      service.generate('s', snapshot.snapshotId, new AbortController().signal, () => {})
+    ).rejects.toThrow('鉴权或模型配置错误')
+    expect(calls).toHaveLength(1)
+  })
+  it('程序错误和被中间件包装的预算错误直接终止，保留原始异常', async () => {
+    const calls = await modelServer()
+    const { service, repo } = await setup()
+    const snapshot = await service.createSnapshot('s', [{ path: 'a.ts', content: 'b()' }])
+    const fault = new TypeError('fixture programming error')
+    const cache = vi.spyOn(repo, 'cacheGet').mockImplementation(() => {
+      throw fault
+    })
+    try {
+      await expect(
+        service.generate('s', snapshot.snapshotId, new AbortController().signal, () => {})
+      ).rejects.toBe(fault)
+    } finally {
+      cache.mockRestore()
+    }
+    const limit = new AnalysisLimitError('分析预算测试上限。')
+    const reserve = vi.spyOn(AnalysisBudget.prototype, 'reserve').mockImplementation(() => {
+      throw limit
+    })
+    try {
+      await expect(
+        service.generate('s', snapshot.snapshotId, new AbortController().signal, () => {})
+      ).rejects.toBe(limit)
+    } finally {
+      reserve.mockRestore()
+    }
+    expect(calls).toHaveLength(0)
+  })
   it('索引阶段就拒绝改写的调用文本，并由原索引任务重试修复', async () => {
     const calls = await modelServer({ invalidCallOnce: true, empty: true })
     const { service } = await setup()
