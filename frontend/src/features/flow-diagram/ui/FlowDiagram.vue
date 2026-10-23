@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useMermaidRenderer } from '../model/useMermaidRenderer'
 import { useDiagramViewport } from '../model/useDiagramViewport'
 import type { NodeMapping } from '../../../entities/flow/model/types'
@@ -10,7 +10,7 @@ const props = defineProps<{
   isStreaming?: boolean
 }>()
 
-const emit = defineEmits<{ 'select-node': [nodeId: string] }>()
+const emit = defineEmits<{ 'select-node': [nodeId: string]; 'render-error': [message: string] }>()
 const expanded = ref(false)
 
 async function selectNode(nodeId: string) {
@@ -26,6 +26,9 @@ const { diagramElement, renderedSvg, renderError, isRendering } = useMermaidRend
   selectNode,
   () => !!props.isStreaming
 )
+watch(renderError, (error) => {
+  if (error) emit('render-error', '流程图渲染失败，请重新生成。')
+})
 const {
   viewportElement,
   camera,

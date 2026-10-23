@@ -3,7 +3,13 @@ import { buildLanguageDetectionQuestion } from '../../prompts/detect-language.pr
 // 配置和鉴权错误需要修正环境，不能作为普通的语言不确定继续执行。
 export class LanguageDetectionConfigError extends Error {}
 
-export async function requestLanguageChoice(code: string, model: string, timeout: number) {
+export async function requestLanguageChoice(
+  code: string,
+  model: string,
+  timeout: number,
+  signal?: AbortSignal,
+  onUsage?: (info: { model: string; usage: Record<string, number> }) => void
+) {
   const apiKey = process.env.TYPESAFE_API_KEY?.trim()
   if (!apiKey || apiKey === 'your_typesafe_api_key_here') {
     console.error('[code-flow][jev] config-error: TYPESAFE_API_KEY 未配置')
@@ -25,12 +31,39 @@ export async function requestLanguageChoice(code: string, model: string, timeout
         state: { code },
         questions: { language: buildLanguageDetectionQuestion() }
       },
-      { timeout, retry: { maxRetries: 0 }, signal: AbortSignal.timeout(timeout) }
+      {
+        timeout,
+        retry: { maxRetries: 0 },
+        signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(timeout)])
+          : AbortSignal.timeout(timeout)
+      }
     )
     console.info('[code-flow][jev] request-complete', {
       model: response.model,
       durationMs: Date.now() - startedAt,
       usage: response.usage
+    })
+    const allowed = new Set([
+      'input_tokens',
+      'output_tokens',
+      'total_tokens',
+      'prompt_tokens',
+      'completion_tokens',
+      'inputTokens',
+      'outputTokens',
+      'totalTokens',
+      'promptTokens',
+      'completionTokens'
+    ])
+    onUsage?.({
+      model: response.model,
+      usage: Object.fromEntries(
+        Object.entries(response.usage ?? {}).filter(
+          ([key, value]) =>
+            allowed.has(key) && typeof value === 'number' && Number.isFinite(value) && value >= 0
+        )
+      ) as Record<string, number>
     })
     return response.answers.language
   } catch (error) {

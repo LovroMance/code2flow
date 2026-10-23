@@ -25,19 +25,6 @@ export async function generateCodeFlowDraft(
       : [])
   ]
 
-  // 展示系统规则和本次输入，便于核对首次生成与重试时的消息内容。
-  console.log('[code-flow][chain] input messages')
-  console.dir(
-    [
-      { role: 'system', content: systemPrompt },
-      ...messages.map((message) => ({
-        role: message instanceof HumanMessage ? 'user' : 'system',
-        content: message.content
-      }))
-    ],
-    { depth: null }
-  )
-
   const agent = createAgent({
     model: options.model ?? createOpenAIModel(),
     tools: [],
@@ -54,16 +41,11 @@ export async function generateCodeFlowDraft(
     { callbacks: createRunCallbacks(options.trace, options.callbacks?.onPartialMermaid) }
   )
 
-  console.log('[code-flow][chain] agent output')
-  console.dir(output, { depth: null })
-
   // 语言只取 Jev 结果，模型无需输出，也无法覆盖它；Zod 校验行号等跨字段约束。
   const draft = FlowDraftSchema.parse(output.structuredResponse)
   const result = GenerationResultSchema.parse({
     ...draft,
     detectedLanguage: input.detectedLanguage
   })
-  console.log('[code-flow][chain] validated result')
-  // console.dir(result, { depth: null })
   return result
 }

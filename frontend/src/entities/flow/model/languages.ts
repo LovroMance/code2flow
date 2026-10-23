@@ -47,6 +47,9 @@ export const LANGUAGE_OPTIONS = [
 ] as const
 
 export type SupportedLanguage = (typeof LANGUAGE_OPTIONS)[number]['value']
+export function isSupportedLanguage(value: unknown): value is SupportedLanguage {
+  return LANGUAGE_OPTIONS.some((option) => option.value === value)
+}
 export const SUPPORTED_FILE_EXTENSIONS = LANGUAGE_OPTIONS.filter(
   (option) => option.value !== 'unknown'
 ).flatMap((option) => [...option.extensions] as string[])

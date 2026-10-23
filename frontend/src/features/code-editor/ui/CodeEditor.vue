@@ -1,17 +1,19 @@
 <script setup lang="ts">
 import { Editor as MonacoEditor } from '@guolao/vue-monaco-editor'
 import type { editor } from 'monaco-editor'
-import { computed, shallowRef } from 'vue'
+import { computed, shallowRef, onBeforeUnmount, watch, nextTick } from 'vue'
 import type { NodeMapping, SupportedLanguage } from '../../../entities/flow/model/types'
 import type { CodeEditorExpose } from '../model/types'
+import { mappingSelection } from '../model/mappingSelection'
 import { LANGUAGE_OPTIONS } from '../../../entities/flow/model/languages'
-import { languages } from 'monaco-editor'
+import { languages, editor as monacoEditor, Uri } from 'monaco-editor'
 
 const props = defineProps<{
   modelValue: string
   language: SupportedLanguage
   disabled?: boolean
   documentId?: string
+  documentIds?: string[]
 }>()
 
 const emit = defineEmits<{
@@ -20,6 +22,8 @@ const emit = defineEmits<{
 }>()
 
 const monacoEditorRef = shallowRef<editor.IStandaloneCodeEditor | null>(null)
+const ownedPaths = new Set<string>()
+let pendingMapping: NodeMapping | undefined
 let decorationIds: string[] = []
 const languageOptions = LANGUAGE_OPTIONS
 
@@ -44,6 +48,12 @@ const editorPath = computed(
 
 function handleMount(instance: editor.IStandaloneCodeEditor) {
   monacoEditorRef.value = instance
+  ownedPaths.add(Uri.parse(editorPath.value).toString())
+  if (pendingMapping) {
+    const mapping = pendingMapping
+    pendingMapping = undefined
+    focusMapping(mapping)
+  }
 
   const input = instance.getDomNode()?.querySelector('textarea.inputarea')
   if (input instanceof HTMLTextAreaElement) {
@@ -53,7 +63,11 @@ function handleMount(instance: editor.IStandaloneCodeEditor) {
 }
 
 function updateValue(value: string | undefined) {
-  emit('update:modelValue', value ?? '')
+  const text = value ?? ''
+  emit(
+    'update:modelValue',
+    props.modelValue.startsWith('\uFEFF') && !text.startsWith('\uFEFF') ? `\uFEFF${text}` : text
+  )
 }
 
 function updateLanguage(event: Event) {
@@ -75,22 +89,24 @@ function focusMapping(mapping: NodeMapping) {
   const editorInstance = monacoEditorRef.value
   const model = editorInstance?.getModel()
 
-  if (!editorInstance || !model) {
+  if (
+    !editorInstance ||
+    !model ||
+    model.uri.toString() !== Uri.parse(editorPath.value).toString()
+  ) {
+    pendingMapping = mapping
     return
   }
 
-  const startColumn = mapping.columnStart ?? 1
-  // 仅有行号时选到最后一行行尾；终点列为 1 会遗漏该行全部文本。
-  const endColumn = mapping.columnEnd ?? model.getLineMaxColumn(mapping.lineEnd)
+  const selection = mappingSelection(mapping, props.modelValue, (line) =>
+    model.getLineMaxColumn(line)
+  )
+  const startColumn = selection.startColumn
+  const endColumn = selection.endColumn
 
   editorInstance.focus()
   editorInstance.revealLinesInCenter(mapping.lineStart, mapping.lineEnd)
-  editorInstance.setSelection({
-    startLineNumber: mapping.lineStart,
-    startColumn,
-    endLineNumber: mapping.lineEnd,
-    endColumn
-  })
+  editorInstance.setSelection(selection)
 
   decorationIds = editorInstance.deltaDecorations(decorationIds, [
     {
@@ -108,6 +124,43 @@ function focusMapping(mapping: NodeMapping) {
     }
   ])
 }
+
+watch(
+  editorPath,
+  async (path) => {
+    ownedPaths.add(Uri.parse(path).toString())
+    await nextTick()
+    const model = monacoEditorRef.value?.getModel()
+    if (model && model.getValue() !== props.modelValue) model.setValue(props.modelValue)
+    // 包装组件切换model后再定位，不把新文件行号应用到旧model。
+    if (pendingMapping) {
+      const mapping = pendingMapping
+      pendingMapping = undefined
+      focusMapping(mapping)
+    }
+  },
+  { flush: 'post' }
+)
+watch(
+  () => props.documentIds,
+  async (ids) => {
+    if (!ids) return
+    await nextTick()
+    const valid = new Set(
+      ids.map((id) => Uri.parse(`file:///workspace/${encodeURIComponent(id)}`).toString())
+    )
+    for (const model of monacoEditor.getModels())
+      if (ownedPaths.has(model.uri.toString()) && !valid.has(model.uri.toString())) {
+        ownedPaths.delete(model.uri.toString())
+        model.dispose()
+      }
+  },
+  { deep: true, flush: 'post' }
+)
+onBeforeUnmount(() => {
+  for (const model of monacoEditor.getModels())
+    if (ownedPaths.has(model.uri.toString())) model.dispose()
+})
 
 defineExpose<CodeEditorExpose>({
   focusMapping

@@ -7,6 +7,9 @@ import type {
   SupportedLanguage
 } from '../../../entities/flow/model/types'
 import { streamGenerateFlow } from '../../../shared/api/flow-stream.api'
+import { streamMultiFlow } from '../../../shared/api/multifile.api'
+import { ensureMermaid } from '../../../shared/lib/mermaid/setup'
+import type { MultiFileResult } from '../../../entities/flow/model/multifile'
 
 const EMPTY_MERMAID = 'flowchart TD\nA[等待输入代码] --> B[点击生成流程图]\nB --> C[展示结果]'
 const LOADING_MERMAID = 'flowchart TD\nA[请求已发送] --> B[等待 Agent 返回结果]'
@@ -18,14 +21,19 @@ export function useFlowGeneration() {
   const mappings = ref<NodeMapping[]>([])
   const errorMessage = ref('')
   const detectedLanguage = ref<SupportedLanguage>(DEFAULT_LANGUAGE)
+  const multiResult = ref<MultiFileResult | null>(null)
+  const progressText = ref('')
+  let abortController: AbortController | undefined
 
   const isLoading = computed(() => status.value === 'streaming')
 
-  function resetOutput() {
+  function resetOutput(empty = false) {
     status.value = 'idle'
-    mermaid.value = EMPTY_MERMAID
+    mermaid.value = empty ? '' : EMPTY_MERMAID
     mappings.value = []
     errorMessage.value = ''
+    multiResult.value = null
+    progressText.value = ''
   }
 
   function setDetectedLanguage(language: SupportedLanguage) {
@@ -41,6 +49,82 @@ export function useFlowGeneration() {
     } else if (failed) {
       status.value = 'error'
       errorMessage.value = '上次分析失败，请重新生成流程图。'
+    }
+  }
+
+  async function restoreMultiOutput(result: MultiFileResult | null, failed = false) {
+    restoreOutput(null, failed)
+    mermaid.value = ''
+    if (!result) return
+    try {
+      if (result.hasExecutableFlow) await ensureMermaid().parse(result.mermaid)
+      mermaid.value = result.mermaid
+      mappings.value = result.mappings
+      detectedLanguage.value = result.detectedLanguage
+      multiResult.value = result
+      status.value = 'done'
+    } catch {
+      failRendering('流程图解析失败，请重新生成。')
+    }
+  }
+  function failRendering(reason: string) {
+    status.value = 'error'
+    mappings.value = []
+    errorMessage.value = reason
+  }
+  /** 管理多文件流式状态与取消；结果通过契约校验和 Mermaid 解析后才交给页面。 */
+  async function generateMultiFlow(threadId: string, snapshotId: string) {
+    resetOutput()
+    status.value = 'streaming'
+    mermaid.value = ''
+    abortController = new AbortController()
+    let incomplete = ''
+    try {
+      const result = await streamMultiFlow(
+        threadId,
+        snapshotId,
+        abortController.signal,
+        (metadata) => {
+          const stages: Record<string, string> = {
+            prepare: '准备快照',
+            detect: '识别语言',
+            basic: '建立检索',
+            index: '分析全部文件',
+            generate: '生成局部流程',
+            complete: '校验流程图',
+            resolve: '查找引用候选',
+            verify: '核对歧义关系',
+            incomplete: '分析未完成'
+          }
+          progressText.value = `${stages[String(metadata.stage)] ?? '处理中'} ${metadata.completed ?? ''}${metadata.total ? `/${metadata.total}` : ''}`
+          if (Array.isArray(metadata.missingRanges))
+            incomplete = metadata.missingRanges
+              .slice(0, 20)
+              .map((value) => {
+                if (
+                  !value ||
+                  typeof value !== 'object' ||
+                  !('path' in value) ||
+                  !('startOffset' in value) ||
+                  !('endOffset' in value)
+                )
+                  return ''
+                return `${String(value.path)} [${String(value.startOffset)}, ${String(value.endOffset)})`
+              })
+              .filter(Boolean)
+              .join('；')
+        }
+      )
+      await restoreMultiOutput(result)
+      if (errorMessage.value) throw new Error(errorMessage.value)
+      return result
+    } catch (error) {
+      failRendering(
+        `${error instanceof Error ? error.message : '多文件生成失败。'}${incomplete ? ` 未完成的原始字符范围：${incomplete}` : ''}`
+      )
+      throw error
+    } finally {
+      abortController = undefined
     }
   }
 
@@ -98,6 +182,12 @@ export function useFlowGeneration() {
   }
 
   return {
+    multiResult,
+    progressText,
+    generateMultiFlow,
+    restoreMultiOutput,
+    failRendering,
+    cancelGeneration: () => abortController?.abort(),
     errorMessage,
     detectedLanguage,
     generateFlow,

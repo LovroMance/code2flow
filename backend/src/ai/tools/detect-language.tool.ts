@@ -12,7 +12,11 @@ const ConfigSchema = z.object({
 })
 
 // Jev 只负责分类；临时失败降级为 unknown，流程图仍可使用通用规则生成。
-export async function runDetectLanguage(code: string): Promise<LanguageDetection> {
+export async function runDetectLanguage(
+  code: string,
+  signal?: AbortSignal,
+  onUsage?: (info: { model: string; usage: Record<string, number> }) => void
+): Promise<LanguageDetection> {
   const config = ConfigSchema.safeParse({
     model: process.env.TYPESAFE_DEFAULT_MODEL ?? 'jev-1.14.0',
     timeout: process.env.CODE2FLOW_LANGUAGE_TIMEOUT_MS ?? 5000,
@@ -31,9 +35,18 @@ export async function runDetectLanguage(code: string): Promise<LanguageDetection
   })
 
   try {
-    const raw = await requestLanguageChoice(code, config.data.model, config.data.timeout)
-    console.info('[code-flow][jev] detection-result', raw)
+    const raw = await requestLanguageChoice(
+      code,
+      config.data.model,
+      config.data.timeout,
+      signal,
+      onUsage
+    )
     const answer = LanguageChoiceSchema.parse(raw)
+    console.info('[code-flow][jev] detection-result', {
+      language: answer.choice,
+      confidence: answer.confidence
+    })
     const uncertain = answer.choice === 'unknown' || answer.confidence < config.data.minConfidence
     return {
       language: uncertain ? 'unknown' : answer.choice,
@@ -43,6 +56,7 @@ export async function runDetectLanguage(code: string): Promise<LanguageDetection
       status: uncertain ? 'uncertain' : 'detected'
     }
   } catch (error) {
+    signal?.throwIfAborted()
     if (error instanceof LanguageDetectionConfigError) throw error
     const reason = error instanceof z.ZodError ? 'invalid_response' : 'request_failed'
     console.warn('[code-flow][jev] detection-fallback', {

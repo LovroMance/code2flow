@@ -13,6 +13,9 @@ import {
   type SessionWrite
 } from '../domain/session/schema'
 import { SessionRepository } from '../repositories/session.repository'
+import { SourceRepository } from '../repositories/source.repository'
+import { createMultiFileGraph } from '../ai/graph/multifile.graph'
+import { sha256 } from '../utils/sourcePositions'
 import { isSessionBusy, SessionError, withSessionLock } from './session-lock'
 
 const SnapshotSchema = z.object({
@@ -36,11 +39,13 @@ export function getSessionService() {
 
 export class SessionService {
   private readonly repository: SessionRepository
+  private readonly sources: SourceRepository
   private indexed = false
   private indexing: Promise<void> | undefined
 
   constructor(private readonly saver: SqliteSaver) {
     this.repository = new SessionRepository(saver)
+    this.sources = new SourceRepository(saver)
   }
 
   private async snapshot(id: string) {
@@ -80,7 +85,7 @@ export class SessionService {
       const seen = new Set<string>()
       for await (const item of this.saver.list({})) {
         const id = item.config.configurable?.thread_id
-        if (typeof id !== 'string' || seen.has(id)) continue
+        if (typeof id !== 'string' || this.sources.isAnalysisThread(id) || seen.has(id)) continue
         seen.add(id)
         if (this.repository.get(id) || this.repository.wasDeleted(id)) continue
         this.repository.save({
@@ -102,7 +107,32 @@ export class SessionService {
     }
   }
 
-  private summary(metadata: SessionMetadata, snapshot: z.infer<typeof SnapshotSchema>) {
+  private async summary(metadata: SessionMetadata, snapshot: z.infer<typeof SnapshotSchema>) {
+    const draft = this.sources.draft(metadata.id)
+    if (draft) {
+      const state = await createMultiFileGraph(undefined, this.saver).getState({
+        configurable: { thread_id: this.sources.analysisThread(metadata.id)! }
+      })
+      const source = state.values.snapshotId
+        ? this.sources.get(metadata.id, state.values.snapshotId)
+        : null
+      const changed =
+        !source ||
+        draft.files.length !== source.files.length ||
+        draft.files.some(
+          (file) =>
+            !source.files.some(
+              (old) => old.path === file.path && old.contentHash === sha256(file.content)
+            )
+        )
+      return SessionSummarySchema.parse({
+        ...metadata,
+        language: state.values.languageDetection?.language ?? metadata.draftLanguage,
+        hasResult: !!state.values.result,
+        hasDraft: changed,
+        busy: isSessionBusy(metadata.id)
+      })
+    }
     return SessionSummarySchema.parse({
       ...metadata,
       language: metadata.draftCode === null ? snapshot.detectedLanguage : metadata.draftLanguage,
@@ -135,7 +165,7 @@ export class SessionService {
       }
     }
     return SessionDetailSchema.parse({
-      ...this.summary(metadata, snapshot),
+      ...(await this.summary(metadata, snapshot)),
       draftCode: metadata.draftCode ?? snapshot.code,
       draftLanguage:
         metadata.draftCode === null ? snapshot.detectedLanguage : metadata.draftLanguage,
@@ -176,6 +206,9 @@ export class SessionService {
       await this.indexExisting()
       if (!this.repository.get(id)) throw new SessionError('会话不存在或已被删除。', 404)
       await this.saver.deleteThread(id)
+      const analysisThread = this.sources.analysisThread(id, false)
+      if (analysisThread) await this.saver.deleteThread(analysisThread)
+      this.sources.deleteSession(id)
       this.repository.delete(id)
     })
   }

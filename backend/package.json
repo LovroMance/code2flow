@@ -15,7 +15,8 @@
     "typecheck:tests": "tsc -p tsconfig.tests.json --noEmit",
     "eval": "tsx src/eval/run-baseline.ts",
     "eval:ab": "tsx src/eval/compare-reports.ts",
-    "eval:traces": "tsx src/eval/analyze-traces.ts"
+    "eval:traces": "tsx src/eval/analyze-traces.ts",
+    "eval:multi": "tsx src/eval/run-multifile.ts"
   },
   "dependencies": {
     "@typesafe-ai/sdk": "0.7.0",

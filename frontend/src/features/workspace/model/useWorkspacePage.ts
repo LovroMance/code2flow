@@ -1,9 +1,16 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { isAxiosError } from 'axios'
 import { SAMPLE_CODE } from '../config/sampleCode'
+import { equalSourceFiles, mappingFilePath } from './sourceFiles'
 import { getHealth } from '../../../shared/api/system.api'
 import { postFollowUp } from '../../../shared/api/follow-up.api'
 import * as sessionApi from '../../../shared/api/sessions.api'
+import * as multiApi from '../../../shared/api/multifile.api'
+import type {
+  SourceFileInput,
+  SourceSnapshot,
+  MultiFileMapping
+} from '../../../entities/flow/model/multifile'
 import { useFlowGeneration } from '../../flow-generation/model/useFlowGeneration'
 import type { NodeMapping, SupportedLanguage } from '../../../entities/flow/model/types'
 import type {
@@ -36,7 +43,24 @@ function message(error: unknown, fallback: string) {
 }
 
 export function useWorkspacePage() {
-  const code = ref(SAMPLE_CODE)
+  const singleCode = ref(SAMPLE_CODE)
+  const files = ref<SourceFileInput[]>([])
+  const pendingFiles = ref<SourceFileInput[]>([])
+  const activePath = ref('')
+  const multiSnapshot = ref<SourceSnapshot | null>(null)
+  const snapshotFiles = ref<SourceFileInput[] | null>(null)
+  const multiRevision = ref(0)
+  const code = computed({
+    get: () =>
+      files.value.length
+        ? (files.value.find((f) => f.path === activePath.value)?.content ?? '')
+        : singleCode.value,
+    set: (value: string) => {
+      const file = files.value.find((f) => f.path === activePath.value)
+      if (file) file.content = value
+      else singleCode.value = value
+    }
+  })
   const healthStatus = ref('checking')
   const uploadFileName = ref('')
   const workspaceError = ref('')
@@ -63,7 +87,13 @@ export function useWorkspacePage() {
     resetOutput,
     restoreOutput,
     setDetectedLanguage,
-    status
+    status,
+    multiResult,
+    progressText,
+    generateMultiFlow,
+    restoreMultiOutput,
+    cancelGeneration,
+    failRendering
   } = useFlowGeneration()
   let persisted = false
   let applying = true
@@ -76,17 +106,22 @@ export function useWorkspacePage() {
   const isWorkspaceBusy = computed(
     () => isLoading.value || sessionLoading.value || followUpStatus.value === 'loading'
   )
-  const sourceChanged = computed(
-    () => sourceSnapshot.value !== null && code.value !== sourceSnapshot.value
+  const sourceChanged = computed(() =>
+    files.value.length
+      ? snapshotFiles.value !== null && !equalSourceFiles(files.value, snapshotFiles.value)
+      : sourceSnapshot.value !== null && code.value !== sourceSnapshot.value
   )
   const canAskFollowUp = computed(
     () =>
       status.value === 'done' &&
       !sourceChanged.value &&
-      mappings.value.length > 0 &&
+      (mappings.value.length > 0 || multiResult.value !== null) &&
       !isWorkspaceBusy.value
   )
   const combinedErrorMessage = computed(() => workspaceError.value || errorMessage.value)
+  function fileDocumentId(path: string) {
+    return `${threadId.value}/${multiSnapshot.value?.snapshotId ?? 'draft'}/${multiSnapshot.value?.files.find((f) => f.path === path)?.fileId ?? path}`
+  }
   const filteredSessions = computed(() => {
     const query = sessionSearch.value.trim().toLowerCase()
     return sessions.value.filter((session) =>
@@ -94,8 +129,10 @@ export function useWorkspacePage() {
     )
   })
   const lineCount = computed(() => (code.value ? code.value.split(/\r\n|\r|\n/).length : 0))
-  const statusText = computed(
-    () => ({ idle: '未生成', streaming: '生成中', done: '已生成', error: '生成失败' })[status.value]
+  const statusText = computed(() =>
+    isLoading.value && files.value.length
+      ? progressText.value || '分析中'
+      : { idle: '未生成', streaming: '生成中', done: '已生成', error: '生成失败' }[status.value]
   )
   const saveStatusText = computed(
     () =>
@@ -136,13 +173,27 @@ export function useWorkspacePage() {
           const input = {
             title: sessionTitle.value,
             fileName: uploadFileName.value,
-            draftCode: code.value,
+            draftCode: files.value.length ? '' : code.value,
             draftLanguage: detectedLanguage.value
           }
           const detail = persisted
             ? await sessionApi.updateSession(threadId.value, input)
             : await sessionApi.createSession(threadId.value, input)
           persisted = true
+          if (files.value.length) {
+            const saved = await multiApi.saveMultiDraft(threadId.value, {
+              revision: multiRevision.value,
+              files: files.value.map((f) => ({ ...f })),
+              activePath: activePath.value
+            })
+            multiRevision.value = saved.revision
+            if (revision === draftRevision) {
+              applying = true
+              files.value = saved.files
+              activePath.value = saved.activePath
+              applying = false
+            }
+          }
           savedRevision = revision
           upsertSummary(detail)
           preference(ACTIVE_SESSION_KEY, threadId.value)
@@ -172,7 +223,7 @@ export function useWorkspacePage() {
   }
 
   watch(
-    [code, detectedLanguage, uploadFileName, sessionTitle],
+    [code, files, activePath, detectedLanguage, uploadFileName, sessionTitle],
     () => {
       if (applying) return
       draftRevision += 1
@@ -185,21 +236,47 @@ export function useWorkspacePage() {
         })
       }, 700)
     },
-    { flush: 'sync' }
+    { flush: 'sync', deep: true }
   )
 
-  function applySession(detail: SessionDetail) {
+  async function applySession(detail: SessionDetail) {
+    const multi = await multiApi.getMultiDetail(detail.id)
+    if (multi.busy) throw new Error('该会话正在处理请求。')
+    const restoredFiles =
+      multi.draft?.files ??
+      (multi.snapshot
+        ? await Promise.all(
+            multi.snapshot.files.map(async (f) => ({
+              path: f.path,
+              content: await multiApi.getSourceFile(detail.id, multi.snapshot!.snapshotId, f.fileId)
+            }))
+          )
+        : [])
+    const sourceFiles = multi.snapshot
+      ? await Promise.all(
+          multi.snapshot.files.map(async (f) => ({
+            path: f.path,
+            content: await multiApi.getSourceFile(detail.id, multi.snapshot!.snapshotId, f.fileId)
+          }))
+        )
+      : null
     // 恢复期间暂停草稿监听，避免把半套恢复状态写回服务端。
     applying = true
     try {
       threadId.value = detail.id
       sessionTitle.value = detail.title
       uploadFileName.value = detail.fileName
-      code.value = detail.draftCode
+      files.value = restoredFiles
+      activePath.value = multi.draft?.activePath ?? restoredFiles[0]?.path ?? ''
+      singleCode.value = detail.draftCode
+      multiRevision.value = multi.draft?.revision ?? 0
+      multiSnapshot.value = multi.snapshot
+      snapshotFiles.value = sourceFiles
       setDetectedLanguage(detail.draftLanguage)
       sourceSnapshot.value = detail.result ? detail.sourceCode : null
       restoreOutput(detail.result, detail.failed)
-      followUpMessages.value = detail.messages
+      if (restoredFiles.length) await restoreMultiOutput(multi.result, multi.failed)
+      followUpMessages.value = restoredFiles.length ? multi.messages : detail.messages
       followUpQuestion.value = ''
       followUpStatus.value = detail.messages.length ? 'done' : 'idle'
       draftRevision = 0
@@ -222,7 +299,7 @@ export function useWorkspacePage() {
       await saveDraft()
       const detail = await sessionApi.getSession(id)
       if (detail.busy) throw new Error('该会话正在处理请求，请稍后刷新列表。')
-      applySession(detail)
+      await applySession(detail)
     } catch (error) {
       workspaceError.value = message(error, '切换失败，已保留当前会话。')
     } finally {
@@ -246,7 +323,7 @@ export function useWorkspacePage() {
         draftCode: content,
         draftLanguage: language
       })
-      applySession(detail)
+      await applySession(detail)
     } catch (error) {
       workspaceError.value = message(error, '新建会话失败，已保留当前内容。')
     } finally {
@@ -274,6 +351,11 @@ export function useWorkspacePage() {
       threadId.value = crypto.randomUUID()
       sessionTitle.value = '未命名分析'
       uploadFileName.value = ''
+      files.value = []
+      activePath.value = ''
+      multiSnapshot.value = null
+      snapshotFiles.value = null
+      multiRevision.value = 0
       code.value = ''
       setDetectedLanguage('unknown')
       resetOutput()
@@ -286,7 +368,7 @@ export function useWorkspacePage() {
       savedRevision = draftRevision = 0
       preference(ACTIVE_SESSION_KEY, '')
       applying = false
-      if (next) applySession(await sessionApi.getSession(next.id))
+      if (next) await applySession(await sessionApi.getSession(next.id))
       else await saveDraft()
     } catch (error) {
       workspaceError.value = message(error, '删除或加载会话失败，请刷新列表。')
@@ -296,6 +378,7 @@ export function useWorkspacePage() {
     }
   }
 
+  /** 先保存编辑草稿，再固定多文件快照；生成及后续追问始终绑定这一份正文。 */
   async function handleGenerate() {
     if (isWorkspaceBusy.value || !code.value.trim()) return
     // 提交前先保存草稿，并锁定会话切换；SSE 只能更新本次源码所在会话。
@@ -307,8 +390,16 @@ export function useWorkspacePage() {
       followUpMessages.value = []
       followUpStatus.value = 'idle'
       sourceSnapshot.value = null
-      await generateFlow({ code: code.value, threadId: threadId.value })
-      sourceSnapshot.value = code.value
+      if (files.value.length) {
+        resetOutput(true)
+        const snapshot = await multiApi.createSnapshot(threadId.value, files.value)
+        multiSnapshot.value = snapshot
+        snapshotFiles.value = files.value.map((f) => ({ ...f }))
+        await generateMultiFlow(threadId.value, snapshot.snapshotId)
+      } else {
+        await generateFlow({ code: code.value, threadId: threadId.value })
+        sourceSnapshot.value = code.value
+      }
     } catch (error) {
       workspaceError.value = message(error, '生成失败，请重试。')
     } finally {
@@ -332,7 +423,10 @@ export function useWorkspacePage() {
     workspaceError.value = ''
     try {
       await saveDraft()
-      const response = await postFollowUp({ threadId: threadId.value, question, code: code.value })
+      const response =
+        files.value.length && multiSnapshot.value
+          ? await multiApi.multiFollowUp(threadId.value, multiSnapshot.value.snapshotId, question)
+          : await postFollowUp({ threadId: threadId.value, question, code: code.value })
       followUpMessages.value.push(
         { role: 'user', content: question },
         { role: 'assistant', content: response.explanation }
@@ -374,6 +468,102 @@ export function useWorkspacePage() {
     }
   }
 
+  async function handleUploadFiles(selected: FileList | null) {
+    if (!selected?.length || isWorkspaceBusy.value) return
+    workspaceError.value = ''
+    if (selected.length > 20) {
+      workspaceError.value = '最多上传20个文件。'
+      return
+    }
+    sessionLoading.value = true
+    try {
+      const loaded: SourceFileInput[] = []
+      let total = 0
+      const errors: string[] = []
+      for (const file of Array.from(selected)) {
+        try {
+          const extension = file.name.includes('.')
+            ? file.name.slice(file.name.lastIndexOf('.')).toLowerCase()
+            : ''
+          if (!SUPPORTED_FILE_EXTENSIONS.includes(extension))
+            throw new Error('不支持的文本代码扩展名')
+          total += file.size
+          if (file.size > MAX_UPLOAD_SIZE_BYTES || total > 2097152)
+            throw new Error('超过单文件200 KiB或总计2 MiB限制')
+          // fatal拒绝无效UTF-8，ignoreBOM保留原文BOM，禁止静默替换或跳过。
+          const content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
+            await file.arrayBuffer()
+          )
+          if (
+            !content.replace(/^\uFEFF/, '').trim() ||
+            [...content].some((c) => c.charCodeAt(0) < 32 && !'\t\r\n'.includes(c))
+          )
+            throw new Error('空文件或二进制内容')
+          loaded.push({ path: file.webkitRelativePath || file.name, content })
+        } catch (error) {
+          errors.push(`${file.name}：${error instanceof Error ? error.message : '读取失败'}`)
+        }
+      }
+      if (errors.length) throw new Error(errors.join('；'))
+      pendingFiles.value = loaded
+    } catch (error) {
+      workspaceError.value = message(error, '读取文件失败。')
+    } finally {
+      sessionLoading.value = false
+    }
+  }
+  /** 用户确认预览后才更新正式文件集合，使草稿保存与旧图失效基于同一批文件。 */
+  async function confirmUploadFiles() {
+    if (isWorkspaceBusy.value || !pendingFiles.value.length) return
+    workspaceError.value = ''
+    sessionLoading.value = true
+    try {
+      const loaded = pendingFiles.value.map((f) => ({ ...f, path: f.path.replace(/\\/g, '/') }))
+      if (
+        new Set(loaded.map((f) => f.path)).size !== loaded.length ||
+        loaded.some(
+          (f) => !f.path || /^(?:\/|[a-z]:)/i.test(f.path) || f.path.split('/').includes('..')
+        )
+      )
+        throw new Error('请为每个文件填写不重复的项目内相对路径，不能使用绝对路径或上级目录。')
+      await saveDraft()
+      const detail = await sessionApi.createSession(crypto.randomUUID(), {
+        title: loaded[0]!.path,
+        fileName: `${loaded.length}个文件`,
+        draftCode: ''
+      })
+      await applySession(detail)
+      files.value = loaded
+      activePath.value = loaded[0]!.path
+      uploadFileName.value = `${loaded.length}个文件`
+      await saveDraft()
+      pendingFiles.value = []
+    } catch (error) {
+      workspaceError.value = message(error, '读取文件失败。')
+    } finally {
+      sessionLoading.value = false
+    }
+  }
+  function selectFile(path: string) {
+    if (!isWorkspaceBusy.value) activePath.value = path
+  }
+  function renameFile(index: number, path: string) {
+    if (isWorkspaceBusy.value || !files.value[index]) return
+    if (!path.trim() || files.value.some((f, i) => i !== index && f.path === path)) {
+      workspaceError.value = '文件路径不能为空或重复。'
+      return
+    }
+    const old = files.value[index]!.path
+    files.value[index]!.path = path
+    if (activePath.value === old) activePath.value = path
+  }
+  function removeFile(index: number) {
+    if (isWorkspaceBusy.value || files.value.length <= 1) return
+    files.value.splice(index, 1)
+    if (!files.value.some((f) => f.path === activePath.value))
+      activePath.value = files.value[0]!.path
+  }
+
   function clearWorkspace() {
     if (isWorkspaceBusy.value) return
     code.value = ''
@@ -387,10 +577,17 @@ export function useWorkspacePage() {
   function handleLanguageChange(language: SupportedLanguage) {
     if (!isWorkspaceBusy.value) setDetectedLanguage(language)
   }
+  /** 将图节点关联回快照文件并切换编辑目标，页面等待更新后再执行滚动高亮。 */
   function primeFollowUpQuestionFromNode(nodeId: string): NodeMapping | undefined {
     if (sourceChanged.value || isWorkspaceBusy.value) return
     const mapping = mappings.value.find((item) => item.nodeId === nodeId)
     if (mapping) {
+      const fileId = (mapping as Partial<MultiFileMapping>).fileId
+      if (fileId && multiSnapshot.value) {
+        const path = mappingFilePath(fileId, multiSnapshot.value, files.value)
+        if (!path) return
+        activePath.value = path
+      }
       followUpQuestion.value = `为什么节点「${mapping.label}」会被画成 ${mapping.kind} 类型？它对应的第 ${mapping.lineStart}-${mapping.lineEnd} 行逻辑在流程图里为什么这样连接？`
     }
     return mapping
@@ -415,7 +612,8 @@ export function useWorkspacePage() {
       const candidate =
         sessions.value.find((item) => item.id === previous) ??
         sessions.value.find((item) => !item.busy)
-      if (candidate && !candidate.busy) applySession(await sessionApi.getSession(candidate.id))
+      if (candidate && !candidate.busy)
+        await applySession(await sessionApi.getSession(candidate.id))
       else await saveDraft()
     } catch (error) {
       if (!persisted) saveStatus.value = 'error'
@@ -427,10 +625,30 @@ export function useWorkspacePage() {
   })
   onBeforeUnmount(() => {
     alive = false
+    cancelGeneration()
     if (saveTimer) clearTimeout(saveTimer)
   })
 
   return {
+    files,
+    pendingFiles,
+    confirmUploadFiles,
+    activePath,
+    multiResult,
+    handleUploadFiles,
+    selectFile,
+    renameFile,
+    removeFile,
+    cancelGeneration,
+    failRendering,
+    documentId: computed(() =>
+      files.value.length ? fileDocumentId(activePath.value) : `${threadId.value}/input`
+    ),
+    documentIds: computed(() =>
+      files.value.length
+        ? files.value.map((f) => fileDocumentId(f.path))
+        : [`${threadId.value}/input`]
+    ),
     code,
     healthStatus,
     uploadFileName,

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { nextTick, ref } from 'vue'
 import type { CodeEditorExpose } from '../../features/code-editor/model/types'
 import CodeEditor from '../../features/code-editor/ui/CodeEditor.vue'
 import FlowDiagram from '../../features/flow-diagram/ui/FlowDiagram.vue'
@@ -12,8 +12,22 @@ const fileInputRef = ref<HTMLInputElement | null>(null)
 const renameDialog = ref<HTMLDialogElement | null>(null)
 const deleteDialog = ref<HTMLDialogElement | null>(null)
 const renameTitle = ref('')
+const byteSize = (content: string) => new TextEncoder().encode(content).byteLength
 const {
   code,
+  files,
+  pendingFiles,
+  confirmUploadFiles,
+  activePath,
+  multiResult,
+  documentId,
+  documentIds,
+  handleUploadFiles,
+  selectFile,
+  renameFile,
+  removeFile,
+  cancelGeneration,
+  failRendering,
   healthStatus,
   uploadFileName,
   threadId,
@@ -48,7 +62,6 @@ const {
   retrySave,
   handleGenerate,
   handleFollowUp,
-  handleUploadFile,
   clearWorkspace,
   handleLanguageChange,
   primeFollowUpQuestionFromNode,
@@ -58,12 +71,13 @@ const {
 async function handleFileChange(event: Event) {
   if (!(event.target instanceof HTMLInputElement)) return
   const input = event.target
-  await handleUploadFile(input.files?.[0])
+  await handleUploadFiles(input.files)
   input.value = ''
 }
-function handleSelectNode(nodeId: string) {
+async function handleSelectNode(nodeId: string) {
   const mapping = primeFollowUpQuestionFromNode(nodeId)
   if (!mapping) return
+  await nextTick()
   editorRef.value?.focusMapping(mapping)
 }
 function openRename() {
@@ -140,6 +154,31 @@ async function confirmDelete() {
       <p v-if="errorMessage" class="error-banner" role="alert">
         {{ errorMessage }}
       </p>
+      <section v-if="pendingFiles.length" class="multi-file-list panel" aria-label="上传前文件预览">
+        <p>
+          确认后创建多文件会话。普通选择仅提供文件名，请在此补充需要的相对路径。源码分析及已配置的向量服务将读取这些内容。
+        </p>
+        <div v-for="(file, index) in pendingFiles" :key="index" class="multi-file-row">
+          <input v-model="file.path" aria-label="上传文件相对路径" :disabled="isWorkspaceBusy" />
+          <span>{{ byteSize(file.content) }} B</span>
+        </div>
+        <button
+          type="button"
+          class="primary-chip-button"
+          :disabled="isWorkspaceBusy"
+          @click="confirmUploadFiles"
+        >
+          确认文件集合
+        </button>
+        <button
+          type="button"
+          class="ghost-button"
+          :disabled="isWorkspaceBusy"
+          @click="pendingFiles = []"
+        >
+          取消
+        </button>
+      </section>
       <p v-if="sourceChanged" class="source-changed-notice" role="status">
         源码已修改，请重新生成流程图后再定位节点或追问。
       </p>
@@ -152,6 +191,7 @@ async function confirmDelete() {
             ref="fileInputRef"
             class="sr-only-input"
             type="file"
+            multiple
             :accept="CODE_FILE_ACCEPT"
             :disabled="isWorkspaceBusy"
             @change="handleFileChange"
@@ -177,7 +217,7 @@ async function confirmDelete() {
               :disabled="isWorkspaceBusy"
               @click="fileInputRef?.click()"
             >
-              {{ uploadFileName ? '替换代码文件' : '上传代码文件' }}
+              上传代码文件（可多选）
             </button>
             <button
               type="button"
@@ -196,11 +236,54 @@ async function confirmDelete() {
               清空源码
             </button>
           </div>
+          <div
+            v-if="files.length"
+            class="multi-file-list"
+            aria-label="本次分析文件，生成前可调整相对路径"
+          >
+            <p>
+              共 {{ files.length }} 个文件；可调整相对路径。源码也会发送至已配置的 Embedding 服务。
+            </p>
+            <div v-for="(file, index) in files" :key="index" class="multi-file-row">
+              <button
+                type="button"
+                class="ghost-button"
+                :aria-pressed="activePath === file.path"
+                :disabled="isWorkspaceBusy"
+                @click="selectFile(file.path)"
+              >
+                编辑
+              </button>
+              <input
+                :value="file.path"
+                :disabled="isWorkspaceBusy"
+                aria-label="项目内相对路径"
+                @change="renameFile(index, ($event.target as HTMLInputElement).value)"
+              />
+              <span>{{ byteSize(file.content) }} B</span>
+              <button
+                type="button"
+                class="ghost-button"
+                :disabled="isWorkspaceBusy || files.length < 2"
+                @click="removeFile(index)"
+              >
+                移除
+              </button>
+            </div>
+          </div>
+          <button
+            v-if="isLoading && files.length"
+            type="button"
+            class="ghost-button"
+            @click="cancelGeneration"
+          >
+            取消分析
+          </button>
           <CodeEditor
-            :key="threadId"
             ref="editorRef"
             v-model="code"
-            :document-id="threadId"
+            :document-id="documentId"
+            :document-ids="documentIds"
             :language="detectedLanguage"
             :disabled="isWorkspaceBusy"
             @update:language="handleLanguageChange"
@@ -222,12 +305,25 @@ async function confirmDelete() {
                 >{{ sourceChanged ? '待重新生成' : statusText }}</span
               >
             </div>
+            <p v-if="multiResult && !multiResult.hasExecutableFlow" class="session-message-empty">
+              已完成全部文件分析；没有可展示的执行流程。
+            </p>
             <FlowDiagram
+              v-else-if="mermaid"
               :mermaid="mermaid"
               :mappings="sourceChanged ? [] : mappings"
               :is-streaming="isLoading"
               @select-node="handleSelectNode"
+              @render-error="failRendering"
             />
+            <p v-else class="session-message-empty">
+              {{ isLoading ? statusText : '等待分析结果' }}
+            </p>
+            <ul v-if="multiResult?.diagnostics.length" class="multi-diagnostics">
+              <li v-for="(diagnostic, index) in multiResult.diagnostics" :key="index">
+                {{ diagnostic.message }}
+              </li>
+            </ul>
           </section>
           <section class="panel session-followup-panel workspace-shell-card">
             <div class="panel-header">

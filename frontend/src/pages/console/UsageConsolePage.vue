@@ -20,118 +20,54 @@ function tokens(value: number | null) {
 </script>
 
 <template>
-  <section
-    class="usage-console"
-    aria-labelledby="usage-title"
-    :aria-busy="loading"
-  >
+  <section class="usage-console" aria-labelledby="usage-title" :aria-busy="loading">
     <header class="usage-header">
       <div>
-        <p class="usage-kicker">
-          USAGE / 用量记录
-        </p>
-        <h1 id="usage-title">
-          生成用量
-        </h1>
+        <p class="usage-kicker">USAGE / 用量记录</p>
+        <h1 id="usage-title">生成用量</h1>
         <p class="usage-description">
-          最近 50 次 DeepSeek 流程图生成，包含重试消耗，不含 Jev 语言识别和追问。
+          最近 50 次单文件 DeepSeek 生成，包含重试；不含 v2 多文件分析、Embedding、Jev 和追问。v2
+          各阶段用量另存于观测日志。
         </p>
       </div>
-      <button
-        class="ghost-button"
-        type="button"
-        :disabled="loading"
-        @click="refresh"
-      >
+      <button class="ghost-button" type="button" :disabled="loading" @click="refresh">
         {{ loading ? '加载中…' : '刷新' }}
       </button>
     </header>
 
-    <p
-      v-if="error"
-      class="error-banner"
-      role="alert"
-    >
+    <p v-if="error" class="error-banner" role="alert">
       {{ error }}
     </p>
-    <p
-      v-if="data && !data.tracingEnabled"
-      class="usage-notice"
-      role="status"
-    >
+    <p v-if="data && !data.tracingEnabled" class="usage-notice" role="status">
       用量记录已关闭：以下仅展示历史记录，新生成不会保存用量。启用 CODE2FLOW_TRACE
       后重启后端可恢复记录。
     </p>
-    <p
-      v-if="data?.scanLimited"
-      class="usage-notice"
-    >
+    <p v-if="data?.scanLimited" class="usage-notice">
       记录较多，仅扫描日志末尾 4 MiB，展示其中最近 50 次生成。
     </p>
-    <p
-      v-if="loading && !data"
-      class="usage-empty"
-      role="status"
-    >
-      正在加载用量记录…
-    </p>
-    <p
-      v-else-if="data && !data.records.length"
-      class="usage-empty"
-    >
+    <p v-if="loading && !data" class="usage-empty" role="status">正在加载用量记录…</p>
+    <p v-else-if="data && !data.records.length" class="usage-empty">
       暂无生成记录。完成一次流程图生成后，回到这里刷新查看。
     </p>
 
-    <div
-      v-if="data?.records.length"
-      class="usage-table-wrap"
-    >
+    <div v-if="data?.records.length" class="usage-table-wrap">
       <table class="usage-table">
         <caption class="sr-only-input">
           每次流程图生成的 DeepSeek token 用量
         </caption>
         <thead>
           <tr>
-            <th scope="col">
-              开始时间
-            </th>
-            <th scope="col">
-              模型
-            </th>
-            <th scope="col">
-              状态
-            </th>
-            <th
-              scope="col"
-              class="usage-number"
-            >
-              输入 tokens
-            </th>
-            <th
-              scope="col"
-              class="usage-number"
-            >
-              输出 tokens
-            </th>
-            <th
-              scope="col"
-              class="usage-number"
-            >
-              总 tokens
-            </th>
-            <th
-              scope="col"
-              class="usage-number"
-            >
-              重试
-            </th>
+            <th scope="col">开始时间</th>
+            <th scope="col">模型</th>
+            <th scope="col">状态</th>
+            <th scope="col" class="usage-number">输入 tokens</th>
+            <th scope="col" class="usage-number">输出 tokens</th>
+            <th scope="col" class="usage-number">总 tokens</th>
+            <th scope="col" class="usage-number">重试</th>
           </tr>
         </thead>
         <tbody>
-          <tr
-            v-for="record in data.records"
-            :key="record.runId"
-          >
+          <tr v-for="record in data.records" :key="record.runId">
             <td>
               <time :datetime="record.startedAt">{{
                 dateFormat.format(new Date(record.startedAt))
@@ -174,10 +110,7 @@ function tokens(value: number | null) {
         </tbody>
       </table>
     </div>
-    <p
-      v-if="data?.records.length"
-      class="usage-footnote"
-    >
+    <p v-if="data?.records.length" class="usage-footnote">
       用量来自模型接口返回值；部分或未返回的用量不代表完整账单。生成结束后点击刷新更新列表。
     </p>
   </section>

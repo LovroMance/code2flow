@@ -404,3 +404,24 @@
     transition: none;
   }
 }
+.multi-file-list {
+  max-height: 200px;
+  overflow: auto;
+  padding: 8px 16px;
+  font-size: 12px;
+}
+.multi-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.multi-file-row input {
+  min-width: 0;
+  flex: 1;
+}
+.multi-diagnostics {
+  max-height: 110px;
+  overflow: auto;
+  font-size: 12px;
+}

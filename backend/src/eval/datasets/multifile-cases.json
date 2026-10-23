@@ -1,0 +1,70 @@
+[
+  {
+    "name": "Python 导入与独立函数",
+    "files": [
+      {
+        "path": "main.py",
+        "content": "from worker import normalize\n\ndef run(value):\n    if value is None:\n        return None\n    return normalize(value)\n"
+      },
+      { "path": "worker.py", "content": "def normalize(value):\n    return str(value).strip()\n" },
+      { "path": "independent.py", "content": "def ping():\n    return 'pong'\n" }
+    ],
+    "controls": [
+      { "path": "main.py", "line": 4, "kind": "decision" },
+      { "path": "main.py", "line": 5, "kind": "return" }
+    ],
+    "calls": [{ "fromPath": "main.py", "toPath": "worker.py" }]
+  },
+  {
+    "name": "Go 同包跨文件与循环",
+    "files": [
+      {
+        "path": "demo/run.go",
+        "content": "package demo\n\nfunc Run(values []int) int {\n    sum := 0\n    for _, value := range values {\n        sum += Normalize(value)\n    }\n    return sum\n}\n"
+      },
+      {
+        "path": "demo/normalize.go",
+        "content": "package demo\n\nfunc Normalize(value int) int {\n    if value < 0 {\n        return -value\n    }\n    return value\n}\n"
+      }
+    ],
+    "controls": [
+      { "path": "demo/run.go", "line": 5, "kind": "decision" },
+      { "path": "demo/normalize.go", "line": 4, "kind": "decision" }
+    ],
+    "calls": [{ "fromPath": "demo/run.go", "toPath": "demo/normalize.go" }]
+  },
+  {
+    "name": "TypeScript 别名与同名无关实现",
+    "files": [
+      {
+        "path": "main.ts",
+        "content": "import { process as work } from './worker'\nexport function run(value: number) {\n  if (value < 0) return 0\n  return work(value)\n}\n"
+      },
+      {
+        "path": "worker.ts",
+        "content": "export function process(value: number) {\n  return value + 1\n}\n"
+      },
+      {
+        "path": "unrelated.ts",
+        "content": "export function process(value: string) {\n  return value.toUpperCase()\n}\n"
+      }
+    ],
+    "controls": [{ "path": "main.ts", "line": 3, "kind": "decision" }],
+    "calls": [{ "fromPath": "main.ts", "toPath": "worker.ts" }]
+  },
+  {
+    "name": "Vue 独立响应式入口",
+    "files": [
+      {
+        "path": "Counter.vue",
+        "content": "<script setup lang=\"ts\">\nimport { ref, watch, onMounted } from 'vue'\nconst count = ref(0)\nwatch(count, value => {\n  if (value > 10) count.value = 0\n})\nonMounted(() => { count.value = 1 })\nfunction increment() { count.value++ }\n</script>\n<template><button @click=\"increment\">{{ count }}</button></template>\n"
+      },
+      {
+        "path": "Other.vue",
+        "content": "<script setup>\nimport { ref } from 'vue'\nconst message = ref('独立组件')\nfunction clear() { message.value = '' }\n</script>\n<template><button @click=\"clear\">{{ message }}</button></template>\n"
+      }
+    ],
+    "controls": [{ "path": "Counter.vue", "line": 5, "kind": "decision" }],
+    "calls": []
+  }
+]
