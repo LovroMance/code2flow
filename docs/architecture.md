@@ -25,7 +25,7 @@ flowchart TD
     Graph --> Explain[explain：基于快照追问]
     Explain --> Model
     Graph <--> Saver[官方 SqliteSaver]
-    Service --> Trace[JSONL 观测轨迹]
+    Service --> Trace[LangSmith 执行追踪]
     API --> Sessions[会话 service / repository]
     Sessions <--> Saver
     Result --> API
@@ -42,15 +42,14 @@ flowchart TD
 | `controllers/`                                                      | 校验 HTTP 输入、序列化 JSON / SSE、转换响应错误               |
 | `services/flow-generation.service.ts`                               | 统一生成与追问入口、会话锁、检查点选择、请求级 trace 生命周期 |
 | `services/session.service.ts`、`repositories/session.repository.ts` | 会话目录、草稿、历史索引与检查点详情组装                      |
-| `services/usage.service.ts`                                         | 用量查询与响应契约校验                                        |
-| `domain/flow/`、`domain/session/`、`domain/usage/`                  | Zod schema、推导类型及语言枚举                                |
+| `domain/flow/`、`domain/session/`                                   | Zod schema、推导类型及语言枚举                                |
 | `ai/graph/`                                                         | 原生 StateGraph、状态通道、条件重试和 saver / 旧快照导入      |
 | `ai/chains/`                                                        | 生成 Agent 与追问模型调用                                     |
 | `ai/llms/openai.ts`                                                 | ChatOpenAI 模型配置                                           |
 | `ai/tools/detect-language.tool.ts`、`ai/clients/jev.client.ts`      | 语言识别策略和 TypeSafe SDK 调用；不注册为 Agent Tool         |
 | `prompts/`、`ai/prompts/`                                           | 通用生成、追问、语言检测和语言专用规则                        |
 | `utils/`                                                            | 源码编号、Mermaid 归一化、映射检查与归一化、SSE 写入          |
-| `ai/observability/`、`eval/`                                        | 框架回调、轨迹读写、离线评估与报告对比                        |
+| `ai/observability/`                                                 | LangSmith 上下文与脱敏错误摘要                                |
 
 Controller 不编排模型步骤，chain 不管理业务重试；流程状态由 LangGraph 原生通道合并和持久化。
 
@@ -58,13 +57,12 @@ Controller 不编排模型步骤，chain 不管理业务重试；流程状态由
 
 | 位置（相对 `frontend/src/`） | 职责                                               |
 | ---------------------------- | -------------------------------------------------- |
-| `app/App.vue`                | 工作区 / 用量控制台切换；保持工作区实例挂载        |
+| `app/App.vue`                | 应用外壳与工作区入口                               |
 | `pages/`                     | 页面组合与页面级事件连接                           |
 | `features/workspace/`        | 会话列表、草稿保存、文件读取、切换与源码快照一致性 |
 | `features/flow-generation/`  | SSE 事件消费、生成状态和结果恢复                   |
 | `features/code-editor/`      | Monaco 文档、高亮语言和源码定位                    |
 | `features/flow-diagram/`     | Mermaid 渲染、节点点击、相机与小地图               |
-| `features/usage-console/`    | 用量查询状态                                       |
 | `entities/`                  | 前端接口类型、语言选项、扩展名与 Monaco 映射       |
 | `shared/api/`、`shared/lib/` | axios / fetch 请求和 Monaco / Mermaid 初始化       |
 
@@ -73,12 +71,12 @@ Controller 不编排模型步骤，chain 不管理业务重试；流程状态由
 ## 生成链路与重试
 
 1. `POST /api/generate-flow` 接收 `code` 和可选 `thread_id`，通过 Zod 校验后建立 SSE 响应。
-2. Service 对有 ID 的请求取得进程内会话锁，确保会话目录存在，创建观测采集器，并选择 saver。无 ID 的生成默认不持久化。
+2. Service 对有 ID 的请求取得进程内会话锁，确保会话目录存在，建立 LangSmith 请求级追踪并选择 saver。无 ID 的生成默认不持久化。
 3. 每次新生成重置结果、检测结果、解释、错误、尝试次数和问答消息，写入本次源码。旧图和旧问答不作为本次生成输入，失败也不回退到旧结果。
 4. `analyze` 首次调用 Jev 识别语言，后续生成重试复用 `languageDetection`。检测配置错误在生成调用之前抛出，不进入生成重试。
 5. Chain 组合通用规则与语言专用规则，将源码标成“原始行号 | 源码内容”，通过 `createAgent` 和 `toolStrategy` 请求 `submit_code_flow_result` 结构化结果。模型只提交 `mermaid` 与 `mappings`，程序补上检测语言。
 6. `validate` 检查结构与映射，归一化 Mermaid 和源码范围。生成调用异常、结构异常或校验异常写入图状态 `error`，由条件边决定重试。
-7. 通过校验后返回结果；重试耗尽则抛出错误。Service 在成功或失败时完成 trace，Controller 发送最终结果或错误并关闭连接。
+7. 通过校验后返回结果；重试耗尽则抛出错误。请求级追踪记录返回或异常，Controller 发送最终结果或错误并关闭连接。
 
 每次 analyze 最多进行一次生成模型调用：`modelCallLimitMiddleware` 限制为 1，`toolStrategy.handleError` 为 false，ChatOpenAI 的 SDK 重试为 0。`CODE2FLOW_MAX_RETRIES` 默认 1，允许 0–10，因此默认最多尝试生成两次。下一次尝试会收到上次错误作为修正反馈。追问不经过这条重试边。
 
@@ -125,7 +123,6 @@ Prompt 要求中文职责标签、图中节点与 mappings 一一对应，ID 采
 | `GET /api/sessions/:id`    | 草稿、分析源码快照、结果、问答与失败状态                                  |
 | `PATCH /api/sessions/:id`  | 更新标题、文件名、草稿或高亮语言 → 会话详情                               |
 | `DELETE /api/sessions/:id` | 删除目录与检查点，HTTP 204                                                |
-| `GET /api/usage`           | 观测开关、扫描限制标记与生成用量记录                                      |
 
 生成 SSE 使用 `data: <JSON>\n\n`，事件类型放在 JSON 的 `type` 中，不使用命名 SSE event。事件契约如下：
 
@@ -153,11 +150,11 @@ Prompt 要求中文职责标签、图中节点与 mappings 一一对应，ID 采
 | 标题、文件名、创建 / 更新时间、编辑草稿、高亮语言 | 同一 SQLite 文件内的 `code_flow_sessions` 表              |
 | 删除标记                                          | `code_flow_deleted_sessions` 表，阻止旧 JSON 导入复活会话 |
 | 活动会话 ID、侧栏偏好                             | 浏览器 localStorage，不作为源码或结果真源                 |
-| 模型 / 节点耗时、用量与执行摘要                   | JSONL 观测文件                                            |
+| 模型 / 节点输入输出、耗时、用量与执行摘要         | 启用后发送至 LangSmith                                    |
 
 SQLite 默认路径是进程工作目录下 `.code2flow/checkpoints/code-flow.sqlite`，通过 `CODE2FLOW_CHECKPOINT_DB` 覆盖；从根脚本启动时后端工作目录为 `backend/`。目录和业务表按需创建，无独立迁移命令。
 
-有 thread_id 的生成与追问通过 `configurable.thread_id` 读写检查点。无 ID 的一次性生成与默认离线评估不使用默认 saver，测试可显式注入 saver。首次访问会话列表 / 详情时，service 通过官方 `saver.list` 登记现有 SQLite 线程，以“历史分析 + 短 ID”命名，不复制检查点内容。
+有 thread_id 的生成与追问通过 `configurable.thread_id` 读写检查点。无 ID 的一次性生成不使用默认 saver，测试可显式注入 saver。首次访问会话列表 / 详情时，service 通过官方 `saver.list` 登记现有 SQLite 线程，以“历史分析 + 短 ID”命名，不复制检查点内容。
 
 旧 JSON 仅在追问恢复时、SQLite 尚无该线程检查点的情况下按需导入，通过 `updateState` 写入框架状态；原文件只读。已有 SQLite 失败线程不会回退到旧 JSON。该机制不批量扫描旧 JSON 生成会话列表。
 
@@ -183,27 +180,23 @@ SQLite 默认路径是进程工作目录下 `.code2flow/checkpoints/code-flow.sq
 
 点击已映射节点后，页面查找 mapping，调用 Monaco 滚动、选中和高亮对应源码范围，并预填一个引用该节点的追问。当前没有从源码选择反向定位图节点，也没有解释文本中的节点链接。未注册的 Monaco 语言回退为 plaintext。
 
-## 观测与用量控制台
+## LangSmith 观测
 
 可选远程观测使用 LangChain / LangGraph 原生 LangSmith 追踪，配置与操作见 [LangSmith 执行追踪](./langsmith.md)。启动在 dotenv 后初始化，默认关闭；缺少密钥或端点格式无效时禁用上传。Service 使用原生 Runnable 建立生成 / 追问根 Trace，Graph、Agent 和自定义 Jev、检索、缓存、任务步骤继承其上下文；合并显式回调和元数据，保留 SSE、预算回调和并行分支的父子关联。元数据区分用户会话、快照、分析、任务与尝试，追踪标识不改变 saver 的线程配置。
 
-启用远程追踪后，完整状态、模型消息及工具输入输出可能含用户源码并上传到所配置的 LangSmith 项目；这是独立于本地 JSONL 的显式配置，本地日志不增加源码或原始响应。模型流式请求显式开启 usage，模型元数据标记实际 DeepSeek 供应商。平台估算费用依赖用量回报和定价；Jev / Embedding 自定义步骤保留原始统计，本次未转换为平台 LLM 计费记录。捕获后返回的校验错误通过步骤 Outputs 展示，终止异常由根 Trace 标为失败。
+启用远程追踪后，完整状态、模型消息及工具输入输出可能含用户源码并上传到所配置的 LangSmith 项目；本地日志不增加源码或原始响应。模型流式请求显式开启 usage，模型元数据标记实际 DeepSeek 供应商。平台估算费用依赖用量回报和定价；Jev / Embedding 自定义步骤保留原始统计，尚未转换为平台 LLM 计费记录。捕获后返回的校验错误通过步骤 Outputs 展示，终止异常由根 Trace 标为失败。
 
-Service 统一完成成功 / 失败采集和 JSONL 写入；外部显式传入 trace 时由调用者负责落盘。框架模型回调记录调用轮数、响应模型和供应商 token usage，节点回调只记录 analyze / validate / explain。重试的生成用量累加，失败也保留已回报用量。
-
-工作区通过 v-show 保持挂载，切到控制台不会终止 SSE；控制台进入和手动刷新时请求 `/api/usage`。查询读取 `CODE2FLOW_TRACE_FILE` 末尾最多 4 MiB，跳过截断、损坏、追问和明确标记为 eval 的记录，按开始时间倒序最多返回 50 条。响应经 Zod 白名单处理，不返回完整 trace、源码或原始错误。
-
-控制台只展示生成模型 token；Jev 单独记录检测耗时、模型与用量，不计入该统计，追问也不在控制台列表中。用量完整性区分 complete / partial / missing / unknown；旧记录来源或回报情况未知时保守展示。关闭 `CODE2FLOW_TRACE` 只停止轨迹写入，历史仍可读，也不会关闭其他 console 日志。配置在进程内缓存，修改后需重启。
+旧 JSONL 采集、用量接口和前端控制台已移除。单文件 Mermaid 渐进展示由 `ai/chains/mermaid-stream.ts` 提供，重试配置校验由 `ai/graph/retry-config.ts` 提供；这些业务行为独立于追踪开关。多文件模型预算、供应商用量结算及取消逻辑继续用于资源限制与失败处理。
 
 ## 验证与运行依据
 
 运行要求 Node.js >=22。根目录和前后端 `package.json` 是运行命令真源；配置项见 [backend/.env.example](../backend/.env.example)。架构文档不维护安装待办或某次执行结果。
 
-后端测试位于 `backend/tests/`，涵盖图编排、重试、会话恢复 / 管理、HTTP / SSE、源码行号、观测、用量和评估。集成测试使用本地 OpenAI 兼容 HTTP / SSE 夹具，可经过 ChatOpenAI、createAgent、StateGraph、SQLite 和 Express，不依赖真实生成服务。测试类型通过 `backend/tsconfig.tests.json` 单独检查。
+后端测试位于 `backend/tests/`，涵盖图编排、重试、会话恢复 / 管理、HTTP / SSE、源码行号、多文件分析和 LangSmith 上下文。集成测试使用本地 OpenAI 兼容 HTTP / SSE 夹具，可经过 ChatOpenAI、createAgent、StateGraph、SQLite 和 Express，不依赖真实生成服务。测试类型通过 `backend/tsconfig.tests.json` 单独检查。
 
-前端测试位于 `frontend/tests/`，目前覆盖视口几何、会话 / 用量契约及生成状态；这些测试不能替代真实浏览器中的 Monaco、Mermaid、文件上传和会话交互验证。
+前端测试位于 `frontend/tests/`，目前覆盖视口几何、会话契约、多文件流程及生成状态；这些测试不能替代真实浏览器中的 Monaco、Mermaid、文件上传和会话交互验证。
 
-`backend/src/eval/` 提供基线跑批、报告对比与轨迹分析。当前基线为 JS / TS / Vue 和边界输入，指标主要是结构、映射、范围、节点类型、关键词与数量。跑批会调用模型，需要环境配置；宽松规则得分不能证明完整语义正确，也不能代表全部支持语言或长源码的准确率。
+当前不维护离线 eval 跑批和报告比较工具。自动化测试只证明协议与业务行为；真实语言质量、映射准确性和成本对照仍需人工标注与测量，不因追踪接入而自动获得质量结论。
 
 ## v2 多文件链路
 
@@ -229,7 +222,7 @@ v2 检查点使用业务表绑定的独立随机线程，避免与用户提供�
 
 前端继续使用 workspace/flow-generation/code-editor/flow-diagram 分层；上传后直接载入文件，支持活动文件、v2详情恢复、快照追问和取消。清空源码会保存 `files: []`、`activePath: ''` 的空草稿；恢复时空草稿优先于旧快照，避免已清空的文件重新出现，创建分析快照仍要求文件集合非空。Monaco路径包含会话、快照/草稿与文件身份，包装组件保存各文档视图状态，移除文档时释放model；BOM按Monaco列规范转换。任意文件或路径改变都会禁用旧图定位和追问。v2收到done后实际调用Mermaid解析，空流程不解析图源；最终渲染失败进入错误态并通过原生成按钮重试。
 
-v2用量以独立operation写入既有JSONL：记录角色调用、供应商usage、保守字符估算、缓存、覆盖、阶段耗时、读取量、Jev和Embedding；不写源码、密钥或agent原始输出。旧控制台明确只统计旧单文件生成。多语言真实质量及首次/缓存成本对照由离线 `eval:multi` 运行，不以本地夹具证明线上效果。具体配置与验证范围见 [实现与验证](./多文件代码分析实现与验证.md)。
+v2 执行过程在 LangSmith 查看，模型预算和覆盖统计继续保存在图状态及 SSE metadata 中。多语言真实质量及首次/缓存成本对照需要人工验证，不以本地夹具证明线上效果。具体配置与验证范围见 [实现与验证](./多文件代码分析实现与验证.md)。
 
 ## 已知实现差距
 

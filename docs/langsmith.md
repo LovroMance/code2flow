@@ -25,7 +25,7 @@ LANGCHAIN_CALLBACKS_BACKGROUND=true
 
 配置后重启后端。在根目录使用现有命令 `npm run dev`，或只重启后端 `npm run dev:backend`。已有 DeepSeek / Jev 密钥仍然负责模型调用，与 LangSmith 密钥相互独立。
 
-**启用完整追踪后，Graph 输入状态、模型消息、工具参数和响应可能包含用户源码、问题和生成结果，并会上传到指定的 LangSmith 项目。**这是远程观测的显式开关，默认 `false`；本地 console / JSONL 继续只记录原有标识和统计。不要上传不适合保存在该项目的数据，也不要在待分析源码中放真实密钥。模型内部未返回的推理过程无法通过追踪还原。
+**启用完整追踪后，Graph 输入状态、模型消息、工具参数和响应可能包含用户源码、问题和生成结果，并会上传到指定的 LangSmith 项目。**这是远程观测的显式开关，默认 `false`；本地 console 只记录标识和统计。不要上传不适合保存在该项目的数据，也不要在待分析源码中放真实密钥。模型内部未返回的推理过程无法通过追踪还原。
 
 ## 查看一次执行
 
@@ -63,7 +63,7 @@ Jev 原始 usage 和 Embedding 准备统计可在对应步骤 Outputs 查看，�
 
 依次检查后端是否已重启、启动信息是否显示远程追踪启用、API Key / workspace / 区域是否匹配、项目名称和时间筛选是否正确，以及后端能否访问对应 API。密钥空缺或端点格式错误会在启动时提示并关闭上传。网络或鉴权上报错误通常出现在 SDK 日志中，不通过修改业务重试来解决。
 
-`CODE2FLOW_TRACE` 只控制本地 JSONL，`LANGSMITH_TRACING` 控制远程上传，两者独立；停止远程追踪需要设置 `LANGSMITH_TRACING=false` 后重启。
+追踪统一使用 LangSmith，旧本地 JSONL、用量控制台及离线评估工具已移除。停止远程追踪需要设置 `LANGSMITH_TRACING=false` 后重启；已有会话和源码快照不受影响。
 
 ## 开发验证
 

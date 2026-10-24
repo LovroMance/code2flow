@@ -5,11 +5,8 @@ import type {
 } from '../ai/graph/code-flow.types'
 import { runCodeFlowGraph } from '../ai/graph/code-flow.graph'
 import { getCodeFlowCheckpointer } from '../ai/graph/checkpointer'
-import { createTraceCollector, summarizeResult } from '../ai/observability/trace.builder'
-import { getTraceSink, isTracingEnabled } from '../ai/observability/trace.sink'
 import { withSessionLock } from './session-lock'
 import { getSessionService } from './session.service'
-import { chineseErrorMessage } from '../utils/errorMessage'
 import { analysisTraceConfig, traceStep } from '../ai/observability/langsmith'
 
 export async function generateFlow(input: CodeFlowGraphInput, options?: CodeFlowGraphRunOptions) {
@@ -28,7 +25,7 @@ export async function followUpFlow(input: CodeFlowGraphInput, options?: CodeFlow
   return (await runFlow({ ...input, mode: 'followup' }, options)).explanation
 }
 
-// 一条执行入口覆盖流式、非流式和追问；外部采集器由调用者负责落盘。
+// 一条执行入口覆盖流式、非流式和追问，追踪统一交给 LangSmith。
 async function runFlow(input: CodeFlowGraphInput, options: CodeFlowGraphRunOptions = {}) {
   const threadId = input.threadId
   if (threadId) {
@@ -46,37 +43,16 @@ async function runFlow(input: CodeFlowGraphInput, options: CodeFlowGraphRunOptio
 }
 
 async function executeFlow(input: CodeFlowGraphInput, options: CodeFlowGraphRunOptions) {
-  const trace =
-    options.trace ??
-    (isTracingEnabled()
-      ? createTraceCollector({ ...input, mode: input.mode ?? 'generate', source: 'online' })
-      : undefined)
-  try {
-    const operation = input.mode === 'followup' ? 'followup' : 'generate'
-    const state = await traceStep(
-      `code2flow.${operation}`,
-      input,
-      () =>
-        runCodeFlowGraph(input, {
-          ...options,
-          trace,
-          checkpointer:
-            options.checkpointer ?? (input.threadId ? getCodeFlowCheckpointer() : undefined)
-        }),
-      analysisTraceConfig(operation, input.threadId)
-    )
-    if (input.mode !== 'followup' && state.result) trace?.setResult(summarizeResult(state.result))
-    return state
-  } catch (error) {
-    trace?.setError(chineseErrorMessage(error))
-    throw error
-  } finally {
-    if (trace && !options.trace) {
-      try {
-        await getTraceSink().write(await trace.finish())
-      } catch (error) {
-        console.warn('[code2flow][trace] 统计记录写入失败：', chineseErrorMessage(error))
-      }
-    }
-  }
+  const operation = input.mode === 'followup' ? 'followup' : 'generate'
+  return traceStep(
+    `code2flow.${operation}`,
+    input,
+    () =>
+      runCodeFlowGraph(input, {
+        ...options,
+        checkpointer:
+          options.checkpointer ?? (input.threadId ? getCodeFlowCheckpointer() : undefined)
+      }),
+    analysisTraceConfig(operation, input.threadId)
+  )
 }

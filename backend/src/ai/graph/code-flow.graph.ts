@@ -10,9 +10,8 @@ import { parseFlowGenerationResult } from '../../utils/flowResultValidator'
 import { validateMermaid } from '../../utils/mermaidValidator'
 import { normalizeMermaidSource } from '../../utils/mermaidNormalizer'
 import { normalizeFlowResultAgainstCode } from '../../utils/mappingNormalizer'
-import { resolveRunConfig } from '../observability/run-config'
+import { resolveMaxRetries } from './retry-config'
 import { loadLegacyCheckpoint } from './checkpointer'
-import { createNodeCallbacks } from '../observability/run-callbacks'
 import { chineseErrorMessage } from '../../utils/errorMessage'
 import { inheritTraceConfig } from '../observability/langsmith'
 
@@ -69,7 +68,6 @@ export function createCodeFlowGraph(options: CodeFlowGraphRunOptions = {}) {
         }
       } catch (error) {
         const message = chineseErrorMessage(error, '生成结果校验失败，请重新生成。')
-        options.trace?.setValidationErrors([message])
         return { result: null, error: message }
       }
     })
@@ -82,7 +80,6 @@ export function createCodeFlowGraph(options: CodeFlowGraphRunOptions = {}) {
     .addConditionalEdges(
       'validate',
       (state) => {
-        options.trace?.setRetryCount(state.attempts - 1)
         return state.error && state.attempts <= state.maxRetries ? 'analyze' : END
       },
       ['analyze', END]
@@ -100,8 +97,7 @@ export async function runCodeFlowGraph(
   const config = inheritTraceConfig({
     runName: 'code2flow.graph',
     configurable: { thread_id: input.threadId ?? randomUUID() },
-    recursionLimit: 100,
-    callbacks: createNodeCallbacks(options.trace)
+    recursionLimit: 100
   })
   if (input.mode === 'followup') {
     let previous = await graph.getState(config)
@@ -133,7 +129,7 @@ export async function runCodeFlowGraph(
       explanation: '',
       error: null,
       attempts: 0,
-      maxRetries: resolveRunConfig({ maxRetries: input.maxRetries }).maxRetries,
+      maxRetries: resolveMaxRetries(input.maxRetries),
       messages: [new RemoveMessage({ id: REMOVE_ALL_MESSAGES })]
     },
     config

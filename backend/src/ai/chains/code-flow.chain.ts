@@ -5,7 +5,7 @@ import type { SupportedLanguage } from '../../domain/flow/types'
 import { CODE_FLOW_PROMPT_RULES } from '../../prompts/code-flow.prompt'
 import { buildLanguageSpecificSystemPrompt } from '../prompts/code-flow-language.system.prompt'
 import { createOpenAIModel } from '../llms/openai'
-import { createRunCallbacks } from '../observability/run-callbacks'
+import { createMermaidStreamCallbacks } from './mermaid-stream'
 import type { CodeFlowGraphRunOptions } from '../graph/code-flow.types'
 import { numberSourceLines } from '../../utils/numberSourceLines'
 import { inheritTraceConfig } from '../observability/langsmith'
@@ -42,7 +42,7 @@ export async function generateCodeFlowDraft(
     inheritTraceConfig({
       runName: 'code2flow.generate-agent',
       metadata: { role: 'generate', has_validation_feedback: !!input.feedback },
-      callbacks: createRunCallbacks(options.trace, options.callbacks?.onPartialMermaid)
+      callbacks: createMermaidStreamCallbacks(options.callbacks?.onPartialMermaid)
     })
   )
 

@@ -32,7 +32,6 @@ import {
   referenceCandidates,
   validateResolvedReference
 } from '../src/services/reference-resolution.service'
-import { resetTraceSinkForTesting } from '../src/ai/observability/trace.sink'
 
 vi.mock('../src/ai/tools/detect-language.tool', () => ({
   runDetectLanguage: vi.fn(async () => ({
@@ -48,8 +47,7 @@ afterEach(async () => {
   vi.clearAllMocks()
 })
 async function setup() {
-  vi.stubEnv('CODE2FLOW_TRACE', 'off')
-  resetTraceSinkForTesting()
+  vi.stubEnv('LANGSMITH_TRACING', 'false')
   const saver = SqliteSaver.fromConnString(':memory:')
   cleanup.push(() => saver.db.close())
   const sessions = new SessionService(saver)

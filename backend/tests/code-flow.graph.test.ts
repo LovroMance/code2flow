@@ -5,7 +5,7 @@ import { MemorySaver } from '@langchain/langgraph'
 import { SqliteSaver } from '@langchain/langgraph-checkpoint-sqlite'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { runCodeFlowGraph, createCodeFlowGraph } from '../src/ai/graph/code-flow.graph'
-import { createTraceCollector } from '../src/ai/observability/trace.builder'
+import { resolveMaxRetries } from '../src/ai/graph/retry-config'
 import { code, result, createModelServer } from './fixtures/model.fixture'
 
 // 图状态与会话测试使用确定性识别结果，不依赖真实 Jev 密钥或网络。
@@ -41,6 +41,15 @@ async function setup(replies: Parameters<typeof createModelServer>[0]) {
 }
 
 describe('native LangChain agent + LangGraph', () => {
+  it('校验默认重试次数和显式覆盖，拒绝无效或超限配置', () => {
+    vi.stubEnv('CODE2FLOW_MAX_RETRIES', '2')
+    expect(resolveMaxRetries()).toBe(2)
+    expect(resolveMaxRetries(0)).toBe(0)
+    for (const value of [-1, 11, 0.5, NaN])
+      expect(() => resolveMaxRetries(value)).toThrow('重试次数')
+    vi.stubEnv('CODE2FLOW_MAX_RETRIES', 'invalid')
+    expect(() => resolveMaxRetries()).toThrow('重试次数')
+  })
   it('executes native graph nodes and validates the structured tool response', async () => {
     const { options, requests } = await setup([{}])
     const state = await runCodeFlowGraph({ code, threadId: 'generate' }, options)
@@ -51,9 +60,8 @@ describe('native LangChain agent + LangGraph', () => {
     expect(createCodeFlowGraph(options).getGraph().nodes).toHaveProperty('analyze')
   })
 
-  it('streams partial Mermaid before completion and preserves metadata and usage', async () => {
+  it('streams partial Mermaid before completion and preserves metadata', async () => {
     const { options } = await setup([{}])
-    const trace = createTraceCollector({ code, mode: 'generate' })
     const partials: string[] = []
     const metadata = vi.fn()
     let finished = false
@@ -61,7 +69,6 @@ describe('native LangChain agent + LangGraph', () => {
       { code },
       {
         ...options,
-        trace,
         callbacks: {
           onPartialMermaid: (source) => {
             expect(finished).toBe(false)
@@ -78,10 +85,6 @@ describe('native LangChain agent + LangGraph', () => {
       detectedLanguage: 'javascript',
       confidence: expect.any(Number)
     })
-    const recorded = await trace.finish()
-    expect(recorded.usage.llmRounds).toBe(1)
-    expect(recorded.usage.totalTokens).toBe(30)
-    expect(recorded.steps.map((step) => step.name)).toEqual(['analyze', 'validate'])
   })
 
   it('retries schema errors with concrete feedback in the next model request', async () => {

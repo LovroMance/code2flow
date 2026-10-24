@@ -14,7 +14,6 @@ import { withSessionLock, SessionError, isSessionBusy } from './session-lock'
 import { normalizeSourcePath } from '../utils/sourcePositions'
 import { SOURCE_LIMITS } from './multifile-config'
 import { z } from 'zod'
-import { recordMultiFileTrace } from '../ai/observability/multifile.trace'
 import { analysisTraceConfig, inheritTraceConfig, traceStep } from '../ai/observability/langsmith'
 
 export class MultiFileService {
@@ -93,8 +92,7 @@ export class MultiFileService {
     id: string,
     snapshotId: string,
     signal: AbortSignal,
-    emit: (type: string, content?: unknown) => void,
-    source: 'online' | 'eval' = 'online'
+    emit: (type: string, content?: unknown) => void
   ) {
     return withSessionLock(id, () =>
       traceStep(
@@ -131,7 +129,7 @@ export class MultiFileService {
               ...this.config(id),
               signal: combined,
               runName: 'code2flow.multifile-graph',
-              metadata: { analysis_id: analysisId, snapshot_id: snapshotId, session_id: id, source }
+              metadata: { analysis_id: analysisId, snapshot_id: snapshotId, session_id: id }
             })
           try {
             // 官方 saver 保存最终图与对话，正文只保存在业务表。
@@ -166,19 +164,6 @@ export class MultiFileService {
             emit('mermaid', result.mermaid)
             emit('mappings', result.mappings)
             emit('done')
-            await recordMultiFileTrace({
-              analysisId,
-              snapshotId,
-              sessionId: id,
-              operation: 'multifile',
-              source,
-              outcome: 'success',
-              metrics: {
-                ...runtime.budget(),
-                coverage: runtime.coverage(),
-                diagnostics: runtime.diagnostics.map(({ code, fileId }) => ({ code, fileId }))
-              }
-            })
             return result
           } catch (error) {
             const wasAborted = combined.aborted
@@ -202,23 +187,10 @@ export class MultiFileService {
               coverage: runtime.coverage(),
               missingRanges: runtime.incompleteRanges().slice(0, 200)
             })
-            await recordMultiFileTrace({
-              analysisId,
-              snapshotId,
-              sessionId: id,
-              operation: 'multifile',
-              source,
-              outcome: 'error',
-              metrics: {
-                ...runtime.budget(),
-                coverage: runtime.coverage(),
-                diagnostics: runtime.diagnostics.map(({ code, fileId }) => ({ code, fileId }))
-              }
-            })
             throw error
           }
         },
-        analysisTraceConfig('multifile', id, { snapshot_id: snapshotId, source })
+        analysisTraceConfig('multifile', id, { snapshot_id: snapshotId })
       )
     )
   }
@@ -272,43 +244,25 @@ export class MultiFileService {
             combined,
             retrieval
           )
-          let outcome: 'success' | 'error' = 'error'
-          try {
-            const explanation = await runMultiFollowUp(
-              question,
-              { result: state.values.result, messages: state.values.messages },
-              context,
-              budget
-            )
-            combined.throwIfAborted()
-            await graph.updateState(
-              config,
-              {
-                messages: [
-                  ...state.values.messages,
-                  { role: 'user', content: question },
-                  { role: 'assistant', content: explanation }
-                ]
-              },
-              'validateResult'
-            )
-            outcome = 'success'
-            return { thread_id: id, snapshotId, question, explanation }
-          } finally {
-            await recordMultiFileTrace({
-              analysisId: state.values.analysisId,
-              snapshotId,
-              sessionId: id,
-              operation: 'multifile-followup',
-              outcome,
-              source: 'online',
-              metrics: {
-                ...budget.summary(),
-                readChars: context.charsRead,
-                embedding: { calls: retrieval.embeddingCalls, ...retrieval.embeddingUsage }
-              }
-            })
-          }
+          const explanation = await runMultiFollowUp(
+            question,
+            { result: state.values.result, messages: state.values.messages },
+            context,
+            budget
+          )
+          combined.throwIfAborted()
+          await graph.updateState(
+            config,
+            {
+              messages: [
+                ...state.values.messages,
+                { role: 'user', content: question },
+                { role: 'assistant', content: explanation }
+              ]
+            },
+            'validateResult'
+          )
+          return { thread_id: id, snapshotId, question, explanation }
         },
         analysisTraceConfig('multifile-followup', id, { snapshot_id: snapshotId })
       )
