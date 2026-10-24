@@ -16,6 +16,7 @@ import type { SupportedLanguage } from '../../domain/flow/types'
 import { safeErrorDetails } from '../observability/safe-error'
 import { completeModelRanges, modelResponseSchema } from './multifile-output'
 import { chineseErrorMessage } from '../../utils/errorMessage'
+import { inheritTraceConfig } from '../observability/langsmith'
 import {
   ModelOutputTruncatedError,
   ModelOutputValidationError,
@@ -341,8 +342,10 @@ export async function runMultiFileChain(
           )
         ]
       },
-      {
+      inheritTraceConfig({
         signal: budget.signal,
+        runName: `code2flow.${role}-agent`,
+        metadata: { role, ...correlation, has_validation_feedback: !!feedback },
         callbacks: budget.callbacks(role, correlation, (message) => {
           // 结束原因优先于残缺参数的字段和坐标错误；回调仅记录，middleware负责抛错。
           if (message.response_metadata.finish_reason === 'length') {
@@ -376,7 +379,7 @@ export async function runMultiFileChain(
             }
           }
         })
-      }
+      })
     )
     phase = 'structured-response-validation'
     return schema.parse(materialize(output.structuredResponse))
@@ -448,15 +451,17 @@ export async function runMultiFollowUp(
   })
   const output = await agent.invoke(
     { messages: [new HumanMessage(JSON.stringify({ question, context: payload }))] },
-    {
+    inheritTraceConfig({
       signal: budget.signal,
+      runName: 'code2flow.followup-agent',
+      metadata: { role: 'followup' },
       callbacks: budget.callbacks('followup', {}, (message) => {
         if (message.response_metadata.finish_reason === 'length')
           truncationError = new ModelOutputTruncatedError(
             `追问输出达到单次 ${budget.config.outputTokens} token 上限，结果已截断。`
           )
       })
-    }
+    })
   )
   const last = output.messages[output.messages.length - 1]
   if (!last?.text.trim()) throw new Error('追问没有返回解释。')

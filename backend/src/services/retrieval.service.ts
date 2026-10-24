@@ -6,6 +6,7 @@ import type { PublicDiagnostic, FileSemanticIndex } from '../domain/multifile/sc
 import { chunkSemanticFields } from '../utils/searchFields'
 import { sha256 } from '../utils/sourcePositions'
 import { modelPermit, SOURCE_LIMITS } from './multifile-config'
+import { traceStep } from '../ai/observability/langsmith'
 
 const VectorRow = z.object({ dimension: z.number(), vector: z.instanceof(Buffer) })
 let vectorQueue: Promise<void> = Promise.resolve()
@@ -128,6 +129,21 @@ export class RetrievalService {
   }
   /** 为路径与原始分块正文建立或复用向量；失败只降级检索，不跳过源码分析。 */
   async prepare() {
+    return traceStep(
+      'code2flow.prepare-retrieval',
+      { snapshotId: this.snapshot.snapshotId, chunkCount: this.chunks.length, model: this.model },
+      async () => {
+        await this.prepareVectors()
+        return {
+          vectorCount: this.vectors.size,
+          embeddingCalls: this.embeddingCalls,
+          usage: this.embeddingUsage,
+          diagnostics: this.diagnostics
+        }
+      }
+    ).then(() => undefined)
+  }
+  private async prepareVectors() {
     if (!this.embedding) return
     if (this.chunks.length > SOURCE_LIMITS.maxVectors) {
       this.degrade('vector_limit', '超过2000个活动块，跳过向量通道；仍分析全部源码。')
@@ -186,6 +202,11 @@ export class RetrievalService {
   }
   /** 合并精确、关键词及可用的向量通道，限制返回条数与片段长度。 */
   async search(query: string, mode: string, fileIds?: string[], limit = 8) {
+    return traceStep('code2flow.search-code', { query, mode, fileIds, limit }, () =>
+      this.searchChunks(query, mode, fileIds, limit)
+    )
+  }
+  private async searchChunks(query: string, mode: string, fileIds?: string[], limit = 8) {
     this.signal.throwIfAborted()
     fileIds?.forEach((id) => this.repo.content(this.snapshot, id))
     const candidates = this.chunks.filter((c) => !fileIds?.length || fileIds.includes(c.fileId)),

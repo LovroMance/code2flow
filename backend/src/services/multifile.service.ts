@@ -15,6 +15,7 @@ import { normalizeSourcePath } from '../utils/sourcePositions'
 import { SOURCE_LIMITS } from './multifile-config'
 import { z } from 'zod'
 import { recordMultiFileTrace } from '../ai/observability/multifile.trace'
+import { analysisTraceConfig, inheritTraceConfig, traceStep } from '../ai/observability/langsmith'
 
 export class MultiFileService {
   readonly repo: SourceRepository
@@ -95,191 +96,223 @@ export class MultiFileService {
     emit: (type: string, content?: unknown) => void,
     source: 'online' | 'eval' = 'online'
   ) {
-    return withSessionLock(id, async () => {
-      const snapshot = this.snapshot(id, snapshotId),
-        analysisId = randomUUID()
-      const baseGraph = createMultiFileGraph(undefined, this.saver)
-      await baseGraph.updateState(
-        this.config(id),
-        { snapshotId, analysisId, result: null, error: '分析尚未完成。', messages: [] },
-        'validateResult'
-      )
-      emit('metadata', {
-        version: 2,
-        snapshotId,
-        analysisId,
-        stage: 'prepare',
-        detectedLanguage: snapshot.languageDetection?.language ?? 'unknown'
-      })
-      const failureController = new AbortController(),
-        timeout = AbortSignal.timeout(Number(process.env.CODE2FLOW_MULTI_TIMEOUT_MS ?? 900000)),
-        combined = AbortSignal.any([signal, timeout, failureController.signal])
-      const runtime = new AnalysisRuntime(this.repo, snapshot, analysisId, combined, (metadata) =>
-        emit('metadata', metadata)
-      )
-      const graph = createMultiFileGraph(runtime, this.saver),
-        config = { ...this.config(id), signal: combined }
-      try {
-        // 官方 saver 保存最终图与对话，正文只保存在业务表。
-        const state = await graph.invoke(
-          {
+    return withSessionLock(id, () =>
+      traceStep(
+        'code2flow.multifile',
+        { sessionId: id, snapshotId },
+        async () => {
+          const snapshot = this.snapshot(id, snapshotId),
+            analysisId = randomUUID()
+          const baseGraph = createMultiFileGraph(undefined, this.saver)
+          await baseGraph.updateState(
+            this.config(id),
+            { snapshotId, analysisId, result: null, error: '分析尚未完成。', messages: [] },
+            'validateResult'
+          )
+          emit('metadata', {
+            version: 2,
             snapshotId,
             analysisId,
-            result: null,
-            error: null,
-            messages: [],
-            pending: [],
-            batch: [],
-            stage: 'index',
-            coverage: null,
-            languageDetection: snapshot.languageDetection,
-            outcomes: { __reset__: { taskId: '__reset__', attempts: 0, error: null, fatal: false } }
-          },
-          config
-        )
-        combined.throwIfAborted()
-        const result = MultiFileFlowResultSchema.parse(state.result)
-        this.sessions.save({ ...this.sessions.get(id)!, updatedAt: new Date().toISOString() })
-        emit('metadata', {
-          ...result,
-          mermaid: undefined,
-          mappings: undefined,
-          stage: 'complete',
-          usage: runtime.budget()
-        })
-        emit('mermaid', result.mermaid)
-        emit('mappings', result.mappings)
-        emit('done')
-        await recordMultiFileTrace({
-          analysisId,
-          snapshotId,
-          sessionId: id,
-          operation: 'multifile',
-          source,
-          outcome: 'success',
-          metrics: {
-            ...runtime.budget(),
-            coverage: runtime.coverage(),
-            diagnostics: runtime.diagnostics.map(({ code, fileId }) => ({ code, fileId }))
+            stage: 'prepare',
+            detectedLanguage: snapshot.languageDetection?.language ?? 'unknown'
+          })
+          const failureController = new AbortController(),
+            timeout = AbortSignal.timeout(Number(process.env.CODE2FLOW_MULTI_TIMEOUT_MS ?? 900000)),
+            combined = AbortSignal.any([signal, timeout, failureController.signal])
+          const runtime = new AnalysisRuntime(
+            this.repo,
+            snapshot,
+            analysisId,
+            combined,
+            (metadata) => emit('metadata', metadata)
+          )
+          const graph = createMultiFileGraph(runtime, this.saver),
+            config = inheritTraceConfig({
+              ...this.config(id),
+              signal: combined,
+              runName: 'code2flow.multifile-graph',
+              metadata: { analysis_id: analysisId, snapshot_id: snapshotId, session_id: id, source }
+            })
+          try {
+            // 官方 saver 保存最终图与对话，正文只保存在业务表。
+            const state = await graph.invoke(
+              {
+                snapshotId,
+                analysisId,
+                result: null,
+                error: null,
+                messages: [],
+                pending: [],
+                batch: [],
+                stage: 'index',
+                coverage: null,
+                languageDetection: snapshot.languageDetection,
+                outcomes: {
+                  __reset__: { taskId: '__reset__', attempts: 0, error: null, fatal: false }
+                }
+              },
+              config
+            )
+            combined.throwIfAborted()
+            const result = MultiFileFlowResultSchema.parse(state.result)
+            this.sessions.save({ ...this.sessions.get(id)!, updatedAt: new Date().toISOString() })
+            emit('metadata', {
+              ...result,
+              mermaid: undefined,
+              mappings: undefined,
+              stage: 'complete',
+              usage: runtime.budget()
+            })
+            emit('mermaid', result.mermaid)
+            emit('mappings', result.mappings)
+            emit('done')
+            await recordMultiFileTrace({
+              analysisId,
+              snapshotId,
+              sessionId: id,
+              operation: 'multifile',
+              source,
+              outcome: 'success',
+              metrics: {
+                ...runtime.budget(),
+                coverage: runtime.coverage(),
+                diagnostics: runtime.diagnostics.map(({ code, fileId }) => ({ code, fileId }))
+              }
+            })
+            return result
+          } catch (error) {
+            const wasAborted = combined.aborted
+            // 一项任务不可继续时，停止同次分析仍在进行的模型和检索请求。
+            failureController.abort()
+            // 错误状态也使用官方图更新；取消后不提交迟到结果。
+            await graph.updateState(
+              this.config(id),
+              {
+                result: null,
+                error: wasAborted ? '分析已取消或超时。' : '分析未完成，请检查诊断后重新生成。'
+              },
+              'validateResult'
+            )
+            emit('metadata', {
+              version: 2,
+              snapshotId,
+              analysisId,
+              stage: 'incomplete',
+              detectedLanguage: snapshot.languageDetection?.language ?? 'unknown',
+              coverage: runtime.coverage(),
+              missingRanges: runtime.incompleteRanges().slice(0, 200)
+            })
+            await recordMultiFileTrace({
+              analysisId,
+              snapshotId,
+              sessionId: id,
+              operation: 'multifile',
+              source,
+              outcome: 'error',
+              metrics: {
+                ...runtime.budget(),
+                coverage: runtime.coverage(),
+                diagnostics: runtime.diagnostics.map(({ code, fileId }) => ({ code, fileId }))
+              }
+            })
+            throw error
           }
-        })
-        return result
-      } catch (error) {
-        const wasAborted = combined.aborted
-        // 一项任务不可继续时，停止同次分析仍在进行的模型和检索请求。
-        failureController.abort()
-        // 错误状态也使用官方图更新；取消后不提交迟到结果。
-        await graph.updateState(
-          this.config(id),
-          {
-            result: null,
-            error: wasAborted ? '分析已取消或超时。' : '分析未完成，请检查诊断后重新生成。'
-          },
-          'validateResult'
-        )
-        emit('metadata', {
-          version: 2,
-          snapshotId,
-          analysisId,
-          stage: 'incomplete',
-          detectedLanguage: snapshot.languageDetection?.language ?? 'unknown',
-          coverage: runtime.coverage(),
-          missingRanges: runtime.incompleteRanges().slice(0, 200)
-        })
-        await recordMultiFileTrace({
-          analysisId,
-          snapshotId,
-          sessionId: id,
-          operation: 'multifile',
-          source,
-          outcome: 'error',
-          metrics: {
-            ...runtime.budget(),
-            coverage: runtime.coverage(),
-            diagnostics: runtime.diagnostics.map(({ code, fileId }) => ({ code, fileId }))
-          }
-        })
-        throw error
-      }
-    })
+        },
+        analysisTraceConfig('multifile', id, { snapshot_id: snapshotId, source })
+      )
+    )
   }
   /** 仅允许基于已有结果的同一快照追问，避免新源码与旧流程图混用。 */
   async followUp(id: string, snapshotId: string, question: string, signal: AbortSignal) {
-    return withSessionLock(id, async () => {
-      const snapshot = this.snapshot(id, snapshotId),
-        graph = createMultiFileGraph(undefined, this.saver),
-        config = this.config(id),
-        state = await graph.getState(config)
-      if (state.values.snapshotId !== snapshotId || !state.values.result || state.values.error)
-        throw new SessionError('追问必须基于已完成的同一快照。', 409)
-      const draft = this.repo.draft(id)
-      if (draft) {
-        if (!draft.files.length) throw new SessionError('草稿已清空，请重新生成后追问。', 409)
-        const files = this.repo.validateFiles(draft.files)
-        if (
-          files.length !== snapshot.files.length ||
-          files.some((f) => {
-            const old = snapshot.files.find((s) => s.path === f.path)
-            return !old || this.repo.content(snapshot, old.fileId) !== f.content
-          })
-        )
-          throw new SessionError('草稿已修改，请重新生成后追问。', 409)
-      }
-      const combined = AbortSignal.any([
-        signal,
-        AbortSignal.timeout(Number(process.env.CODE2FLOW_MULTI_TIMEOUT_MS ?? 900000))
-      ])
-      const budget = new AnalysisBudget(combined),
-        chunks = this.repo.chunks(snapshot)
-      const retrieval = new RetrievalService(
-        this.repo,
-        snapshot,
-        chunks,
-        combined,
-        budget.config.concurrency
-      )
-      await retrieval.prepare()
-      const indexes = this.repo.indexes(snapshot)
-      retrieval.setIndexes(indexes)
-      const context = new SourceContext(this.repo, snapshot, chunks, indexes, combined, retrieval)
-      let outcome: 'success' | 'error' = 'error'
-      try {
-        const explanation = await runMultiFollowUp(
-          question,
-          { result: state.values.result, messages: state.values.messages },
-          context,
-          budget
-        )
-        combined.throwIfAborted()
-        await graph.updateState(
-          config,
-          {
-            messages: [
-              ...state.values.messages,
-              { role: 'user', content: question },
-              { role: 'assistant', content: explanation }
-            ]
-          },
-          'validateResult'
-        )
-        outcome = 'success'
-        return { thread_id: id, snapshotId, question, explanation }
-      } finally {
-        await recordMultiFileTrace({
-          analysisId: state.values.analysisId,
-          snapshotId,
-          sessionId: id,
-          operation: 'multifile-followup',
-          outcome,
-          source: 'online',
-          metrics: {
-            ...budget.summary(),
-            readChars: context.charsRead,
-            embedding: { calls: retrieval.embeddingCalls, ...retrieval.embeddingUsage }
+    return withSessionLock(id, () =>
+      traceStep(
+        'code2flow.multifile-followup',
+        { sessionId: id, snapshotId, question },
+        async () => {
+          const snapshot = this.snapshot(id, snapshotId),
+            graph = createMultiFileGraph(undefined, this.saver),
+            config = this.config(id),
+            state = await graph.getState(config)
+          if (state.values.snapshotId !== snapshotId || !state.values.result || state.values.error)
+            throw new SessionError('追问必须基于已完成的同一快照。', 409)
+          const draft = this.repo.draft(id)
+          if (draft) {
+            if (!draft.files.length) throw new SessionError('草稿已清空，请重新生成后追问。', 409)
+            const files = this.repo.validateFiles(draft.files)
+            if (
+              files.length !== snapshot.files.length ||
+              files.some((f) => {
+                const old = snapshot.files.find((s) => s.path === f.path)
+                return !old || this.repo.content(snapshot, old.fileId) !== f.content
+              })
+            )
+              throw new SessionError('草稿已修改，请重新生成后追问。', 409)
           }
-        })
-      }
-    })
+          const combined = AbortSignal.any([
+            signal,
+            AbortSignal.timeout(Number(process.env.CODE2FLOW_MULTI_TIMEOUT_MS ?? 900000))
+          ])
+          const budget = new AnalysisBudget(combined),
+            chunks = this.repo.chunks(snapshot)
+          const retrieval = new RetrievalService(
+            this.repo,
+            snapshot,
+            chunks,
+            combined,
+            budget.config.concurrency
+          )
+          await retrieval.prepare()
+          const indexes = this.repo.indexes(snapshot)
+          retrieval.setIndexes(indexes)
+          const context = new SourceContext(
+            this.repo,
+            snapshot,
+            chunks,
+            indexes,
+            combined,
+            retrieval
+          )
+          let outcome: 'success' | 'error' = 'error'
+          try {
+            const explanation = await runMultiFollowUp(
+              question,
+              { result: state.values.result, messages: state.values.messages },
+              context,
+              budget
+            )
+            combined.throwIfAborted()
+            await graph.updateState(
+              config,
+              {
+                messages: [
+                  ...state.values.messages,
+                  { role: 'user', content: question },
+                  { role: 'assistant', content: explanation }
+                ]
+              },
+              'validateResult'
+            )
+            outcome = 'success'
+            return { thread_id: id, snapshotId, question, explanation }
+          } finally {
+            await recordMultiFileTrace({
+              analysisId: state.values.analysisId,
+              snapshotId,
+              sessionId: id,
+              operation: 'multifile-followup',
+              outcome,
+              source: 'online',
+              metrics: {
+                ...budget.summary(),
+                readChars: context.charsRead,
+                embedding: { calls: retrieval.embeddingCalls, ...retrieval.embeddingUsage }
+              }
+            })
+          }
+        },
+        analysisTraceConfig('multifile-followup', id, { snapshot_id: snapshotId })
+      )
+    )
   }
 }
 let instance: MultiFileService | undefined

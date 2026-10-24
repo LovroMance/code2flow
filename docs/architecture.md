@@ -185,6 +185,10 @@ SQLite 默认路径是进程工作目录下 `.code2flow/checkpoints/code-flow.sq
 
 ## 观测与用量控制台
 
+可选远程观测使用 LangChain / LangGraph 原生 LangSmith 追踪，配置与操作见 [LangSmith 执行追踪](./langsmith.md)。启动在 dotenv 后初始化，默认关闭；缺少密钥或端点格式无效时禁用上传。Service 使用原生 Runnable 建立生成 / 追问根 Trace，Graph、Agent 和自定义 Jev、检索、缓存、任务步骤继承其上下文；合并显式回调和元数据，保留 SSE、预算回调和并行分支的父子关联。元数据区分用户会话、快照、分析、任务与尝试，追踪标识不改变 saver 的线程配置。
+
+启用远程追踪后，完整状态、模型消息及工具输入输出可能含用户源码并上传到所配置的 LangSmith 项目；这是独立于本地 JSONL 的显式配置，本地日志不增加源码或原始响应。模型流式请求显式开启 usage，模型元数据标记实际 DeepSeek 供应商。平台估算费用依赖用量回报和定价；Jev / Embedding 自定义步骤保留原始统计，本次未转换为平台 LLM 计费记录。捕获后返回的校验错误通过步骤 Outputs 展示，终止异常由根 Trace 标为失败。
+
 Service 统一完成成功 / 失败采集和 JSONL 写入；外部显式传入 trace 时由调用者负责落盘。框架模型回调记录调用轮数、响应模型和供应商 token usage，节点回调只记录 analyze / validate / explain。重试的生成用量累加，失败也保留已回报用量。
 
 工作区通过 v-show 保持挂载，切到控制台不会终止 SSE；控制台进入和手动刷新时请求 `/api/usage`。查询读取 `CODE2FLOW_TRACE_FILE` 末尾最多 4 MiB，跳过截断、损坏、追问和明确标记为 eval 的记录，按开始时间倒序最多返回 50 条。响应经 Zod 白名单处理，不返回完整 trace、源码或原始错误。

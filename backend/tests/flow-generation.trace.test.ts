@@ -3,6 +3,8 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import request from 'supertest'
 import { MemorySaver } from '@langchain/langgraph'
+import { BaseCallbackHandler } from '@langchain/core/callbacks/base'
+import { analysisTraceConfig, traceStep } from '../src/ai/observability/langsmith'
 import { beforeAll, beforeEach, afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp } from '../src/app/createApp'
 import { generateFlow } from '../src/services/flow-generation.service'
@@ -63,6 +65,52 @@ const parseEvents = (body: string) =>
     .map((line) => JSON.parse(line.slice(6)))
 
 describe('HTTP / SSE and service observability', () => {
+  it('保留真实 Agent 和模型的父子关联、输入输出及供应商用量', async () => {
+    vi.stubEnv('LANGSMITH_TRACING', 'false')
+    vi.stubEnv('DEEPSEEK_MODEL', 'deepseek-chat')
+    await useModel([{}])
+    const starts: Array<{
+      id: string
+      parent?: string
+      name?: string
+      metadata?: Record<string, unknown>
+    }> = []
+    const llmEnd = vi.fn()
+    const local = createTraceCollector({ code, mode: 'generate' })
+    const callback = BaseCallbackHandler.fromMethods({
+      handleChainStart(_chain, _input, id, parent, _tags, metadata, _runType, name) {
+        starts.push({ id, parent, name, metadata })
+      },
+      handleChatModelStart(_model, _messages, id, parent, _extra, _tags, metadata, name) {
+        starts.push({ id, parent, name, metadata })
+      },
+      handleLLMEnd: llmEnd
+    })
+    await traceStep('test-observer', {}, () => generateFlow({ code }, { trace: local }), {
+      ...analysisTraceConfig('generate', 'visible-session'),
+      callbacks: [callback]
+    })
+    const root = starts.find((run) => run.name === 'code2flow.generate')!
+    const graph = starts.find((run) => run.name === 'code2flow.graph')!
+    const node = starts.find((run) => run.name === 'analyze')!
+    const agent = starts.find((run) => run.name === 'code2flow.generate-agent')!
+    expect(graph.parent).toBe(root.id)
+    expect(node.parent).toBe(graph.id)
+    expect(agent.parent).toBe(node.id)
+    const model = starts.find((run) => run.metadata?.ls_provider === 'deepseek')!
+    expect(model.metadata).toMatchObject({
+      session_id: 'visible-session',
+      ls_model_name: 'deepseek-chat'
+    })
+    expect(llmEnd).toHaveBeenCalledTimes(1)
+    const message = llmEnd.mock.calls[0][0].generations[0][0].message
+    expect(message.usage_metadata).toMatchObject({
+      input_tokens: 10,
+      output_tokens: 20,
+      total_tokens: 30
+    })
+    expect((await local.finish()).usage.totalTokens).toBe(30)
+  })
   it('keeps one-shot generation and evaluation out of the persistent checkpoint store', async () => {
     await useModel([{}])
     const saver = vi.spyOn(checkpointModule, 'getCodeFlowCheckpointer')

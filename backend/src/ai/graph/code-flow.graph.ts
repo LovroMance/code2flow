@@ -14,6 +14,7 @@ import { resolveRunConfig } from '../observability/run-config'
 import { loadLegacyCheckpoint } from './checkpointer'
 import { createNodeCallbacks } from '../observability/run-callbacks'
 import { chineseErrorMessage } from '../../utils/errorMessage'
+import { inheritTraceConfig } from '../observability/langsmith'
 
 // 只保留三个业务节点；框架负责状态合并、条件跳转和 checkpoint 生命周期。
 export function createCodeFlowGraph(options: CodeFlowGraphRunOptions = {}) {
@@ -96,11 +97,12 @@ export async function runCodeFlowGraph(
   options: CodeFlowGraphRunOptions = {}
 ) {
   const graph = createCodeFlowGraph(options)
-  const config = {
+  const config = inheritTraceConfig({
+    runName: 'code2flow.graph',
     configurable: { thread_id: input.threadId ?? randomUUID() },
     recursionLimit: 100,
     callbacks: createNodeCallbacks(options.trace)
-  }
+  })
   if (input.mode === 'followup') {
     let previous = await graph.getState(config)
     if (!previous.config.configurable?.checkpoint_id && input.threadId) {

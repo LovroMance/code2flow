@@ -10,6 +10,7 @@ import { getTraceSink, isTracingEnabled } from '../ai/observability/trace.sink'
 import { withSessionLock } from './session-lock'
 import { getSessionService } from './session.service'
 import { chineseErrorMessage } from '../utils/errorMessage'
+import { analysisTraceConfig, traceStep } from '../ai/observability/langsmith'
 
 export async function generateFlow(input: CodeFlowGraphInput, options?: CodeFlowGraphRunOptions) {
   return (await runFlow({ ...input, mode: 'generate' }, options)).result!
@@ -51,11 +52,19 @@ async function executeFlow(input: CodeFlowGraphInput, options: CodeFlowGraphRunO
       ? createTraceCollector({ ...input, mode: input.mode ?? 'generate', source: 'online' })
       : undefined)
   try {
-    const state = await runCodeFlowGraph(input, {
-      ...options,
-      trace,
-      checkpointer: options.checkpointer ?? (input.threadId ? getCodeFlowCheckpointer() : undefined)
-    })
+    const operation = input.mode === 'followup' ? 'followup' : 'generate'
+    const state = await traceStep(
+      `code2flow.${operation}`,
+      input,
+      () =>
+        runCodeFlowGraph(input, {
+          ...options,
+          trace,
+          checkpointer:
+            options.checkpointer ?? (input.threadId ? getCodeFlowCheckpointer() : undefined)
+        }),
+      analysisTraceConfig(operation, input.threadId)
+    )
     if (input.mode !== 'followup' && state.result) trace?.setResult(summarizeResult(state.result))
     return state
   } catch (error) {

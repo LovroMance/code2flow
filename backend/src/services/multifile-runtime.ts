@@ -35,6 +35,7 @@ import { composeMultiFileFlow, validateUnitDraft } from '../utils/composeMultiFi
 import { mergeFileFragments, FragmentConflictError } from '../utils/mergeFileFragments'
 import { safeErrorDetails } from '../ai/observability/safe-error'
 import { ModelOutputTruncatedError, errorCauses } from '../domain/multifile/errors'
+import { traceStep } from '../ai/observability/langsmith'
 
 const CachedIndexSchema = z.object({
   index: FileSemanticIndexSchema,
@@ -298,6 +299,18 @@ export class AnalysisRuntime implements MultiFileRuntime {
   }
   /** 按任务前缀执行索引、核对或生成；返回安全的失败反馈，由 graph 决定是否重试。 */
   async task(id: string, attempts: number, feedback: string | null): Promise<TaskOutcome> {
+    return traceStep(
+      'code2flow.analysis-task',
+      { taskId: id, attempt: attempts, validationFeedback: feedback },
+      () => this.executeTask(id, attempts, feedback),
+      { metadata: { task_id: id, attempt: attempts, analysis_id: this.analysisId } }
+    )
+  }
+  private async executeTask(
+    id: string,
+    attempts: number,
+    feedback: string | null
+  ): Promise<TaskOutcome> {
     let cacheKey: string | undefined
     const taskLog = { analysisId: this.analysisId, taskId: id, attempt: attempts }
     console.log('[code-flow][v2] task-start', { taskId: id, attempt: attempts })
@@ -326,7 +339,12 @@ export class AnalysisRuntime implements MultiFileRuntime {
         cacheKey = this.key(chunk)
         const cachedValue = feedback
           ? undefined
-          : this.repo.cacheGet(this.snapshot.sessionId, cacheKey)
+          : (
+              await traceStep('code2flow.index-cache', { cacheKey }, async () => {
+                const value = this.repo.cacheGet(this.snapshot.sessionId, cacheKey!)
+                return { hit: value !== undefined, value }
+              })
+            ).value
         const cached = cachedValue === undefined ? undefined : CachedIndexSchema.parse(cachedValue)
         let index: FileSemanticIndex
         if (cached) {
@@ -411,7 +429,12 @@ export class AnalysisRuntime implements MultiFileRuntime {
         )
         cacheKey = key
         // 局部缓存只在同一快照身份下重用；所有证据重新登记，不能复用旧evidenceId。
-        const cached = this.repo.cacheGet(this.snapshot.sessionId, key)
+        const cached = (
+          await traceStep('code2flow.generation-cache', { cacheKey: key }, async () => {
+            const value = this.repo.cacheGet(this.snapshot.sessionId, key)
+            return { hit: value !== undefined, value }
+          })
+        ).value
         let draft: UnitFlowDraft
         if (cached) {
           const old = UnitFlowDraftSchema.parse(cached)

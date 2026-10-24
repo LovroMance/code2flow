@@ -1,4 +1,5 @@
 import { buildLanguageDetectionQuestion } from '../../prompts/detect-language.prompt'
+import { traceStep } from '../observability/langsmith'
 
 // 配置和鉴权错误需要修正环境，不能作为普通的语言不确定继续执行。
 export class LanguageDetectionConfigError extends Error {}
@@ -25,19 +26,22 @@ export async function requestLanguageChoice(
   const startedAt = Date.now()
   console.info('[code-flow][jev] request-start', { model, timeoutMs: timeout })
   try {
-    const response = await client.systemOne(
+    // SDK 实例、密钥和取消信号不作为追踪输入，原始响应保留供应商 usage。
+    const response = await traceStep(
+      'code2flow.jev-choice',
       {
         model,
         state: { code },
         questions: { language: buildLanguageDetectionQuestion() }
       },
-      {
-        timeout,
-        retry: { maxRetries: 0 },
-        signal: signal
-          ? AbortSignal.any([signal, AbortSignal.timeout(timeout)])
-          : AbortSignal.timeout(timeout)
-      }
+      (request) =>
+        client.systemOne(request, {
+          timeout,
+          retry: { maxRetries: 0 },
+          signal: signal
+            ? AbortSignal.any([signal, AbortSignal.timeout(timeout)])
+            : AbortSignal.timeout(timeout)
+        })
     )
     console.info('[code-flow][jev] request-complete', {
       model: response.model,

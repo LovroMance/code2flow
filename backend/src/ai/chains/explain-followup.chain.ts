@@ -4,6 +4,7 @@ import type { CodeFlowGraphRunOptions } from '../graph/code-flow.types'
 import { FOLLOW_UP_PROMPT } from '../../prompts/code-flow.prompt'
 import { createOpenAIModel } from '../llms/openai'
 import { createRunCallbacks } from '../observability/run-callbacks'
+import { inheritTraceConfig } from '../observability/langsmith'
 
 // 图和源码放在系统上下文，历史问答使用原生消息通道，避免手动拼接消息格式。
 export async function explainCodeFlowFollowUp(
@@ -18,7 +19,11 @@ export async function explainCodeFlowFollowUp(
       ...state.messages,
       new HumanMessage(state.question)
     ],
-    { callbacks: createRunCallbacks(options.trace) }
+    inheritTraceConfig({
+      runName: 'code2flow.followup-model',
+      metadata: { role: 'followup' },
+      callbacks: createRunCallbacks(options.trace)
+    })
   )
   if (!response.text.trim()) throw new Error('模型未返回解释内容，请重新追问。')
   return {

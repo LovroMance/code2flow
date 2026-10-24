@@ -8,6 +8,7 @@ import { createOpenAIModel } from '../llms/openai'
 import { createRunCallbacks } from '../observability/run-callbacks'
 import type { CodeFlowGraphRunOptions } from '../graph/code-flow.types'
 import { numberSourceLines } from '../../utils/numberSourceLines'
+import { inheritTraceConfig } from '../observability/langsmith'
 
 // 框架接管工具绑定、消息往返和结构化结果提取；业务层只提供契约和修正反馈。
 export async function generateCodeFlowDraft(
@@ -38,7 +39,11 @@ export async function generateCodeFlowDraft(
   })
   const output = await agent.invoke(
     { messages },
-    { callbacks: createRunCallbacks(options.trace, options.callbacks?.onPartialMermaid) }
+    inheritTraceConfig({
+      runName: 'code2flow.generate-agent',
+      metadata: { role: 'generate', has_validation_feedback: !!input.feedback },
+      callbacks: createRunCallbacks(options.trace, options.callbacks?.onPartialMermaid)
+    })
   )
 
   // 语言只取 Jev 结果，模型无需输出，也无法覆盖它；Zod 校验行号等跨字段约束。

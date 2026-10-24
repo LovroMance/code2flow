@@ -10,6 +10,12 @@ export function createOpenAIModel(maxTokens = modelOutputTokens()) {
     },
     maxTokens,
     streaming: true,
+    streamUsage: true,
+    // OpenAI 兼容协议不代表实际供应商是 OpenAI，供远程面板匹配自定义价格。
+    metadata: {
+      ls_provider: 'deepseek',
+      ls_model_name: process.env.DEEPSEEK_MODEL ?? 'deepseek-chat'
+    },
     // 重试由外层 StateGraph 统一计数，避免 SDK 与业务层叠加放大请求次数。
     maxRetries: 0,
     timeout: 60000,

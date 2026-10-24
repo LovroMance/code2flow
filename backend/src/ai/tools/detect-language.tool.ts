@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { LanguageChoiceSchema, LanguageDetectionSchema } from '../../domain/flow/schema'
 import type { LanguageDetection } from '../../domain/flow/types'
 import { LanguageDetectionConfigError, requestLanguageChoice } from '../clients/jev.client'
+import { traceStep } from '../observability/langsmith'
 
 export const DetectLanguageResultSchema = LanguageDetectionSchema
 
@@ -13,6 +14,16 @@ const ConfigSchema = z.object({
 
 // Jev 只负责分类；临时失败降级为 unknown，流程图仍可使用通用规则生成。
 export async function runDetectLanguage(
+  code: string,
+  signal?: AbortSignal,
+  onUsage?: (info: { model: string; usage: Record<string, number> }) => void
+): Promise<LanguageDetection> {
+  return traceStep('code2flow.detect-language', { code }, () =>
+    detectLanguage(code, signal, onUsage)
+  )
+}
+
+async function detectLanguage(
   code: string,
   signal?: AbortSignal,
   onUsage?: (info: { model: string; usage: Record<string, number> }) => void

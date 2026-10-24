@@ -1,8 +1,10 @@
 import dotenv from 'dotenv'
 import { createApp } from './app/createApp'
 import { getMultiFileService } from './services/multifile.service'
+import { configureLangSmith } from './ai/observability/langsmith'
 
 dotenv.config()
+configureLangSmith()
 console.info('[code-flow][v2] retrieval-readiness', {
   fts5: getMultiFileService().repo.hasFts,
   embeddingConfigured: !!(
