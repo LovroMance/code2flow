@@ -29,7 +29,7 @@ npm run build
 npm run check
 ```
 
-前端访问 `http://localhost:5173`，后端健康检查为 `http://localhost:3000/api/health`。前后端测试分别使用 `npm run test:frontend` 和 `npm run test:backend`；后端测试代码类型检查使用 `npm --prefix backend run typecheck:tests`。
+前端访问 `http://localhost:5175`，后端健康检查为 `http://localhost:3000/api/health`。前后端测试分别使用 `npm run test:frontend` 和 `npm run test:backend`；后端测试代码类型检查使用 `npm --prefix backend run typecheck:tests`。
 
 后端业务代码位于 `backend/src/`，测试位于 `backend/tests/`；前端测试位于 `frontend/tests/`。启动和构建不会自动执行测试，修改后应按影响范围运行检查。执行追踪和用量查看统一使用 LangSmith；旧本地采集、控制台和离线评估工具已移除，关键业务测试继续保留。
 

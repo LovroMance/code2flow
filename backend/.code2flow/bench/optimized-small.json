@@ -1,0 +1,43 @@
+{
+  "label": "optimized-small",
+  "capturedAt": "2026-10-24T09:57:01.637Z",
+  "reps": 2,
+  "samples": ["small"],
+  "totals": {
+    "runs": 2,
+    "failures": 0,
+    "durationMs": 42062,
+    "calls": 14,
+    "inputTokens": 52462,
+    "outputTokens": 16609,
+    "cacheReadTokens": 35968
+  },
+  "runs": [
+    {
+      "sample": "small",
+      "rep": 1,
+      "ok": true,
+      "durationMs": 20674,
+      "calls": 7,
+      "inputTokens": 24944,
+      "outputTokens": 9375,
+      "cacheReadTokens": 13056,
+      "mappings": 16,
+      "mermaidChars": 1568,
+      "coverageComplete": true
+    },
+    {
+      "sample": "small",
+      "rep": 2,
+      "ok": true,
+      "durationMs": 21388,
+      "calls": 7,
+      "inputTokens": 27518,
+      "outputTokens": 7234,
+      "cacheReadTokens": 22912,
+      "mappings": 16,
+      "mermaidChars": 1569,
+      "coverageComplete": true
+    }
+  ]
+}

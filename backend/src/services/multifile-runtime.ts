@@ -11,6 +11,7 @@ import {
 import type { MultiFileRuntime, TaskOutcome } from '../ai/graph/multifile.graph'
 import { runDetectLanguage } from '../ai/tools/detect-language.tool'
 import {
+  CombinedIndexSchema,
   FileSemanticIndexSchema,
   UnitFlowDraftSchema,
   type FileSemanticIndex,
@@ -29,6 +30,7 @@ import {
   languageSample,
   missingRanges,
   sha256,
+  sourceRange,
   validateSourceRange
 } from '../utils/sourcePositions'
 import { composeMultiFileFlow, validateUnitDraft } from '../utils/composeMultiFileFlow'
@@ -39,7 +41,9 @@ import { traceStep } from '../ai/observability/langsmith'
 
 const CachedIndexSchema = z.object({
   index: FileSemanticIndexSchema,
-  evidence: z.array(EvidenceSchema)
+  evidence: z.array(EvidenceSchema),
+  // 单块文件合并模式随索引一同缓存的局部草稿；旧缓存条目没有该字段。
+  drafts: z.array(UnitFlowDraftSchema).optional()
 })
 /** 一次分析的业务上下文：持有索引、证据与局部结果，实现图节点操作。
  * 阶段顺序和重试由 multifile.graph 决定，本类不另建状态机。
@@ -53,6 +57,10 @@ export class AnalysisRuntime implements MultiFileRuntime {
   readonly partial = new Map<string, FileSemanticIndex>()
   readonly contexts = new Map<string, SourceContext>()
   readonly drafts = new Map<string, UnitFlowDraft>()
+  // 合并模式的临时草稿按分块暂存，merge 建立正式身份后重映射进 drafts。
+  private readonly partialDrafts = new Map<string, UnitFlowDraft[]>()
+  private readonly unitAliases = new Map<string, string>()
+  private readonly callAliases = new Map<string, Map<string, string>>()
   readonly references: CrossFileReference[] = []
   readonly diagnostics: PublicDiagnostic[] = []
   retrieval?: RetrievalService
@@ -179,7 +187,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
         model: process.env.DEEPSEEK_MODEL,
         base: process.env.DEEPSEEK_BASE_URL,
         temperature: process.env.DEEPSEEK_TEMPERATURE,
-        version: 'index-v2.5'
+        version: 'index-v2.6'
       })
     )
   }
@@ -215,6 +223,21 @@ export class AnalysisRuntime implements MultiFileRuntime {
       context.validate(unit.range, unit.evidenceIds)
       for (const control of unit.controlRanges) {
         context.validate(control.range, unit.evidenceIds)
+        // 控制位置常带行首缩进或行尾换行等空白噪声，修剪到实际语句并重算行列，
+        // 生成节点只需覆盖语句本身即可通过覆盖检查，避免行列级偏差被拒。
+        const fileContent = this.repo.content(this.snapshot, unit.range.fileId)
+        let s = control.range.startOffset,
+          e = control.range.endOffset
+        while (s < e && /\s/.test(fileContent[s]!)) s++
+        while (e > s && /\s/.test(fileContent[e - 1]!)) e--
+        if (e > s) {
+          try {
+            const trimmed = sourceRange(unit.range.fileId, fileContent, s, e)
+            control.range = { ...control.range, ...trimmed }
+          } catch {
+            // 修剪后落在代理对或边界上时保持原范围，校验交给既有规则。
+          }
+        }
         if (
           control.range.startOffset < unit.range.startOffset ||
           control.range.endOffset > unit.range.endOffset
@@ -240,8 +263,30 @@ export class AnalysisRuntime implements MultiFileRuntime {
             textLength: call.text.length,
             rangeLength: source.length
           })
+          // 反馈必须携带双方原文；text 能在原文唯一定位时给出建议范围，
+          // 模型按建议重报但仍须重新通过全部校验，程序不自动改写。
+          let suggestion = ''
+          try {
+            const content = this.repo.content(this.snapshot, call.range.fileId)
+            const anchor = content.indexOf(call.text, Math.max(0, call.range.startOffset - 400))
+            if (
+              anchor !== -1 &&
+              anchor < call.range.endOffset + 400 &&
+              content.indexOf(call.text, anchor + 1) === -1
+            ) {
+              const fixed = sourceRange(
+                call.range.fileId,
+                content,
+                anchor,
+                anchor + call.text.length
+              )
+              suggestion = `text在原文中唯一出现于偏移[${fixed.startOffset},${fixed.endOffset})，行${fixed.lineStart}:${fixed.columnStart}-${fixed.lineEnd}:${fixed.columnEnd}（终点列排他）；请以该范围重新提交。`
+            }
+          } catch {
+            // 无法定位或范围无效时保持通用指引。
+          }
           throw new ModelOutputValidationError(
-            `调用点units[${index.units.indexOf(unit)}].callSites[${callIndex}]的text或targetHint不在其range中；请核对该调用点的行号和范围，text填写原始调用源码，不能写解释、添加分号或改写空格。`
+            `调用点units[${index.units.indexOf(unit)}].callSites[${callIndex}]无效：您声明的range原文为"${source}"（偏移[${call.range.startOffset},${call.range.endOffset})，行${call.range.lineStart}:${call.range.columnStart}-${call.range.lineEnd}:${call.range.columnEnd}），提交的text为"${call.text}"，targetHint为"${call.targetHint}"。text必须逐字出现在range原文内，不能添加分号、空格或改写。${suggestion}`
           )
         }
         if (calls.has(call.callSiteId)) throw new ModelOutputValidationError('调用点ID重复。')
@@ -295,7 +340,10 @@ export class AnalysisRuntime implements MultiFileRuntime {
         )
       return value
     }
-    return FileSemanticIndexSchema.parse(rewrite(cached.index))
+    return {
+      index: FileSemanticIndexSchema.parse(rewrite(cached.index)),
+      drafts: cached.drafts ? (rewrite(cached.drafts) as UnitFlowDraft[]) : []
+    }
   }
   /** 按任务前缀执行索引、核对或生成；返回安全的失败反馈，由 graph 决定是否重试。 */
   async task(id: string, attempts: number, feedback: string | null): Promise<TaskOutcome> {
@@ -336,19 +384,25 @@ export class AnalysisRuntime implements MultiFileRuntime {
           endOffset: chunk.endOffset,
           hasFeedback: feedback !== null
         })
+        // 单块文件（无跨块边界）在索引同轮产出局部草稿，省掉独立生成调用；带反馈重试只修索引。
+        const withDrafts =
+          feedback === null && this.chunks.filter((c) => c.fileId === chunk.fileId).length === 1
         cacheKey = this.key(chunk)
         const cachedValue = feedback
           ? undefined
           : (
               await traceStep('code2flow.index-cache', { cacheKey }, async () => {
-                const value = this.repo.cacheGet(this.snapshot.sessionId, cacheKey!)
+                const value = this.repo.cacheGet(cacheKey!)
                 return { hit: value !== undefined, value }
               })
             ).value
         const cached = cachedValue === undefined ? undefined : CachedIndexSchema.parse(cachedValue)
         let index: FileSemanticIndex
+        let drafts: UnitFlowDraft[] = []
         if (cached) {
-          index = this.rebind(cached, chunk, context)
+          const rebound = this.rebind(cached, chunk, context)
+          index = rebound.index
+          drafts = withDrafts ? rebound.drafts : []
           this.budgetTracker.cacheHits++
         } else {
           const code = context.read(chunk.fileId, chunk.startOffset, chunk.endOffset)
@@ -357,14 +411,20 @@ export class AnalysisRuntime implements MultiFileRuntime {
             {
               file: this.snapshot.files.find((f) => f.fileId === chunk.fileId),
               taskRange: chunk,
-              code
+              code,
+              ...(withDrafts ? { withDrafts: true } : {})
             },
             context,
             this.snapshot.languageDetection!.language,
             this.budgetTracker,
             feedback ?? undefined,
-            taskLog
+            taskLog,
+            withDrafts ? { withDrafts: true } : undefined
           )
+          drafts =
+            withDrafts && 'drafts' in index
+              ? (index as z.infer<typeof CombinedIndexSchema>).drafts
+              : []
         }
         this.checkIndex(index, chunk, context)
         console.log('[code-flow][v2] index-validated', {
@@ -379,9 +439,14 @@ export class AnalysisRuntime implements MultiFileRuntime {
         if ([...context.evidence.values()].some((e) => e.fileId !== chunk.fileId))
           throw new ModelOutputValidationError('文件分析任务只能读取本文件上下文。')
         this.signal.throwIfAborted()
-        this.repo.cachePut(this.snapshot.sessionId, this.key(chunk), {
+        // 草稿的单元身份必须能对应到索引单元，否则丢弃并回退到生成角色。
+        const indexedUnits = new Set(index.units.map((u) => u.unitId))
+        const validDrafts = drafts.filter((draft) => indexedUnits.has(draft.unitId))
+        if (withDrafts) this.partialDrafts.set(chunk.chunkId, validDrafts)
+        this.repo.cachePut(this.key(chunk), {
           index,
-          evidence: [...context.evidence.values()]
+          evidence: [...context.evidence.values()],
+          ...(withDrafts && validDrafts.length ? { drafts: validDrafts } : {})
         })
         this.partial.set(id, index)
         this.contexts.set(id, context)
@@ -424,58 +489,61 @@ export class AnalysisRuntime implements MultiFileRuntime {
             model: process.env.DEEPSEEK_MODEL,
             base: process.env.DEEPSEEK_BASE_URL,
             temperature: process.env.DEEPSEEK_TEMPERATURE,
-            version: 'flow-v2.4'
+            version: 'flow-v2.5'
           })
         )
         cacheKey = key
         // 局部缓存只在同一快照身份下重用；所有证据重新登记，不能复用旧evidenceId。
         const cached = (
           await traceStep('code2flow.generation-cache', { cacheKey: key }, async () => {
-            const value = this.repo.cacheGet(this.snapshot.sessionId, key)
+            const value = this.repo.cacheGet(key)
             return { hit: value !== undefined, value }
           })
         ).value
-        let draft: UnitFlowDraft
-        if (cached) {
-          const old = UnitFlowDraftSchema.parse(cached)
-          draft = {
-            ...old,
-            nodes: old.nodes.map((node) => ({ ...node, evidenceIds: [code.evidence.evidenceId] }))
+        let draft: UnitFlowDraft | undefined
+        let modelFeedback = feedback ?? undefined
+        // 合并模式预生成的草稿优先复用；不合格时丢弃并回退到生成角色，反馈携带校验原因。
+        const prepared = this.drafts.get(unit.unitId)
+        if (prepared) {
+          this.drafts.delete(unit.unitId)
+          try {
+            draft = this.acceptDraft(prepared, unit, context, code)
+            this.budgetTracker.cacheHits++
+          } catch (error) {
+            if (!(error instanceof ModelOutputValidationError)) throw error
+            console.log('[code-flow][v2] prepared-draft-rejected', {
+              ...taskLog,
+              error: error.message
+            })
+            modelFeedback = error.message
           }
-          this.budgetTracker.cacheHits++
-        } else
-          draft = await runMultiFileChain(
-            'generate',
-            payload,
-            context,
-            this.snapshot.languageDetection!.language,
-            this.budgetTracker,
-            feedback ?? undefined,
-            taskLog
-          )
-        if (draft.unitId !== unit.unitId)
-          throw new ModelOutputValidationError('返回了其他执行单元。')
-        validateUnitDraft(draft, context)
-        // 生成 chain 仅能引用实际进入本次证据包的源码。
-        for (const node of draft.nodes)
-          if (
-            node.evidenceIds.some(
-              (e) => e !== code.evidence.evidenceId && !unit.evidenceIds.includes(e)
+        }
+        if (!draft) {
+          if (cached) {
+            const old = UnitFlowDraftSchema.parse(cached)
+            draft = {
+              ...old,
+              nodes: old.nodes.map((node) => ({
+                ...node,
+                evidenceIds: [code.evidence.evidenceId]
+              }))
+            }
+            this.budgetTracker.cacheHits++
+          } else
+            draft = await runMultiFileChain(
+              'generate',
+              payload,
+              context,
+              this.snapshot.languageDetection!.language,
+              this.budgetTracker,
+              modelFeedback,
+              taskLog
             )
-          )
-            throw new ModelOutputValidationError('生成引用了未提供的证据。')
-        const expected = unit.callSites.filter((call) =>
-          this.references.some((r) => r.callSiteId === call.callSiteId && r.status === 'resolved')
-        )
-        if (
-          expected.some(
-            (call) => !draft.nodes.some((node) => node.callSiteIds.includes(call.callSiteId))
-          )
-        )
-          throw new ModelOutputValidationError('已确认调用点没有映射到节点。')
+        }
+        draft = this.acceptDraft(draft, unit, context, code)
         this.signal.throwIfAborted()
         this.drafts.set(unit.unitId, draft)
-        this.repo.cachePut(this.snapshot.sessionId, key, draft)
+        this.repo.cachePut(key, draft)
         this.repo.task(this.snapshot, id, attempts, 'complete', { unitId: unit.unitId })
       }
       console.log('[code-flow][v2] task-complete', { taskId: id, attempt: attempts })
@@ -493,7 +561,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
         causes.find((cause) => cause instanceof ModelOutputValidationError) ??
         error
       const retryable = reason instanceof ModelOutputValidationError
-      if (cacheKey) this.repo.cacheDelete(this.snapshot.sessionId, cacheKey)
+      if (cacheKey) this.repo.cacheDelete(cacheKey)
       // 不持久化供应商原始异常，避免请求正文或密钥进入任务记录。
       const safe =
         reason instanceof ModelOutputValidationError ||
@@ -557,6 +625,8 @@ export class AnalysisRuntime implements MultiFileRuntime {
           ])
           const old = units.get(key)
           if (old) {
+            // 重复 sightings 的临时ID同样要能映射到正式身份；别名按文件隔离，避免不同文件的临时ID互撞。
+            this.unitAliases.set(`${file.fileId}|${unit.unitId}`, old.unitId)
             old.evidenceIds = [...new Set([...old.evidenceIds, ...unit.evidenceIds])]
             old.controlRanges = [
               ...new Map(
@@ -574,16 +644,24 @@ export class AnalysisRuntime implements MultiFileRuntime {
                 ])
               ).values()
             ]
-          } else units.set(key, { ...unit, unitId: `u_${sha256(key).slice(0, 20)}` })
+          } else {
+            const formal = `u_${sha256(key).slice(0, 10)}`
+            this.unitAliases.set(`${file.fileId}|${unit.unitId}`, formal)
+            units.set(key, { ...unit, unitId: formal })
+          }
         }
         references.push(...part.references)
       }
       const fileUnits = [...units.values()].filter((u) => u.range.fileId === file.fileId)
-      for (const unit of fileUnits)
-        unit.callSites = unit.callSites.map((c) => ({
-          ...c,
-          callSiteId: `call_${sha256(`${unit.unitId}:${c.range.startOffset}:${c.range.endOffset}`).slice(0, 20)}`
-        }))
+      for (const unit of fileUnits) {
+        const calls = new Map<string, string>()
+        unit.callSites = unit.callSites.map((c) => {
+          const formal = `call_${sha256(`${unit.unitId}:${c.range.startOffset}:${c.range.endOffset}`).slice(0, 10)}`
+          calls.set(c.callSiteId, formal)
+          return { ...c, callSiteId: formal }
+        })
+        this.callAliases.set(unit.unitId, calls)
+      }
       return {
         fileId: file.fileId,
         summary: parts
@@ -636,6 +714,58 @@ export class AnalysisRuntime implements MultiFileRuntime {
       [],
       [...this.context.evidence.values()]
     )
+    this.remapDrafts()
+  }
+  /** 把合并模式暂存的临时草稿重映射到正式单元/调用点身份，供生成阶段直接复用。 */
+  private remapDrafts() {
+    for (const [chunkId, drafts] of this.partialDrafts) {
+      this.partialDrafts.delete(chunkId)
+      const fileId = this.chunks.find((c) => c.chunkId === chunkId)?.fileId
+      if (!fileId) continue
+      for (const draft of drafts) {
+        const formalUnit = this.unitAliases.get(`${fileId}|${draft.unitId}`)
+        if (!formalUnit || this.drafts.has(formalUnit)) continue
+        const calls = this.callAliases.get(formalUnit)
+        this.drafts.set(formalUnit, {
+          ...draft,
+          unitId: formalUnit,
+          nodes: draft.nodes.map((node) => ({
+            ...node,
+            callSiteIds: calls
+              ? node.callSiteIds.map((id) => calls.get(id)).filter((id): id is string => !!id)
+              : []
+          }))
+        })
+      }
+    }
+  }
+  /** 生成结果的共同验收：身份、范围证据、引用约束与已确认调用点覆盖。 */
+  private acceptDraft(
+    draft: UnitFlowDraft,
+    unit: ExecutionUnit,
+    context: SourceContext,
+    code: { evidence: { evidenceId: string } }
+  ) {
+    if (draft.unitId !== unit.unitId) throw new ModelOutputValidationError('返回了其他执行单元。')
+    validateUnitDraft(draft, context)
+    // 生成 chain 仅能引用实际进入本次证据包的源码。
+    for (const node of draft.nodes)
+      if (
+        node.evidenceIds.some(
+          (e) => e !== code.evidence.evidenceId && !unit.evidenceIds.includes(e)
+        )
+      )
+        throw new ModelOutputValidationError('生成引用了未提供的证据。')
+    const expected = unit.callSites.filter((call) =>
+      this.references.some((r) => r.callSiteId === call.callSiteId && r.status === 'resolved')
+    )
+    if (
+      expected.some(
+        (call) => !draft.nodes.some((node) => node.callSiteIds.includes(call.callSiteId))
+      )
+    )
+      throw new ModelOutputValidationError('已确认调用点没有映射到节点。')
+    return draft
   }
   /** 程序先找结构候选，再为需要核对的关系建立模型任务；检索命中不等于确认调用。 */
   async resolve() {
@@ -695,7 +825,29 @@ export class AnalysisRuntime implements MultiFileRuntime {
       this.verificationBatches.set(`verify:${offset / 4}`, unresolved.slice(offset, offset + 4))
     this.progress('verify', 0, this.verificationBatches.size)
   }
-  /** 核对角色可补读跨文件源码，提交后仍需通过候选身份及原始证据校验。 */
+  /** 核对批次身份：调用点、候选集合与模型配置共同决定结论可否跨运行复用。 */
+  private verifyKey(batch: CrossFileReference[]) {
+    const facts = batch.map((ref) => {
+      const c = this.candidates.find((c) => c.call.callSiteId === ref.callSiteId)!
+      return {
+        callSiteId: ref.callSiteId!,
+        kind: ref.kind,
+        targetHint: ref.targetHint,
+        source: ref.sourceUnitId,
+        candidates: c.candidates.map((unit) => unit.unitId).sort()
+      }
+    })
+    return sha256(
+      JSON.stringify({
+        refs: facts.sort((a, b) => a.callSiteId.localeCompare(b.callSiteId)),
+        model: process.env.DEEPSEEK_MODEL,
+        base: process.env.DEEPSEEK_BASE_URL,
+        temperature: process.env.DEEPSEEK_TEMPERATURE,
+        version: 'verify-v1'
+      })
+    )
+  }
+  /** 核对角色可补读跨文件源码，提交后仍需通过候选身份及原始证据校验；结论按批次内容缓存。 */
   private async verify(batch: CrossFileReference[], feedback?: string, task?: AnalysisTaskLog) {
     const facts = batch.map((ref) => {
       const c = this.candidates.find((c) => c.call.callSiteId === ref.callSiteId)!
@@ -719,29 +871,71 @@ export class AnalysisRuntime implements MultiFileRuntime {
       context.read(f.call.range.fileId, f.call.range.startOffset, f.call.range.endOffset),
       ...f.imports.map((r) => context.read(r.range.fileId, r.range.startOffset, r.range.endOffset))
     ])
-    // 歧义候选先由简单RAG召回，定点读取仍由Worker完成，相似度不能确认目标。
-    const search = await Promise.all(
-      facts.map((f) => this.retrieval!.search(f.call.targetHint, 'hybrid'))
-    )
-    const checked = await runMultiFileChain(
-      'verify',
-      { facts, evidence, search },
-      context,
-      this.snapshot.languageDetection!.language,
-      this.budgetTracker,
-      feedback,
-      task
-    )
-    for (const ref of checked.references) {
-      const old = batch.find((r) => r.referenceId === ref.referenceId)
-      if (!old || ref.sourceUnitId !== old.sourceUnitId || ref.callSiteId !== old.callSiteId)
-        throw new ModelOutputValidationError('关系核对更改了候选身份。')
-      validateResolvedReference(
-        ref,
-        context,
-        this.indexes.flatMap((i) => i.units)
+    const cached = feedback
+      ? undefined
+      : (this.repo.cacheGet(this.verifyKey(batch)) as
+          | Record<string, { status: string; targetUnitId?: string; diagnostic: string }>
+          | undefined)
+    if (cached) {
+      // 命中：按调用点应用缓存结论，证据重新登记，不做模型调用。
+      const units = this.indexes.flatMap((i) => i.units)
+      for (const ref of batch) {
+        const verdict = cached[ref.callSiteId!]
+        if (!verdict) throw new Error('核对缓存缺少候选结论。')
+        const applied: CrossFileReference = {
+          ...ref,
+          status: verdict.status as CrossFileReference['status'],
+          targetUnitId: verdict.targetUnitId,
+          diagnostic: verdict.diagnostic,
+          evidenceIds: evidence.map((e) => e.evidence.evidenceId)
+        }
+        if (applied.status === 'resolved' && applied.targetUnitId) {
+          const target = units.find((u) => u.unitId === applied.targetUnitId)
+          if (target)
+            applied.evidenceIds.push(
+              context.read(target.range.fileId, target.range.startOffset, target.range.endOffset)
+                .evidence.evidenceId
+            )
+        }
+        validateResolvedReference(applied, context, units)
+        Object.assign(ref, applied)
+      }
+      this.budgetTracker.cacheHits++
+    } else {
+      // 歧义候选先由简单RAG召回，定点读取仍由Worker完成，相似度不能确认目标。
+      const search = await Promise.all(
+        facts.map((f) => this.retrieval!.search(f.call.targetHint, 'hybrid'))
       )
-      Object.assign(old, ref)
+      const checked = await runMultiFileChain(
+        'verify',
+        { facts, evidence, search },
+        context,
+        this.snapshot.languageDetection!.language,
+        this.budgetTracker,
+        feedback,
+        task
+      )
+      for (const ref of checked.references) {
+        const old = batch.find((r) => r.referenceId === ref.referenceId)
+        if (!old || ref.sourceUnitId !== old.sourceUnitId || ref.callSiteId !== old.callSiteId)
+          throw new ModelOutputValidationError('关系核对更改了候选身份。')
+        validateResolvedReference(
+          ref,
+          context,
+          this.indexes.flatMap((i) => i.units)
+        )
+        Object.assign(old, ref)
+      }
+      if (!feedback)
+        this.repo.cachePut(
+          this.verifyKey(batch),
+          Object.fromEntries(
+            batch.map((ref) => [
+              ref.callSiteId,
+              { status: ref.status, targetUnitId: ref.targetUnitId, diagnostic: ref.diagnostic }
+            ])
+          )
+        )
     }
     for (const [id, e] of context.evidence) {
       this.context!.evidence.set(id, e)

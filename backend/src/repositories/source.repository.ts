@@ -45,7 +45,7 @@ export class SourceRepository {
           .parse(
             this.db.prepare('SELECT MAX(version) AS version FROM code_flow_source_migrations').get()
           ).version ?? 0
-      if (current >= 3) return
+      if (current >= 4) return
       this.db
         .exec(`CREATE TABLE IF NOT EXISTS code_flow_source_migrations (version INTEGER PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS code_flow_source_blobs (hash TEXT PRIMARY KEY, content TEXT NOT NULL, bytes INTEGER NOT NULL);
@@ -65,9 +65,11 @@ export class SourceRepository {
         CREATE TABLE IF NOT EXISTS code_flow_units (snapshot_id TEXT NOT NULL, unit_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(snapshot_id,unit_id));
         CREATE TABLE IF NOT EXISTS code_flow_references (snapshot_id TEXT NOT NULL, reference_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(snapshot_id,reference_id));
         CREATE TABLE IF NOT EXISTS code_flow_evidence (snapshot_id TEXT NOT NULL, evidence_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(snapshot_id,evidence_id));
+        CREATE TABLE IF NOT EXISTS code_flow_content_cache (cache_key TEXT PRIMARY KEY, data TEXT NOT NULL);
         INSERT OR IGNORE INTO code_flow_source_migrations(version) VALUES(1);
         INSERT OR IGNORE INTO code_flow_source_migrations(version) VALUES(2);
-        INSERT OR IGNORE INTO code_flow_source_migrations(version) VALUES(3);`)
+        INSERT OR IGNORE INTO code_flow_source_migrations(version) VALUES(3);
+        INSERT OR IGNORE INTO code_flow_source_migrations(version) VALUES(4);`)
     })()
     try {
       this.db.exec(
@@ -267,21 +269,20 @@ export class SourceRepository {
       return chunks
     })
   }
-  cacheGet(sessionId: string, key: string): unknown {
+  /** 内容寻址的全局缓存：键由内容哈希、模型与协议版本构成，可跨会话复用。 */
+  cacheGet(key: string): unknown {
     const row: unknown = this.db
-      .prepare('SELECT data FROM code_flow_file_indexes WHERE session_id = ? AND cache_key = ?')
-      .get(sessionId, key)
+      .prepare('SELECT data FROM code_flow_content_cache WHERE cache_key = ?')
+      .get(key)
     return row ? JSON.parse(JsonRow.parse(row).data) : undefined
   }
-  cachePut(sessionId: string, key: string, data: unknown) {
+  cachePut(key: string, data: unknown) {
     this.db
-      .prepare('INSERT OR REPLACE INTO code_flow_file_indexes VALUES(?,?,?)')
-      .run(sessionId, key, JSON.stringify(data))
+      .prepare('INSERT OR REPLACE INTO code_flow_content_cache VALUES(?,?)')
+      .run(key, JSON.stringify(data))
   }
-  cacheDelete(sessionId: string, key: string) {
-    this.db
-      .prepare('DELETE FROM code_flow_file_indexes WHERE session_id=? AND cache_key=?')
-      .run(sessionId, key)
+  cacheDelete(key: string) {
+    this.db.prepare('DELETE FROM code_flow_content_cache WHERE cache_key=?').run(key)
   }
   /** 将用户会话映射到内部 v2 checkpoint 线程，避免覆盖旧单文件图状态。 */
   analysisThread(sessionId: string, create = true) {

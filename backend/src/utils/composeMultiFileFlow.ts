@@ -1,4 +1,5 @@
 import { ModelOutputValidationError } from '../domain/multifile/errors'
+import { lineOffsets } from './sourcePositions'
 import {
   MultiFileFlowResultSchema,
   type CrossFileReference,
@@ -14,6 +15,8 @@ export function validateUnitDraft(draft: UnitFlowDraft, context: SourceContext) 
   if (!unit.complete) throw new ModelOutputValidationError('局部流程的执行单元边界尚未确认。')
   const ids = new Set<string>()
   for (const node of draft.nodes) {
+    if (node.kind === 'start')
+      throw new ModelOutputValidationError('start节点由程序合成，不需要提交。')
     if (ids.has(node.localId)) throw new ModelOutputValidationError('局部节点ID重复。')
     ids.add(node.localId)
     context.validate(node.range, node.evidenceIds)
@@ -48,7 +51,15 @@ export function validateUnitDraft(draft: UnitFlowDraft, context: SourceContext) 
         node.range.startOffset <= control.range.startOffset &&
         node.range.endOffset >= control.range.endOffset
     )
-    if (!mapped.length) throw new ModelOutputValidationError('局部流程遗漏索引中的关键控制位置。')
+    if (!mapped.length) {
+      // 反馈携带控制位置的类型与原文，模型能精确定位漏掉的语句。
+      const text = context.repository
+        .content(context.snapshot, unit.range.fileId)
+        .slice(control.range.startOffset, control.range.endOffset)
+      throw new ModelOutputValidationError(
+        `局部流程遗漏索引中的关键控制位置：${control.kind}（行${control.range.lineStart}:${control.range.columnStart}-${control.range.lineEnd}:${control.range.columnEnd}）原文"${text}"；请为该语句补充节点，range覆盖它。`
+      )
+    }
     if (
       (control.kind === 'branch' || control.kind === 'loop') &&
       !mapped.some(
@@ -57,12 +68,16 @@ export function validateUnitDraft(draft: UnitFlowDraft, context: SourceContext) 
           draft.edges.filter((edge) => edge.from === node.localId).length >= 2
       )
     )
-      throw new ModelOutputValidationError('局部流程没有保留判断或循环分支。')
+      throw new ModelOutputValidationError(
+        `控制位置行${control.range.lineStart}（${control.kind}）需要kind=decision的节点覆盖，且该节点至少有两条出边表示分支。`
+      )
     if (
       control.kind === 'return' &&
       !mapped.some((node) => node.kind === 'return' || node.kind === 'end')
     )
-      throw new ModelOutputValidationError('局部流程没有保留返回边界。')
+      throw new ModelOutputValidationError(
+        `控制位置行${control.range.lineStart}（return）需要kind=return或end的节点覆盖。`
+      )
   }
 }
 // 所有模型文本先编码成 Mermaid 数字实体，不允许注入指令、URL 或点击脚本。
@@ -106,6 +121,31 @@ export function composeMultiFileFlow(
     lines.push(
       `subgraph g_${u}["${escapeMermaidLabel(`${file.path} · ${unit.name || unit.kind}`)}"]`
     )
+    // 入口节点由程序合成，映射到单元声明行，模型只提交有语义含量的节点。
+    const content = context.repository.content(context.snapshot, file.fileId),
+      offsets = lineOffsets(content),
+      declStart = offsets[unit.range.lineStart - 1] ?? unit.range.startOffset,
+      declEndRaw = offsets[unit.range.lineStart] ?? content.length
+    let declEnd = declEndRaw
+    while (declEnd > declStart && /[\r\n]/.test(content[declEnd - 1]!)) declEnd--
+    const startId = `n_start_${unit.range.lineStart}_f${f + 1}_u${u + 1}_0`,
+      startLabel = escapeMermaidLabel(`开始 ${unit.name || unit.kind}`)
+    lines.push(`${startId}(["${startLabel}"])`)
+    mappings.push({
+      fileId: file.fileId,
+      startOffset: declStart,
+      endOffset: declEnd,
+      lineStart: unit.range.lineStart,
+      lineEnd: unit.range.lineStart,
+      columnStart: 1,
+      columnEnd: declEnd - declStart + 1,
+      nodeId: startId,
+      unitId: draft.unitId,
+      kind: 'start',
+      label: `开始 ${unit.name || unit.kind}`,
+      description: `执行单元 ${unit.name || unit.kind} 的入口`,
+      evidenceIds: unit.evidenceIds
+    })
     const nodes = [...draft.nodes].sort(
       (a, b) => a.range.startOffset - b.range.startOffset || a.localId.localeCompare(b.localId)
     )
@@ -136,6 +176,8 @@ export function composeMultiFileFlow(
       lines.push(
         `${nodeIds.get(`${draft.unitId}:${edge.from}`)} -->${edge.label ? `|"${escapeMermaidLabel(edge.label)}"|` : ''} ${nodeIds.get(`${draft.unitId}:${edge.to}`)}`
       )
+    const entryId = nodeIds.get(`${draft.unitId}:${draft.entryLocalId}`)
+    if (entryId) lines.push(`${startId} --> ${entryId}`)
     lines.push('end')
   })
   // 跨单元仅连接已证实的调用/注册；导入和请求关系不能直接充当本地执行边。

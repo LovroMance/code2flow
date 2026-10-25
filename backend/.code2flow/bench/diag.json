@@ -1,0 +1,30 @@
+{
+  "label": "diag",
+  "capturedAt": "2026-10-24T09:55:18.246Z",
+  "reps": 1,
+  "samples": ["small"],
+  "totals": {
+    "runs": 1,
+    "failures": 0,
+    "durationMs": 22304,
+    "calls": 7,
+    "inputTokens": 25901,
+    "outputTokens": 8313,
+    "cacheReadTokens": 20736
+  },
+  "runs": [
+    {
+      "sample": "small",
+      "rep": 1,
+      "ok": true,
+      "durationMs": 22304,
+      "calls": 7,
+      "inputTokens": 25901,
+      "outputTokens": 8313,
+      "cacheReadTokens": 20736,
+      "mappings": 16,
+      "mermaidChars": 1572,
+      "coverageComplete": true
+    }
+  ]
+}

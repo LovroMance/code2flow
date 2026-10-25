@@ -68,6 +68,7 @@ async function modelServer(
     unclosed?: boolean
     truncated?: boolean
     unauthorized?: boolean
+    merged?: boolean
     outputLimits?: number[]
   } = {}
 ) {
@@ -167,6 +168,29 @@ async function modelServer(
       }
       if (options.invalidOnce && calls.length === 1)
         (args as { analyzedRanges: unknown[] }).analyzedRanges = []
+      // 单块文件合并模式：索引同轮提交局部草稿，单元身份复用索引的临时ID。
+      if (options.merged)
+        (args as { drafts: unknown[] }).drafts = [
+          {
+            unitId: 'temp',
+            nodes: options.empty
+              ? []
+              : [
+                  {
+                    localId: 'a',
+                    kind: 'action',
+                    label: '执行职责',
+                    description: '执行上传源码',
+                    range,
+                    evidenceIds,
+                    callSiteIds: isCaller ? ['temp_call'] : []
+                  }
+                ],
+            edges: [],
+            entryLocalId: options.empty ? null : 'a',
+            emptyReason: options.empty ? '仅声明' : ''
+          }
+        ]
       if (options.invalidSchemaOnce && calls.length === 1)
         (args as { schemaVersion: unknown }).schemaVersion = 2
       if (options.invalidCallOnce && calls.length === 1)
@@ -281,10 +305,8 @@ describe('多文件原始位置与上传边界', () => {
     const fileId = snapshot.files[0]!.fileId
     const context = new SourceContext(repo, snapshot, [])
     const read = context.read(fileId, 0, content.length)
-    expect(read.linePositions).toEqual([
-      { line: 1, startOffset: 0, endOffset: 4, columnStart: 1, columnEnd: 5 },
-      { line: 2, startOffset: 6, endOffset: 19, columnStart: 1, columnEnd: 14 }
-    ])
+    // 展示正文以"行号| "前缀标注原始行号，CRLF 与代理对不在前缀文本中出现。
+    expect(read.content).toBe('1| 中文😀\n2|   return true')
     const range = sourceRange(fileId, content, 6, 19)
     expect(() => context.validate({ ...range, columnEnd: 13 }, [read.evidence.evidenceId])).toThrow(
       '偏移实际对应2:1-2:14'
@@ -483,11 +505,11 @@ describe('工具、检索与草稿一致性', () => {
     expect(read.truncated).toBe(true)
     expect(read.data[0].nextRange).toBeDefined()
     expect(read.metering.chars).toBeLessThanOrEqual(12000)
-    await expect(
-      tools
-        .find((t) => t.name === 'read_code')!
-        .invoke({ selectors: [{ type: 'chunk', chunkId: 'other' }] })
-    ).rejects.toThrow()
+    // 模型给出的选择器无效时作为工具反馈返回，由模型在剩余轮次内自行纠正。
+    const invalid = await tools
+      .find((t) => t.name === 'read_code')!
+      .invoke({ selectors: [{ type: 'chunk', chunkId: 'other' }] })
+    expect(invalid.data[0].error).toContain('未知代码块')
     const draft = { revision: 0, files: [{ path: 'a.py', content: 'x' }], activePath: 'a.py' }
     expect((await service.saveDraft('s', draft)).revision).toBe(1)
     await expect(service.saveDraft('s', draft)).rejects.toThrow('版本')
@@ -685,9 +707,10 @@ describe('v2真实LangChain、StateGraph、SQLite、HTTP集成', () => {
     )
     expect(calls.filter((name) => name === 'submit_file_index').length).toBeGreaterThan(1)
     expect(calls.filter((name) => name === 'submit_unit_flow')).toHaveLength(1)
-    expect(result.mappings).toHaveLength(1)
+    // 模型节点 1 个 + 程序合成的 start 节点 1 个。
+    expect(result.mappings).toHaveLength(2)
     expect(result.mappings[0]!.startOffset).toBe(0)
-    expect(result.mappings[0]!.endOffset).toBe(content.length)
+    expect(result.mappings[1]!.endOffset).toBe(content.length)
     expect(result.coverage.complete).toBe(true)
     expect(result.coverage.unresolvedRanges).toEqual([])
     await modelServer({ fragments: true, unclosed: true })
@@ -739,7 +762,8 @@ describe('v2真实LangChain、StateGraph、SQLite、HTTP集成', () => {
     expect(result.version).toBe(2)
     expect(result.coverage.complete).toBe(true)
     expect(result.coverage.files).toHaveLength(3)
-    expect(result.mappings).toHaveLength(3)
+    // 每个可执行单元：模型节点 1 个 + 程序合成 start 1 个。
+    expect(result.mappings).toHaveLength(6)
     expect(result.detectedLanguage).toBe('unknown')
     expect(result.mermaid).toContain('-.->|"调用"|')
     expect(result.mermaid.match(/subgraph/g)).toHaveLength(3)
@@ -768,6 +792,25 @@ describe('v2真实LangChain、StateGraph、SQLite、HTTP集成', () => {
     })
     expect((await sessions.list()).map((s) => s.id)).not.toContain('s')
   }, 30000)
+  it('单块文件索引与局部草稿一次完成，不再调用生成角色', async () => {
+    const calls = await modelServer({ merged: true }),
+      { service } = await setup(),
+      snapshot = await service.createSnapshot('s', [
+        { path: 'a.ts', content: "import { b } from './b.ts';\nb()" },
+        { path: 'b.ts', content: 'function b() { return 1 }' }
+      ])
+    const result = await service.generate(
+      's',
+      snapshot.snapshotId,
+      new AbortController().signal,
+      () => {}
+    )
+    expect(calls.filter((c) => c === 'submit_file_index')).toHaveLength(2)
+    expect(calls.filter((c) => c === 'submit_unit_flow')).toHaveLength(0)
+    // 每个单元：模型节点 1 个 + 程序合成 start 1 个。
+    expect(result.mappings).toHaveLength(4)
+    expect(result.mermaid).toContain('-.->|"调用"|')
+  }, 30000)
   it('相互调用只生成每个单元一次，没有自动返回边；缺失目录线索保留边界', async () => {
     const calls = await modelServer({ cycle: true }),
       { service } = await setup(),
@@ -782,9 +825,10 @@ describe('v2真实LangChain、StateGraph、SQLite、HTTP集成', () => {
       () => {}
     )
     expect(calls.filter((c) => c === 'submit_unit_flow')).toHaveLength(2)
-    expect(result.mappings).toHaveLength(2)
+    expect(result.mappings).toHaveLength(4)
     expect(result.mermaid.match(/-.->/g)).toHaveLength(2)
-    expect(result.mermaid).not.toContain(' --> ')
+    // 实线边只允许程序合成的两条入口边，不自动补返回边或同文件边。
+    expect(result.mermaid.match(/ --> /g)).toHaveLength(2)
     const renamed = await service.createSnapshot('s', [
       { path: 'a.ts', content: "import { b } from './src/b.ts'; b()" },
       { path: 'b.ts', content: 'function b(){ return 1 }' }

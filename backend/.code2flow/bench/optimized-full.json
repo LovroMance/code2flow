@@ -1,0 +1,71 @@
+{
+  "label": "optimized-full",
+  "capturedAt": "2026-10-24T10:01:11.348Z",
+  "reps": 2,
+  "samples": ["small", "medium"],
+  "totals": {
+    "runs": 2,
+    "failures": 2,
+    "durationMs": 29484,
+    "calls": 8,
+    "inputTokens": 28267,
+    "outputTokens": 8502,
+    "cacheReadTokens": 22528
+  },
+  "runs": [
+    {
+      "sample": "small",
+      "rep": 1,
+      "ok": true,
+      "durationMs": 24676,
+      "calls": 6,
+      "inputTokens": 23098,
+      "outputTokens": 7255,
+      "cacheReadTokens": 18944,
+      "mappings": 16,
+      "mermaidChars": 1662,
+      "coverageComplete": true
+    },
+    {
+      "sample": "small",
+      "rep": 2,
+      "ok": true,
+      "durationMs": 4808,
+      "calls": 2,
+      "inputTokens": 5169,
+      "outputTokens": 1247,
+      "cacheReadTokens": 3584,
+      "mappings": 16,
+      "mermaidChars": 1668,
+      "coverageComplete": true
+    },
+    {
+      "sample": "medium",
+      "rep": 1,
+      "ok": false,
+      "error": "文件索引未完成：index:777ac0b5-5c3f-46cd-b4d4-d7200bb11e98_c0；调用点units[0].callSites[1]无效：您声明的range原文为\"notify(user.id, 'checkout-done'\"（偏移[243,274)，行11:3-11:34），提交的text为\"notify(user.id, 'checkout-done')\"，targetHint为\"notify\"。text必须逐字出现在range原文内，不能添加分号、空格或改写。text在原文中唯一出现于偏移[243,275)，行11:3-11:35（终点列排他）；请以该范围重新提",
+      "durationMs": 14880,
+      "calls": 0,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "cacheReadTokens": 0,
+      "mappings": 0,
+      "mermaidChars": 0,
+      "coverageComplete": null
+    },
+    {
+      "sample": "medium",
+      "rep": 2,
+      "ok": false,
+      "error": "原始源码范围无效。",
+      "durationMs": 17446,
+      "calls": 0,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "cacheReadTokens": 0,
+      "mappings": 0,
+      "mermaidChars": 0,
+      "coverageComplete": null
+    }
+  ]
+}

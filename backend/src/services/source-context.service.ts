@@ -1,5 +1,4 @@
 import { ModelOutputValidationError } from '../domain/multifile/errors'
-import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { tool } from '@langchain/core/tools'
 import type { SourceRepository } from '../repositories/source.repository'
@@ -8,6 +7,7 @@ import type { FileSemanticIndex } from '../domain/multifile/schema'
 import {
   lineOffsets,
   safeBoundary,
+  sha256,
   sourceRange,
   validateSourceRange
 } from '../utils/sourcePositions'
@@ -74,9 +74,10 @@ export class SourceContext {
         end,
         this.repository.offsets(this.snapshot, fileId)
       )
+    // 证据ID由快照与范围决定：同范围重复读取收敛到同一凭证，跨任务合并天然去重。
     const evidence: Evidence = {
       ...range,
-      evidenceId: randomUUID(),
+      evidenceId: `e${sha256(`${this.snapshot.snapshotId}|${fileId}|${start}|${end}`).slice(0, 12)}`,
       snapshotId: this.snapshot.snapshotId,
       contentHash: this.snapshot.files.find((f) => f.fileId === fileId)!.contentHash
     }
@@ -84,28 +85,17 @@ export class SourceContext {
     this.accessible.add(evidence.evidenceId)
     this.charsRead += end - start
     this.readCalls++
-    // 保留原始 CRLF/UTF-16 坐标，避免模型从展示正文重新计数而使行列与偏移冲突。
+    // 展示正文带原始行号前缀，模型直接引用行号，避免自行计数导致行列与偏移冲突。
     const offsets = this.repository.offsets(this.snapshot, fileId)
-    const linePositions = offsets.flatMap((lineStart, index) => {
-      if (lineStart >= end || (offsets[index + 1] ?? content.length) <= start) return []
-      let lineEnd = offsets[index + 1] ?? content.length
-      while (lineEnd > lineStart && /[\r\n]/.test(content[lineEnd - 1]!)) lineEnd--
-      const visibleStart = Math.max(start, lineStart)
-      const visibleEnd = Math.min(end, lineEnd)
-      if (visibleEnd < visibleStart) return []
-      return [
-        {
-          line: index + 1,
-          startOffset: visibleStart,
-          endOffset: visibleEnd,
-          columnStart: visibleStart - lineStart + 1,
-          columnEnd: visibleEnd - lineStart + 1
-        }
-      ]
-    })
+    const lines: string[] = []
+    for (let index = 0; index < offsets.length; index++) {
+      const lineStart = offsets[index]!
+      const lineEnd = offsets[index + 1] ?? content.length
+      if (lineStart >= end || lineEnd <= start) continue
+      lines.push(`${index + 1}| ${content.slice(lineStart, lineEnd).replace(/[\r\n]+$/, '')}`)
+    }
     return {
-      content: content.slice(start, end),
-      linePositions,
+      content: lines.join('\n'),
       evidence,
       truncated: false,
       metering: {
@@ -133,7 +123,7 @@ export class SourceContext {
       ) {
         const expected = sourceRange(range.fileId, content, range.startOffset, range.endOffset)
         throw new ModelOutputValidationError(
-          `源码范围校验失败：提交行列${range.lineStart}:${range.columnStart}-${range.lineEnd}:${range.columnEnd}与偏移[${range.startOffset},${range.endOffset})不一致，偏移实际对应${expected.lineStart}:${expected.columnStart}-${expected.lineEnd}:${expected.columnEnd}；请直接使用linePositions的原始坐标。`
+          `源码范围校验失败：提交行列${range.lineStart}:${range.columnStart}-${range.lineEnd}:${range.columnEnd}与偏移[${range.startOffset},${range.endOffset})不一致，偏移实际对应${expected.lineStart}:${expected.columnStart}-${expected.lineEnd}:${expected.columnEnd}；请对照content中的"行号| "前缀与上述行列重新提交，终点列排他。`
         )
       }
       throw new ModelOutputValidationError(error.message)
@@ -158,31 +148,43 @@ export class SourceContext {
           lines = SOURCE_LIMITS.readLines
         const data = input.selectors.map((selector) => {
           let fileId: string, start: number, end: number
-          if (selector.type === 'chunk') {
-            const chunk = this.chunks.find((c) => c.chunkId === selector.chunkId)
-            if (!chunk) throw new Error('未知代码块。')
-            fileId = chunk.fileId
-            start = chunk.startOffset
-            end = chunk.endOffset
-          } else if (selector.type === 'unit') {
-            const unit = this.indexes
-              .flatMap((i) => i.units)
-              .find((u) => u.unitId === selector.unitId)
-            if (!unit) throw new Error('未知执行单元。')
-            fileId = unit.range.fileId
-            start = unit.range.startOffset
-            end = unit.range.endOffset
-          } else {
-            fileId = selector.fileId
-            const content = this.repository.content(this.snapshot, fileId),
-              offsets = lineOffsets(content)
-            start = (offsets[selector.range.lineStart - 1] ?? -1) + selector.range.columnStart - 1
-            end = (offsets[selector.range.lineEnd - 1] ?? -1) + selector.range.columnEnd - 1
-            validateSourceRange(
-              { ...selector.range, fileId, startOffset: start, endOffset: end },
-              fileId,
-              content
-            )
+          try {
+            if (selector.type === 'chunk') {
+              const chunk = this.chunks.find((c) => c.chunkId === selector.chunkId)
+              if (!chunk) throw new Error('未知代码块。')
+              fileId = chunk.fileId
+              start = chunk.startOffset
+              end = chunk.endOffset
+            } else if (selector.type === 'unit') {
+              const unit = this.indexes
+                .flatMap((i) => i.units)
+                .find((u) => u.unitId === selector.unitId)
+              if (!unit) throw new Error('未知执行单元。')
+              fileId = unit.range.fileId
+              start = unit.range.startOffset
+              end = unit.range.endOffset
+            } else {
+              fileId = selector.fileId
+              const content = this.repository.content(this.snapshot, fileId),
+                offsets = lineOffsets(content)
+              start = (offsets[selector.range.lineStart - 1] ?? -1) + selector.range.columnStart - 1
+              end = (offsets[selector.range.lineEnd - 1] ?? -1) + selector.range.columnEnd - 1
+              validateSourceRange(
+                { ...selector.range, fileId, startOffset: start, endOffset: end },
+                fileId,
+                content
+              )
+            }
+          } catch (error) {
+            // 模型给出的范围参数无效时作为工具反馈返回，允许其在剩余轮次内自行纠正；
+            // 取消信号不属于参数错误，仍然向上抛出。
+            if (this.signal?.aborted) throw error
+            return {
+              error:
+                error instanceof Error
+                  ? error.message.slice(0, 300)
+                  : '读取参数无效，请检查选择器。'
+            }
           }
           if (chars <= 0 || lines <= 0)
             return {

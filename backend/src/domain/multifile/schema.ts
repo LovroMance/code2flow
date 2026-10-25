@@ -171,6 +171,10 @@ export const UnitFlowDraftSchema = z.object({
   // 无节点时必须解释原因，不能用空流程掩盖可执行单元生成失败。
   emptyReason: text
 })
+/** 单块文件的一次性提交：语义索引与各单元局部流程草稿同轮产出，省去独立生成调用。 */
+export const CombinedIndexSchema = FileSemanticIndexSchema.extend({
+  drafts: z.array(UnitFlowDraftSchema).max(500)
+})
 /** 用户可见的降级或分析提示，避免暴露供应商原始异常及源码正文。 */
 export const PublicDiagnosticSchema = z.object({
   // 稳定诊断码及中文说明。
