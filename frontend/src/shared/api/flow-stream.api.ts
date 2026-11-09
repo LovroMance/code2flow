@@ -7,10 +7,6 @@ export async function streamGenerateFlow(
   },
   onEvent: (event: FlowStreamEvent) => void
 ) {
-  console.log(
-    `[code-flow][frontend][stream] request-start codeLength=${input.code.length} threadId=${input.threadId ?? 'none'}`
-  )
-
   const response = await fetch('/api/generate-flow', {
     method: 'POST',
     headers: {
@@ -26,8 +22,6 @@ export async function streamGenerateFlow(
   if (!response.ok || !response.body) {
     throw new Error('请求失败，无法读取后端返回。')
   }
-
-  console.log('[code-flow][frontend][stream] response-opened')
 
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
@@ -52,10 +46,7 @@ export async function streamGenerateFlow(
       }
 
       const event = JSON.parse(dataLine.slice(6)) as FlowStreamEvent
-      console.log(`[code-flow][frontend][stream] event=${event.type}`)
       onEvent(event)
     }
   }
-
-  console.log('[code-flow][frontend][stream] response-complete')
 }

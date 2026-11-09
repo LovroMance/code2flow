@@ -135,9 +135,6 @@ export function useFlowGeneration() {
     mermaid.value = LOADING_MERMAID
     mappings.value = []
     errorMessage.value = ''
-    console.log(
-      `[code-flow][frontend][state] status=streaming threadId=${input.threadId ?? 'none'}`
-    )
 
     try {
       await streamGenerateFlow(input, handleStreamEvent)
@@ -152,33 +149,24 @@ export function useFlowGeneration() {
   function handleStreamEvent(event: FlowStreamEvent) {
     if (event.type === 'metadata' && isFlowMetadataEvent(event.content)) {
       detectedLanguage.value = event.content.detectedLanguage
-      console.log(
-        `[code-flow][frontend][state] metadata-updated language=${event.content.detectedLanguage} confidence=${event.content.confidence ?? 'n/a'}`
-      )
     }
 
     if (event.type === 'mermaid' && typeof event.content === 'string') {
       mermaid.value = event.content
-      console.log(
-        `[code-flow][frontend][state] mermaid-updated lines=${event.content.split('\n').length} length=${event.content.length}`
-      )
     }
 
     if (event.type === 'mappings' && Array.isArray(event.content)) {
       mappings.value = event.content
-      console.log(`[code-flow][frontend][state] mappings-updated count=${event.content.length}`)
     }
 
     if (event.type === 'error' && typeof event.content === 'string') {
       status.value = 'error'
       errorMessage.value = event.content
-      console.log(`[code-flow][frontend][state] status=error message=${event.content}`)
       throw new Error(event.content)
     }
 
     if (event.type === 'done') {
       status.value = 'done'
-      console.log('[code-flow][frontend][state] status=done')
     }
   }
 

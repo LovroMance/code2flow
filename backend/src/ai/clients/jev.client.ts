@@ -8,8 +8,7 @@ export async function requestLanguageChoice(
   code: string,
   model: string,
   timeout: number,
-  signal?: AbortSignal,
-  onUsage?: (info: { model: string; usage: Record<string, number> }) => void
+  signal?: AbortSignal
 ) {
   const apiKey = process.env.TYPESAFE_API_KEY?.trim()
   if (!apiKey || apiKey === 'your_typesafe_api_key_here') {
@@ -23,8 +22,6 @@ export async function requestLanguageChoice(
     throw new LanguageDetectionConfigError('请先安装后端依赖 @typesafe-ai/sdk')
   })
   const client = new TypeSafeClient({ apiKey, defaultModel: model, logLevel: 'off' })
-  const startedAt = Date.now()
-  console.info('[code-flow][jev] request-start', { model, timeoutMs: timeout })
   try {
     // SDK 实例、密钥和取消信号不作为追踪输入，原始响应保留供应商 usage。
     const response = await traceStep(
@@ -43,39 +40,11 @@ export async function requestLanguageChoice(
             : AbortSignal.timeout(timeout)
         })
     )
-    console.info('[code-flow][jev] request-complete', {
-      model: response.model,
-      durationMs: Date.now() - startedAt,
-      usage: response.usage
-    })
-    const allowed = new Set([
-      'input_tokens',
-      'output_tokens',
-      'total_tokens',
-      'prompt_tokens',
-      'completion_tokens',
-      'inputTokens',
-      'outputTokens',
-      'totalTokens',
-      'promptTokens',
-      'completionTokens'
-    ])
-    onUsage?.({
-      model: response.model,
-      usage: Object.fromEntries(
-        Object.entries(response.usage ?? {}).filter(
-          ([key, value]) =>
-            allowed.has(key) && typeof value === 'number' && Number.isFinite(value) && value >= 0
-        )
-      ) as Record<string, number>
-    })
     return response.answers.language
   } catch (error) {
     const status = (error as { status?: number } | null)?.status
     console.error('[code-flow][jev] request-failed', {
       message: '语言识别服务请求失败',
-      model,
-      durationMs: Date.now() - startedAt,
       httpStatus: status,
       errorType: error instanceof Error ? error.name : 'UnknownError'
     })

@@ -59,14 +59,51 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
 </script>
 
 <template>
-  <div class="diagram-shell" :class="{ 'diagram-shell-expanded': expanded }">
+  <div
+    class="diagram-shell"
+    :class="{ 'diagram-shell-expanded': expanded }"
+  >
     <div class="diagram-stage">
       <div class="diagram-toolbar">
-        <span class="diagram-toolbar-status" role="status">
-          <span class="diagram-status-dot" :class="{ 'is-updating': isStreaming || isRendering }" />
+        <h2 class="diagram-title">
+          流程图
+        </h2>
+        <span
+          class="diagram-toolbar-status sr-only-input"
+          role="status"
+        >
+          <span
+            class="diagram-status-dot"
+            :class="{ 'is-updating': isStreaming || isRendering }"
+          />
           {{ isStreaming ? '正在整理流程' : `${overviewNodes.length} 个节点` }}
         </span>
         <div class="diagram-toolbar-actions">
+          <button
+            type="button"
+            class="diagram-tool-button diagram-fit-button"
+            title="适应全图"
+            aria-label="适应全图"
+            @click="fitView"
+          >
+            <svg
+              class="ui-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle
+                cx="10"
+                cy="10"
+                r="6"
+              />
+              <path d="m14.25 14.25 6.75 6.75M7 10h6M10 7v6" />
+            </svg>
+          </button>
           <button
             type="button"
             class="diagram-tool-button"
@@ -75,7 +112,14 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
           >
             −
           </button>
-          <span class="diagram-zoom-label">{{ Math.round(camera.scale * 100) }}%</span>
+          <button
+            type="button"
+            class="diagram-tool-button diagram-zoom-label"
+            title="100% 阅读"
+            @click="readView"
+          >
+            {{ Math.round(camera.scale * 100) }}%
+          </button>
           <button
             type="button"
             class="diagram-tool-button"
@@ -84,30 +128,26 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
           >
             +
           </button>
-          <span class="diagram-toolbar-divider" />
-          <button
-            type="button"
-            class="diagram-tool-button diagram-tool-button-wide"
-            title="查看完整流程结构"
-            @click="fitView"
-          >
-            适应全图
-          </button>
-          <button
-            type="button"
-            class="diagram-tool-button diagram-tool-button-wide"
-            title="以原始字号阅读，配合小地图导航"
-            @click="readView"
-          >
-            100% 阅读
-          </button>
           <button
             type="button"
             class="diagram-tool-button diagram-tool-button-wide diagram-focus-button"
             :aria-pressed="expanded"
+            :aria-label="expanded ? '退出专注视图' : '专注视图'"
+            :title="expanded ? '退出专注 · Esc' : '专注视图'"
             @click="expanded = !expanded"
           >
-            {{ expanded ? '退出专注 · Esc' : '专注视图' }}
+            <svg
+              class="ui-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5" />
+            </svg>
           </button>
         </div>
       </div>
@@ -131,15 +171,21 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
             class="diagram-render"
             :style="{ transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.scale})` }"
           >
-            <div ref="diagramElement" class="diagram-render-content" />
+            <div
+              ref="diagramElement"
+              class="diagram-render-content"
+            />
           </div>
         </div>
-        <div
+        <details
           v-if="overviewNodes.length"
           class="diagram-overview"
           :class="{ 'diagram-overview-dragging': isOverviewDragging }"
         >
-          <div class="diagram-overview-heading"><span>全局导航</span><span>拖动 / 点击</span></div>
+          <summary>全局导航</summary>
+          <div class="diagram-overview-heading">
+            <span>全局导航</span><span>拖动 / 点击</span>
+          </div>
           <svg
             :viewBox="overviewViewBox"
             role="img"
@@ -166,10 +212,17 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
               class="diagram-overview-node"
               rx="3"
             />
-            <rect v-bind="visibleRegion" class="diagram-overview-region" />
+            <rect
+              v-bind="visibleRegion"
+              class="diagram-overview-region"
+            />
           </svg>
-        </div>
-        <div v-if="renderError" class="diagram-error" role="alert">
+        </details>
+        <div
+          v-if="renderError"
+          class="diagram-error"
+          role="alert"
+        >
           {{ renderError }}
         </div>
       </div>

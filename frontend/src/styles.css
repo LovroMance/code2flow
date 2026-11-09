@@ -1,20 +1,20 @@
 /* 以编辑与分析为中心：桌面视口固定工作区，长内容在各自面板内滚动。 */
 :root {
   font-family: 'Aptos', 'Segoe UI', 'Microsoft YaHei UI', sans-serif;
-  color-scheme: dark;
-  color: #e7e9ed;
-  background: #111315;
+  color-scheme: light;
+  color: #23252a;
+  background: #ffffff;
   font-synthesis: none;
-  --bg-page: #111315;
-  --bg-panel: #191c20;
-  --bg-inset: #15171a;
-  --border: #2c3036;
-  --border-hover: #4a525b;
-  --text-main: #e7e9ed;
-  --text-soft: #a1a7af;
-  --text-muted: #848c97;
-  --accent: #9ccaba;
-  --accent-soft: #9ccaba12;
+  --bg-page: #ffffff;
+  --bg-panel: #ffffff;
+  --bg-inset: #f2f3f5;
+  --border: #e2e5e9;
+  --border-hover: #bbc2cb;
+  --text-main: #23252a;
+  --text-soft: #59616d;
+  --text-muted: #737d8b;
+  --accent: #34785d;
+  --accent-soft: #23252a08;
 }
 
 * {
@@ -53,18 +53,18 @@ button:not(:disabled) {
     border-color 140ms ease;
 }
 ::selection {
-  background: #9ccaba35;
+  background: #dcebe3;
 }
 * {
   scrollbar-width: thin;
-  scrollbar-color: #50565e transparent;
+  scrollbar-color: #bcc3cc transparent;
 }
 ::-webkit-scrollbar {
   width: 7px;
   height: 7px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #50565e;
+  background: #bcc3cc;
   border-radius: 8px;
 }
 ::-webkit-scrollbar-track {
@@ -165,11 +165,11 @@ button:not(:disabled) {
 .micro-pill-active {
   color: var(--accent);
   background: var(--accent-soft);
-  border-color: #9ccaba35;
+  border-color: #dcebe3;
 }
 .badge-active {
-  color: #cbd1d6;
-  background: #ffffff04;
+  color: #34785d;
+  background: #edf5f0;
 }
 .hero-cta-row {
   display: flex;
@@ -198,26 +198,26 @@ button:not(:disabled) {
   line-height: 1.4;
 }
 .ghost-button {
-  color: #bfc5cc;
+  color: #4e5865;
   background: transparent;
 }
 .ghost-button:not(:disabled):hover,
 .primary-chip-button:not(:disabled):hover {
-  background: #272c32;
+  background: #f2f3f5;
   border-color: var(--border-hover);
 }
 .hero-run-button,
 .primary-button {
-  border-color: #e3e7e9;
-  background: #e3e7e9;
-  color: #15191d;
+  border-color: #23252a;
+  background: #23252a;
+  color: #ffffff;
   font-weight: 650;
   padding-inline: 20px;
 }
 .hero-run-button:not(:disabled):hover,
 .primary-button:not(:disabled):hover {
-  background: #fff;
-  border-color: #fff;
+  background: #363b43;
+  border-color: #363b43;
 }
 .hero-run-button:disabled {
   opacity: 0.5;
@@ -249,7 +249,7 @@ button:not(:disabled) {
 .metric-title {
   min-width: 0;
   margin: 0;
-  color: #dce1e5;
+  color: #303943;
   font-size: 12px;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
@@ -273,10 +273,10 @@ button:not(:disabled) {
   overflow-wrap: anywhere;
   margin: 0;
   padding: 9px 12px;
-  border: 1px solid #92615d;
+  border: 1px solid #e5b5b1;
   border-radius: 6px;
-  background: #3a2323;
-  color: #efc7c3;
+  background: #fff2f1;
+  color: #9f3831;
   font-size: 12px;
   line-height: 1.6;
 }
@@ -377,9 +377,9 @@ button:not(:disabled) {
   min-width: 108px;
   height: 29px;
   padding: 3px 9px;
-  border: 1px solid #3b424b;
+  border: 1px solid #d7dce2;
   border-radius: 5px;
-  background: #21262c;
+  background: #ffffff;
   color: var(--text-main);
   font-size: 11px;
   cursor: pointer;
@@ -398,7 +398,7 @@ button:not(:disabled) {
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 5px;
-  background: #1e1e1e;
+  background: #ffffff;
 }
 .editor-loading {
   display: grid;
@@ -421,7 +421,7 @@ button:not(:disabled) {
   line-height: 1.6;
 }
 .code2flow-line-highlight {
-  background: #9ccaba20;
+  background: #e5effd;
 }
 .code2flow-gutter-highlight {
   border-left: 3px solid var(--accent);
@@ -483,7 +483,7 @@ button:not(:disabled) {
   gap: 8px 12px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
-  background: #1b2024;
+  background: #ffffff;
   flex: 0 0 auto;
 }
 .diagram-toolbar-status {
@@ -501,7 +501,7 @@ button:not(:disabled) {
   background: var(--accent);
 }
 .diagram-status-dot.is-updating {
-  background: #e4be7d;
+  background: #9d6b19;
 }
 .diagram-toolbar-actions {
   display: flex;
@@ -531,31 +531,31 @@ button:not(:disabled) {
   border-top: 1px solid var(--border);
   color: var(--text-muted);
   font-size: 10px;
-  background: #1b2024;
+  background: #ffffff;
 }
 .diagram-shell-expanded {
   position: fixed;
   inset: 16px;
   z-index: 100;
-  box-shadow: 0 0 0 20px #080b0de6;
+  box-shadow: 0 0 0 20px #303943cc;
 }
 .diagram-focus-button {
   color: var(--accent);
-  border-color: #617c70;
+  border-color: #b9ccc2;
 }
 .diagram-tool-button {
   min-width: 29px;
   height: 28px;
   padding: 0 7px;
-  border: 1px solid #3a4149;
+  border: 1px solid #dce1e7;
   border-radius: 5px;
-  background: #22272d;
-  color: #dce1e5;
+  background: #ffffff;
+  color: #303943;
   font-size: 13px;
 }
 .diagram-tool-button:hover {
   border-color: var(--border-hover);
-  background: #31373e;
+  background: #f2f3f5;
 }
 .diagram-tool-button-wide {
   margin-left: 4px;
@@ -575,7 +575,7 @@ button:not(:disabled) {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background-image: radial-gradient(#434a5350 0.7px, transparent 0.7px);
+  background-image: radial-gradient(#d7dde580 0.7px, transparent 0.7px);
   background-size: 18px 18px;
 }
 .diagram-viewport {
@@ -610,10 +610,10 @@ button:not(:disabled) {
   z-index: 2;
   width: 158px;
   padding: 8px;
-  border: 1px solid #4b5a52;
+  border: 1px solid #d7dfe7;
   border-radius: 7px;
-  background: #191f23f5;
-  box-shadow: 0 4px 18px #0004;
+  background: #fffffff5;
+  box-shadow: 0 4px 18px #23304012;
 }
 .diagram-overview-heading {
   display: flex;
@@ -639,19 +639,19 @@ button:not(:disabled) {
 }
 .diagram-overview-edge {
   fill: none;
-  stroke: #849d91;
+  stroke: #8797a9;
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
 }
 .diagram-overview-node {
-  fill: #5e796c;
-  stroke: #b3c9be;
+  fill: #e5edf7;
+  stroke: #859ab4;
   stroke-width: 0.6;
   vector-effect: non-scaling-stroke;
 }
 .diagram-overview-region {
-  fill: #b8efcf18;
-  stroke: #c3eedb;
+  fill: #4383c318;
+  stroke: #4383c3;
   stroke-width: 1.3;
   vector-effect: non-scaling-stroke;
   pointer-events: all;
@@ -677,15 +677,15 @@ button:not(:disabled) {
 .diagram-render-content .node polygon,
 .diagram-render-content .node circle,
 .diagram-render-content .node path {
-  fill: #252c32;
-  stroke: #718079;
+  fill: #eef3fa;
+  stroke: #7d95b5;
 }
 .diagram-render-content .node .label,
 .diagram-render-content .nodeLabel {
-  color: #e3e9e5;
+  color: #293440;
 }
 .diagram-render-content .flowchart-link {
-  stroke: #8e9b94;
+  stroke: #707c8a;
 }
 .diagram-render-content [id*='flowchart-'],
 .diagram-render-content .node,
@@ -702,10 +702,10 @@ button:not(:disabled) {
   overflow: auto;
   overflow-wrap: anywhere;
   padding: 9px 11px;
-  border: 1px solid #92615d;
+  border: 1px solid #e5b5b1;
   border-radius: 5px;
-  background: #3a2323;
-  color: #efc7c3;
+  background: #fff2f1;
+  color: #9f3831;
   font-size: 11px;
   line-height: 1.6;
 }
@@ -734,7 +734,7 @@ button:not(:disabled) {
   min-height: 0;
   resize: none;
   padding: 9px 11px;
-  border: 1px solid #3b424b;
+  border: 1px solid #d7dce2;
   border-radius: 5px;
   background: var(--bg-inset);
   color: var(--text-main);
@@ -753,11 +753,11 @@ button:not(:disabled) {
   min-width: 88px;
   padding: 9px 12px;
   border-color: #45534e;
-  background: #9ccaba0a;
+  background: #34785d0a;
   color: #c6dcd2;
 }
 .followup-actions .ghost-button:not(:disabled):hover {
-  background: #9ccaba1c;
+  background: #34785d1c;
   border-color: #77978a;
 }
 .followup-answer {

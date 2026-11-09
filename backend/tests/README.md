@@ -1,26 +1,20 @@
-# 后端自动化测试
+# LangSmith 测试
 
-测试统一放在 `backend/tests/`，业务源码位于 `backend/src/`。业务构建不包含测试文件；测试类型通过 `backend/tsconfig.tests.json` 单独检查。
+本目录仅保留 LangSmith 相关测试与必要夹具。业务源码位于 `backend/src/`，业务构建不包含测试文件。
 
-| 文件                            | 覆盖范围                                 |
-| ------------------------------- | ---------------------------------------- |
-| `code-flow.graph.test.ts`       | 原生状态图、生成、重试、追问与检查点恢复 |
-| `flow-generation.trace.test.ts` | HTTP / SSE 与服务观测集成                |
-| `session-management.test.ts`    | 会话目录、草稿、恢复、删除与并发互斥     |
-| `number-source-lines.test.ts`   | 源码原始行号编号                         |
-| `langsmith.test.ts`             | 追踪配置、并行上下文和错误传播           |
-| `multifile.test.ts`             | 多文件索引、缓存、覆盖、预算与取消       |
-| `fixtures/model.fixture.ts`     | 本地 OpenAI 兼容 HTTP / SSE 模型服务器   |
+| 文件                            | 覆盖范围                                |
+| ------------------------------- | --------------------------------------- |
+| `langsmith.test.ts`             | 追踪配置、并行上下文和错误传播          |
+| `flow-generation.trace.test.ts` | 真实 Agent 追踪层级、失败传播及重试用量 |
+| `fixtures/model.fixture.ts`     | 追踪集成测试使用的本地模型服务器        |
 
 从项目根目录运行：
 
 ```bash
-npm run test:backend
+npm --prefix backend test
 npm --prefix backend run typecheck:tests
 ```
 
-根目录 `npm run check` 执行两端 lint、业务类型检查和测试；不包含后端独立的 `typecheck:tests`。其他命令以各级 `package.json` 为准。
+LangSmith 测试按需手动执行，不接入启动、构建或 Git 提交流程。命令以 `backend/package.json` 为准。
 
-自动化测试使用本地夹具或 mock，不需要真实模型密钥。它们验证框架集成和业务行为，不能证明真实 Jev 识别率、生成语义准确性或浏览器渲染效果。离线评估工具已移除，真实质量需另外验证。
-
-前端测试位于 `frontend/tests/`，可通过根目录 `npm run test:frontend` 执行。涉及 Monaco、Mermaid 或页面交互时，还需按变更范围进行浏览器验证。
+测试使用本地回调与模型夹具，不需要真实模型或 LangSmith 密钥，不上传远程追踪。真实上报、账号权限及供应商用量仍需通过实际调用验证。

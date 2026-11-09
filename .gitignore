@@ -4,12 +4,10 @@ dist/
 .vite/
 coverage/
 *.log
-.eslintcache
 .idea/
 .turbo/
 .cache/
 .vscode/
-/txt.js
 
 # Environment files
 .env
@@ -18,9 +16,6 @@ frontend/.env
 frontend/.env.*
 backend/.env
 backend/.env.*
-!.env.example
-!frontend/.env.example
-!backend/.env.example
 
 # Frontend source should keep authoring files only; block generated JS mirrors in src/
 frontend/src/**/*.js

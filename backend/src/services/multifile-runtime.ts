@@ -6,7 +6,7 @@ import {
   AnalysisLimitError,
   ModelConfigurationError,
   runMultiFileChain,
-  type AnalysisTaskLog
+  type AnalysisTaskContext
 } from '../ai/chains/multifile.chain'
 import type { MultiFileRuntime, TaskOutcome } from '../ai/graph/multifile.graph'
 import { runDetectLanguage } from '../ai/tools/detect-language.tool'
@@ -67,13 +67,6 @@ export class AnalysisRuntime implements MultiFileRuntime {
   context?: SourceContext
   private candidates: ReturnType<typeof referenceCandidates> = []
   private readonly verificationBatches = new Map<string, CrossFileReference[]>()
-  private readonly startedAt = Date.now()
-  private lastStage = 'prepare'
-  private stageStarted = Date.now()
-  readonly stageDurations: Record<string, number> = {}
-  jevDurationMs = 0
-  jevUsage: Record<string, number> = {}
-  private verifyChars = 0
   constructor(
     readonly repo: SourceRepository,
     readonly snapshot: SourceSnapshot,
@@ -105,7 +98,6 @@ export class AnalysisRuntime implements MultiFileRuntime {
   /** 同一快照只检测一次语言；已有 unknown 也复用，生成角色不能改写检测结果。 */
   async detect() {
     this.progress('detect', 0, 1)
-    const started = Date.now()
     if (!this.snapshot.languageDetection) {
       this.snapshot.languageDetection = await runDetectLanguage(
         languageSample(
@@ -114,15 +106,11 @@ export class AnalysisRuntime implements MultiFileRuntime {
             content: this.repo.content(this.snapshot, f.fileId)
           }))
         ),
-        this.signal,
-        (info) => {
-          this.jevUsage = info.usage
-        }
+        this.signal
       )
       this.signal.throwIfAborted()
       this.repo.saveDetection(this.snapshot)
     }
-    this.jevDurationMs = Date.now() - started
     this.progress('detect', 1, 1)
     return this.snapshot.languageDetection
   }
@@ -250,19 +238,6 @@ export class AnalysisRuntime implements MultiFileRuntime {
           .content(this.snapshot, call.range.fileId)
           .slice(call.range.startOffset, call.range.endOffset)
         if (!source.includes(call.text) || !source.includes(call.targetHint)) {
-          console.log('[code-flow][v2] index-call-invalid', {
-            ...context.logContext,
-            unitIndex: index.units.indexOf(unit),
-            callIndex,
-            startOffset: call.range.startOffset,
-            endOffset: call.range.endOffset,
-            lineStart: call.range.lineStart,
-            lineEnd: call.range.lineEnd,
-            textMatches: source.includes(call.text),
-            targetMatches: source.includes(call.targetHint),
-            textLength: call.text.length,
-            rangeLength: source.length
-          })
           // 反馈必须携带双方原文；text 能在原文唯一定位时给出建议范围，
           // 模型按建议重报但仍须重新通过全部校验，程序不自动改写。
           let suggestion = ''
@@ -360,8 +335,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
     feedback: string | null
   ): Promise<TaskOutcome> {
     let cacheKey: string | undefined
-    const taskLog = { analysisId: this.analysisId, taskId: id, attempt: attempts }
-    console.log('[code-flow][v2] task-start', { taskId: id, attempt: attempts })
+    const taskContext = { analysisId: this.analysisId, taskId: id, attempt: attempts }
     try {
       this.signal.throwIfAborted()
       if (id.startsWith('index:')) {
@@ -375,15 +349,6 @@ export class AnalysisRuntime implements MultiFileRuntime {
           this.retrieval
         )
         context.allowedFileId = chunk.fileId
-        context.logContext = { analysisId: this.analysisId, taskId: id, attempt: attempts }
-        console.log('[code-flow][v2] index-input', {
-          ...context.logContext,
-          snapshotId: this.snapshot.snapshotId,
-          fileId: chunk.fileId,
-          startOffset: chunk.startOffset,
-          endOffset: chunk.endOffset,
-          hasFeedback: feedback !== null
-        })
         // 单块文件（无跨块边界）在索引同轮产出局部草稿，省掉独立生成调用；带反馈重试只修索引。
         const withDrafts =
           feedback === null && this.chunks.filter((c) => c.fileId === chunk.fileId).length === 1
@@ -403,7 +368,6 @@ export class AnalysisRuntime implements MultiFileRuntime {
           const rebound = this.rebind(cached, chunk, context)
           index = rebound.index
           drafts = withDrafts ? rebound.drafts : []
-          this.budgetTracker.cacheHits++
         } else {
           const code = context.read(chunk.fileId, chunk.startOffset, chunk.endOffset)
           index = await runMultiFileChain(
@@ -418,7 +382,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
             this.snapshot.languageDetection!.language,
             this.budgetTracker,
             feedback ?? undefined,
-            taskLog,
+            taskContext,
             withDrafts ? { withDrafts: true } : undefined
           )
           drafts =
@@ -427,14 +391,6 @@ export class AnalysisRuntime implements MultiFileRuntime {
               : []
         }
         this.checkIndex(index, chunk, context)
-        console.log('[code-flow][v2] index-validated', {
-          ...context.logContext,
-          unitCount: index.units.length,
-          referenceCount: index.references.length,
-          unresolvedCount: index.unresolvedItems.length,
-          readCalls: context.readCalls,
-          charsRead: context.charsRead
-        })
         // 只允许本文件补读，禁止把外部上下文错误当作可移植缓存。
         if ([...context.evidence.values()].some((e) => e.fileId !== chunk.fileId))
           throw new ModelOutputValidationError('文件分析任务只能读取本文件上下文。')
@@ -450,15 +406,8 @@ export class AnalysisRuntime implements MultiFileRuntime {
         })
         this.partial.set(id, index)
         this.contexts.set(id, context)
-        this.repo.task(this.snapshot, id, attempts, 'complete', {
-          index,
-          evidence: [...context.evidence.values()]
-        })
       } else if (id.startsWith('verify:')) {
-        await this.verify(this.verificationBatches.get(id)!, feedback ?? undefined, taskLog)
-        this.repo.task(this.snapshot, id, attempts, 'complete', {
-          referenceIds: this.verificationBatches.get(id)!.map((r) => r.referenceId)
-        })
+        await this.verify(this.verificationBatches.get(id)!, feedback ?? undefined, taskContext)
       } else {
         const unit = this.indexes
           .flatMap((i) => i.units)
@@ -508,13 +457,8 @@ export class AnalysisRuntime implements MultiFileRuntime {
           this.drafts.delete(unit.unitId)
           try {
             draft = this.acceptDraft(prepared, unit, context, code)
-            this.budgetTracker.cacheHits++
           } catch (error) {
             if (!(error instanceof ModelOutputValidationError)) throw error
-            console.log('[code-flow][v2] prepared-draft-rejected', {
-              ...taskLog,
-              error: error.message
-            })
             modelFeedback = error.message
           }
         }
@@ -528,7 +472,6 @@ export class AnalysisRuntime implements MultiFileRuntime {
                 evidenceIds: [code.evidence.evidenceId]
               }))
             }
-            this.budgetTracker.cacheHits++
           } else
             draft = await runMultiFileChain(
               'generate',
@@ -537,16 +480,14 @@ export class AnalysisRuntime implements MultiFileRuntime {
               this.snapshot.languageDetection!.language,
               this.budgetTracker,
               modelFeedback,
-              taskLog
+              taskContext
             )
         }
         draft = this.acceptDraft(draft, unit, context, code)
         this.signal.throwIfAborted()
         this.drafts.set(unit.unitId, draft)
         this.repo.cachePut(key, draft)
-        this.repo.task(this.snapshot, id, attempts, 'complete', { unitId: unit.unitId })
       }
-      console.log('[code-flow][v2] task-complete', { taskId: id, attempt: attempts })
       return { taskId: id, attempts, error: null, fatal: false }
     } catch (error) {
       this.signal.throwIfAborted()
@@ -561,8 +502,14 @@ export class AnalysisRuntime implements MultiFileRuntime {
         causes.find((cause) => cause instanceof ModelOutputValidationError) ??
         error
       const retryable = reason instanceof ModelOutputValidationError
+      // 仅保留失败摘要，详细执行过程通过 LangSmith 查看。
+      if (!retryable)
+        console.error('[code-flow][v2] task-failed', {
+          taskId: id,
+          error: safeErrorDetails(error)
+        })
       if (cacheKey) this.repo.cacheDelete(cacheKey)
-      // 不持久化供应商原始异常，避免请求正文或密钥进入任务记录。
+      // 只向 graph 传递已知业务错误或固定说明，不传递供应商原始异常。
       const safe =
         reason instanceof ModelOutputValidationError ||
         reason instanceof ModelOutputTruncatedError ||
@@ -570,17 +517,6 @@ export class AnalysisRuntime implements MultiFileRuntime {
         reason instanceof ModelConfigurationError
           ? reason.message
           : '分析遇到不可重试的程序或服务错误，请查看后端错误原因。'
-      console.log('[code-flow][v2] task-failed', {
-        taskId: id,
-        attempt: attempts,
-        errorType: error instanceof Error ? error.constructor.name : typeof error,
-        analysisId: this.analysisId,
-        snapshotId: this.snapshot.snapshotId,
-        error: JSON.stringify(safeErrorDetails(error)),
-        diagnostic: safe,
-        retryable
-      })
-      this.repo.task(this.snapshot, id, attempts, 'failed', { diagnostic: safe })
       if (!retryable) throw reason
       return {
         taskId: id,
@@ -848,7 +784,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
     )
   }
   /** 核对角色可补读跨文件源码，提交后仍需通过候选身份及原始证据校验；结论按批次内容缓存。 */
-  private async verify(batch: CrossFileReference[], feedback?: string, task?: AnalysisTaskLog) {
+  private async verify(batch: CrossFileReference[], feedback?: string, task?: AnalysisTaskContext) {
     const facts = batch.map((ref) => {
       const c = this.candidates.find((c) => c.call.callSiteId === ref.callSiteId)!
       return {
@@ -900,7 +836,6 @@ export class AnalysisRuntime implements MultiFileRuntime {
         validateResolvedReference(applied, context, units)
         Object.assign(ref, applied)
       }
-      this.budgetTracker.cacheHits++
     } else {
       // 歧义候选先由简单RAG召回，定点读取仍由Worker完成，相似度不能确认目标。
       const search = await Promise.all(
@@ -941,7 +876,6 @@ export class AnalysisRuntime implements MultiFileRuntime {
       this.context!.evidence.set(id, e)
       this.context!.accessible.add(id)
     }
-    this.verifyChars += context.charsRead
   }
   /** 将未解决关系和检索降级整理为公开诊断，并保存已校验的索引事实。 */
   finishReferences() {
@@ -1042,12 +976,6 @@ export class AnalysisRuntime implements MultiFileRuntime {
   }
   progress(stage: string, completed: number, total: number) {
     this.signal.throwIfAborted()
-    if (stage !== this.lastStage) {
-      this.stageDurations[this.lastStage] =
-        (this.stageDurations[this.lastStage] ?? 0) + Date.now() - this.stageStarted
-      this.lastStage = stage
-      this.stageStarted = Date.now()
-    }
     this.emit({
       version: 2,
       snapshotId: this.snapshot.snapshotId,
@@ -1058,40 +986,5 @@ export class AnalysisRuntime implements MultiFileRuntime {
       total,
       diagnostics: this.diagnostics
     })
-  }
-  budget() {
-    const readChars =
-      [...this.contexts.values()].reduce((n, c) => n + c.charsRead, 0) +
-      (this.context?.charsRead ?? 0) +
-      this.verifyChars
-    const evidence = this.context
-      ? [...this.context.evidence.values()]
-      : [...this.contexts.values()].flatMap((c) => [...c.evidence.values()])
-    const uniqueReadChars = this.snapshot.files.reduce((sum, file) => {
-      const length = this.repo.content(this.snapshot, file.fileId).length
-      return (
-        sum +
-        length -
-        missingRanges(
-          length,
-          evidence.filter((e) => e.fileId === file.fileId)
-        ).reduce((n, r) => n + r.endOffset - r.startOffset, 0)
-      )
-    }, 0)
-    return {
-      ...this.budgetTracker.summary(),
-      durationMs: Date.now() - this.startedAt,
-      stageDurations: this.stageDurations,
-      jev: {
-        durationMs: this.jevDurationMs,
-        model: process.env.TYPESAFE_DEFAULT_MODEL ?? 'jev-1.14.0',
-        status: this.snapshot.languageDetection?.status ?? 'pending',
-        usage: this.jevUsage
-      },
-      embedding: { calls: this.retrieval?.embeddingCalls ?? 0, ...this.retrieval?.embeddingUsage },
-      readChars,
-      uniqueReadChars,
-      duplicateReadRatio: readChars ? Math.max(0, 1 - uniqueReadChars / readChars) : 0
-    }
   }
 }

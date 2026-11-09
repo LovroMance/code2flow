@@ -10,17 +10,25 @@ export function ensureMermaid() {
   mermaid.initialize({
     startOnLoad: false,
     securityLevel: 'loose',
-    theme: 'dark',
+    theme: 'base',
     themeVariables: {
-      fontSize: '16px',
+      primaryColor: '#eef3fa',
+      primaryTextColor: '#293440',
+      primaryBorderColor: '#7d95b5',
+      lineColor: '#707c8a',
+      secondaryColor: '#edf5f0',
+      tertiaryColor: '#fafafa',
+      edgeLabelBackground: '#ffffff',
+      background: '#ffffff',
+      fontSize: '14px',
       fontFamily: 'Aptos, Segoe UI, Microsoft YaHei UI, sans-serif'
     },
     flowchart: {
       useMaxWidth: false,
       htmlLabels: true,
       nodeSpacing: 32,
-      rankSpacing: 42,
-      padding: 14
+      rankSpacing: 20,
+      padding: 8
     }
   })
 

@@ -32,10 +32,12 @@ const editorOptions = computed<editor.IStandaloneEditorConstructionOptions>(() =
   automaticLayout: true,
   minimap: { enabled: false },
   fontSize: 14,
-  lineNumbersMinChars: 3,
+  lineHeight: 21,
+  lineNumbersMinChars: 5,
+  fontFamily: 'Consolas, Courier New, monospace',
   padding: {
-    top: 16,
-    bottom: 16
+    top: 0,
+    bottom: 8
   },
   scrollBeyondLastLine: false
 }))
@@ -170,26 +172,31 @@ defineExpose<CodeEditorExpose>({
 <template>
   <div class="editor-shell">
     <div class="editor-toolbar">
+      <slot name="file-actions" />
       <label class="editor-language-control">
-        <span class="editor-language-label">语言</span>
+        <span class="sr-only-input">编辑器高亮语言</span>
         <select
           class="editor-language-select"
           :value="language"
           :disabled="disabled"
           @change="updateLanguage"
         >
-          <option v-for="option in languageOptions" :key="option.value" :value="option.value">
+          <option
+            v-for="option in languageOptions"
+            :key="option.value"
+            :value="option.value"
+          >
             {{ option.label }}
           </option>
         </select>
       </label>
-      <span class="editor-chip">生成流程图时会自动识别语言</span>
+      <slot name="generate-action" />
     </div>
     <div class="editor-instance">
       <MonacoEditor
         :value="modelValue"
         :language="monacoLanguage"
-        theme="vs-dark"
+        theme="code2flow-light"
         :path="editorPath"
         height="100%"
         class-name="code2flow-monaco"
@@ -198,13 +205,11 @@ defineExpose<CodeEditorExpose>({
         @update:value="updateValue"
       >
         <template #default>
-          <div class="editor-loading">正在加载 Monaco Editor...</div>
+          <div class="editor-loading">
+            正在加载 Monaco Editor...
+          </div>
         </template>
       </MonacoEditor>
-    </div>
-    <div class="editor-footer">
-      <span>支持直接编辑、文件导入与节点行号定位</span>
-      <span>可手动选择编辑器高亮语言</span>
     </div>
   </div>
 </template>

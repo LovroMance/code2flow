@@ -572,6 +572,13 @@ export function useWorkspacePage() {
     }
   }
 
+  function loadSample() {
+    if (isWorkspaceBusy.value) return
+    workspaceError.value = ''
+    code.value = SAMPLE_CODE
+    setDetectedLanguage('javascript')
+  }
+
   function handleLanguageChange(language: SupportedLanguage) {
     if (!isWorkspaceBusy.value) setDetectedLanguage(language)
   }
@@ -675,7 +682,7 @@ export function useWorkspacePage() {
     refreshSessions,
     selectSession,
     resetSession: () => startSession(),
-    loadSample: () => startSession(SAMPLE_CODE, '示例代码.js', 'javascript'),
+    loadSample,
     renameSession,
     removeSession,
     retrySave,

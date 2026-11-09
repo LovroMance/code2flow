@@ -6,7 +6,7 @@
 
 打开 [LangSmith](https://smith.langchain.com)，登录或注册账号，选择 workspace，在设置中创建 API Key。界面名称可能随账号版本变化，通常位于 Settings → API Keys。不要将密钥发到聊天或提交到 Git。
 
-在 `backend/.env` 中填写以下配置；示例同时维护在 `backend/.env.example`：
+在本地 `backend/.env` 中填写以下配置，保留已有的密钥和其他配置：
 
 ```dotenv
 LANGSMITH_TRACING=true
@@ -25,7 +25,7 @@ LANGCHAIN_CALLBACKS_BACKGROUND=true
 
 配置后重启后端。在根目录使用现有命令 `npm run dev`，或只重启后端 `npm run dev:backend`。已有 DeepSeek / Jev 密钥仍然负责模型调用，与 LangSmith 密钥相互独立。
 
-**启用完整追踪后，Graph 输入状态、模型消息、工具参数和响应可能包含用户源码、问题和生成结果，并会上传到指定的 LangSmith 项目。**这是远程观测的显式开关，默认 `false`；本地 console 只记录标识和统计。不要上传不适合保存在该项目的数据，也不要在待分析源码中放真实密钥。模型内部未返回的推理过程无法通过追踪还原。
+**启用完整追踪后，Graph 输入状态、模型消息、工具参数和响应可能包含用户源码、问题和生成结果，并会上传到指定的 LangSmith 项目。**这是远程观测的显式开关，默认 `false`；本地 console 只保留启动、配置异常、降级及失败摘要。不要上传不适合保存在该项目的数据，也不要在待分析源码中放真实密钥。模型内部未返回的推理过程无法通过追踪还原。
 
 ## 查看一次执行
 
@@ -70,9 +70,8 @@ Jev 原始 usage 和 Embedding 准备统计可在对应步骤 Outputs 查看，�
 使用仓库已有脚本：
 
 ```bash
-npm --prefix backend run typecheck
+npm run build:backend
 npm --prefix backend run typecheck:tests
-npm --prefix backend run lint
 npm --prefix backend test
 ```
 

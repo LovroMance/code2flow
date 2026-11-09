@@ -21,14 +21,6 @@ export function createCodeFlowGraph(options: CodeFlowGraphRunOptions = {}) {
     .addNode('analyze', async (state) => {
       // 每次新生成只检测一次；生成重试复用当前状态，避免重复请求 Jev。
       const detected = state.languageDetection ?? (await runDetectLanguage(state.code))
-      if (state.languageDetection) {
-        console.info('[code-flow][jev] detection-reused', {
-          attempt: state.attempts + 1,
-          language: detected.language,
-          confidence: detected.confidence,
-          status: detected.status
-        })
-      }
       if (state.attempts === 0)
         options.callbacks?.onDetectedLanguage?.({
           detectedLanguage: detected.language,

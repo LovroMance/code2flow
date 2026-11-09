@@ -46,9 +46,7 @@ export const MultiFileState = new StateSchema({
     .array(z.object({ role: z.enum(['user', 'assistant']), content: z.string() }))
     .default([]),
   // 供会话恢复判断上次分析是否失败。
-  error: z.string().nullable().default(null),
-  // 调用数、用量、缓存等统计快照，不是源码上下文。
-  budget: z.record(z.string(), z.unknown()).default({})
+  error: z.string().nullable().default(null)
 })
 export type MultiState = typeof MultiFileState.State
 export interface MultiFileRuntime {
@@ -69,7 +67,6 @@ export interface MultiFileRuntime {
   compose(): z.infer<typeof MultiFileFlowResultSchema>
   validate(result: z.infer<typeof MultiFileFlowResultSchema>): void
   progress(stage: string, completed: number, total: number): void
-  budget(): Record<string, unknown>
 }
 
 // Send 仅调度有界批次，输出按 taskId 合并；失败任务通过条件边重新进入原角色。
@@ -83,25 +80,20 @@ export function createMultiFileGraph(
   }
   return new StateGraph(MultiFileState)
     .addNode('prepareAnalysis', async () => {
-      console.log('[code-flow][v2] node-start', { node: 'prepareAnalysis' })
       await r().prepare()
       return { result: null, messages: [], error: null }
     })
     .addNode('detectLanguage', async () => {
-      console.log('[code-flow][v2] node-start', { node: 'detectLanguage' })
       return { languageDetection: await r().detect() }
     })
     .addNode('buildBasicIndex', async () => {
-      console.log('[code-flow][v2] node-start', { node: 'buildBasicIndex' })
       await r().basic()
       return { pending: r().indexTasks(), stage: 'index' as const }
     })
     .addNode('planIndexBatch', (state) => {
-      console.log('[code-flow][v2] node-start', { node: 'planIndexBatch' })
       return { batch: state.pending.slice(0, r().concurrency) }
     })
     .addNode('indexFile', async (state) => {
-      console.log('[code-flow][v2] node-start', { node: 'indexFile', taskId: state.taskId })
       return {
         outcomes: {
           [state.taskId]: await r().task(
@@ -113,7 +105,6 @@ export function createMultiFileGraph(
       }
     })
     .addNode('mergeIndexes', (state) => {
-      console.log('[code-flow][v2] node-start', { node: 'mergeIndexes' })
       const pending = state.pending.filter(
         (id) => !state.batch.includes(id) || state.outcomes[id]?.error
       )
@@ -142,24 +133,20 @@ export function createMultiFileGraph(
                   error: '合并发现执行单元边界冲突，请定点补读相关源码并修正边界标记。'
                 }
               ])
-            ),
-            budget: r().budget()
+            )
           }
         }
       }
-      return { pending, budget: r().budget() }
+      return { pending }
     })
     .addNode('resolveReferences', async () => {
-      console.log('[code-flow][v2] node-start', { node: 'resolveReferences' })
       await r().resolve()
       return { pending: r().verificationTasks() }
     })
     .addNode('verifyBatch', (state) => {
-      console.log('[code-flow][v2] node-start', { node: 'verifyBatch' })
       return { batch: state.pending.slice(0, r().concurrency) }
     })
     .addNode('verifyReference', async (state) => {
-      console.log('[code-flow][v2] node-start', { node: 'verifyReference', taskId: state.taskId })
       return {
         outcomes: {
           [state.taskId]: await r().task(
@@ -171,7 +158,6 @@ export function createMultiFileGraph(
       }
     })
     .addNode('validateReferences', (state) => {
-      console.log('[code-flow][v2] node-start', { node: 'validateReferences' })
       const pending = state.pending.filter(
         (id) => !state.batch.includes(id) || state.outcomes[id]?.error
       )
@@ -184,10 +170,9 @@ export function createMultiFileGraph(
         r().verificationTasks().length - pending.length,
         r().verificationTasks().length
       )
-      return { pending, budget: r().budget() }
+      return { pending }
     })
     .addNode('assessCoverage', (state) => {
-      console.log('[code-flow][v2] node-start', { node: 'assessCoverage' })
       const coverage = r().coverage()
       if (!coverage.complete) {
         const repair = r().repairIndexes()
@@ -216,17 +201,14 @@ export function createMultiFileGraph(
       return { coverage, pending: [] }
     })
     .addNode('buildGenerationTasks', () => {
-      console.log('[code-flow][v2] node-start', { node: 'buildGenerationTasks' })
       const pending = r().generationTasks()
       r().progress('generate', 0, pending.length)
       return { pending, stage: 'generate' as const }
     })
     .addNode('planGenerationBatch', (state) => {
-      console.log('[code-flow][v2] node-start', { node: 'planGenerationBatch' })
       return { batch: state.pending.slice(0, r().concurrency) }
     })
     .addNode('generateUnit', async (state) => {
-      console.log('[code-flow][v2] node-start', { node: 'generateUnit', taskId: state.taskId })
       return {
         outcomes: {
           [state.taskId]: await r().task(
@@ -238,7 +220,6 @@ export function createMultiFileGraph(
       }
     })
     .addNode('validateUnit', (state) => {
-      console.log('[code-flow][v2] node-start', { node: 'validateUnit' })
       const pending = state.pending.filter(
         (id) => !state.batch.includes(id) || state.outcomes[id]?.error
       )
@@ -251,18 +232,16 @@ export function createMultiFileGraph(
         r().generationTasks().length
       )
       if (failure) throw new Error(`局部流程未完成：${failure.taskId}；${failure.error}`)
-      return { pending, budget: r().budget() }
+      return { pending }
     })
     .addNode('composeResult', () => {
-      console.log('[code-flow][v2] node-start', { node: 'composeResult' })
       return { result: r().compose() }
     })
     .addNode('validateResult', (state) => {
-      console.log('[code-flow][v2] node-start', { node: 'validateResult' })
       if (!state.result) throw new Error('缺少最终结果。')
       r().validate(state.result)
       r().progress('complete', state.result.mappings.length, state.result.mappings.length)
-      return { stage: 'complete' as const, budget: r().budget() }
+      return { stage: 'complete' as const }
     })
     .addEdge(START, 'prepareAnalysis')
     .addEdge('prepareAnalysis', 'detectLanguage')

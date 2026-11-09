@@ -158,8 +158,7 @@ export class MultiFileService {
               ...result,
               mermaid: undefined,
               mappings: undefined,
-              stage: 'complete',
-              usage: runtime.budget()
+              stage: 'complete'
             })
             emit('mermaid', result.mermaid)
             emit('mappings', result.mappings)

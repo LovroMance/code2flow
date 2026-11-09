@@ -56,6 +56,7 @@ export class SourceRepository {
         CREATE TABLE IF NOT EXISTS code_flow_snapshot_files (snapshot_id TEXT NOT NULL, file_id TEXT NOT NULL, hash TEXT NOT NULL, PRIMARY KEY(snapshot_id,file_id));
         CREATE TABLE IF NOT EXISTS code_flow_chunks (snapshot_id TEXT NOT NULL, id TEXT NOT NULL, file_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(snapshot_id,id));
         CREATE TABLE IF NOT EXISTS code_flow_file_indexes (session_id TEXT NOT NULL, cache_key TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(session_id,cache_key));
+        -- 保留旧任务表的创建与删除兼容，不再重复写入框架已有的任务状态。
         CREATE TABLE IF NOT EXISTS code_flow_analysis_tasks (session_id TEXT NOT NULL, snapshot_id TEXT NOT NULL, task_id TEXT NOT NULL, attempts INTEGER NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(snapshot_id,task_id));
         CREATE TABLE IF NOT EXISTS code_flow_embeddings (input_hash TEXT NOT NULL, model TEXT NOT NULL, dimension INTEGER NOT NULL, version TEXT NOT NULL, vector BLOB NOT NULL, PRIMARY KEY(input_hash,model,version));
         CREATE TABLE IF NOT EXISTS code_flow_embedding_refs (snapshot_id TEXT NOT NULL, input_hash TEXT NOT NULL, model TEXT NOT NULL, PRIMARY KEY(snapshot_id,input_hash,model));
@@ -350,11 +351,6 @@ export class SourceRepository {
       .prepare('SELECT data FROM code_flow_semantic_indexes WHERE snapshot_id=?')
       .all(snapshot.snapshotId)
     return rows.map((row) => FileSemanticIndexSchema.parse(JSON.parse(JsonRow.parse(row).data)))
-  }
-  task(snapshot: SourceSnapshot, id: string, attempts: number, status: string, data: unknown) {
-    this.db
-      .prepare('INSERT OR REPLACE INTO code_flow_analysis_tasks VALUES(?,?,?,?,?,?)')
-      .run(snapshot.sessionId, snapshot.snapshotId, id, attempts, status, JSON.stringify(data))
   }
   draft(id: string) {
     const row: unknown = this.db

@@ -15,19 +15,12 @@ const ConfigSchema = z.object({
 // Jev 只负责分类；临时失败降级为 unknown，流程图仍可使用通用规则生成。
 export async function runDetectLanguage(
   code: string,
-  signal?: AbortSignal,
-  onUsage?: (info: { model: string; usage: Record<string, number> }) => void
+  signal?: AbortSignal
 ): Promise<LanguageDetection> {
-  return traceStep('code2flow.detect-language', { code }, () =>
-    detectLanguage(code, signal, onUsage)
-  )
+  return traceStep('code2flow.detect-language', { code }, () => detectLanguage(code, signal))
 }
 
-async function detectLanguage(
-  code: string,
-  signal?: AbortSignal,
-  onUsage?: (info: { model: string; usage: Record<string, number> }) => void
-): Promise<LanguageDetection> {
+async function detectLanguage(code: string, signal?: AbortSignal): Promise<LanguageDetection> {
   const config = ConfigSchema.safeParse({
     model: process.env.TYPESAFE_DEFAULT_MODEL ?? 'jev-1.14.0',
     timeout: process.env.CODE2FLOW_LANGUAGE_TIMEOUT_MS ?? 5000,
@@ -41,24 +34,9 @@ async function detectLanguage(
     throw new LanguageDetectionConfigError('Jev 模型、超时或置信度配置无效')
   }
 
-  console.info('[code-flow][jev] detection-start', {
-    codeLength: code.length,
-    minConfidence: config.data.minConfidence
-  })
-
   try {
-    const raw = await requestLanguageChoice(
-      code,
-      config.data.model,
-      config.data.timeout,
-      signal,
-      onUsage
-    )
+    const raw = await requestLanguageChoice(code, config.data.model, config.data.timeout, signal)
     const answer = LanguageChoiceSchema.parse(raw)
-    console.info('[code-flow][jev] detection-result', {
-      language: answer.choice,
-      confidence: answer.confidence
-    })
     const uncertain = answer.choice === 'unknown' || answer.confidence < config.data.minConfidence
     return {
       language: uncertain ? 'unknown' : answer.choice,

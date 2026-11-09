@@ -56,7 +56,7 @@ export function multiConfig() {
     })
   if (!result.success)
     throw new MultiConfigurationError(
-      `多文件配置无效：${result.error.issues.map((issue) => issue.path.join('.')).join('、')}；请按 .env.example 设置供应商上下文窗口和分析预算。`
+      `多文件配置无效：${result.error.issues.map((issue) => issue.path.join('.')).join('、')}；请检查后端 .env 中的供应商上下文窗口和分析预算。`
     )
   return result.data
 }

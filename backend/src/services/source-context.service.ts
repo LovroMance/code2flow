@@ -46,12 +46,8 @@ const ReadSchema = z.object({
 
 // 每个角色有独立证据可见域；缓存命中也通过此服务重新登记证据。
 export class SourceContext {
-  // 索引 Worker 独享上下文，仅用于串联诊断日志，不包含源码和请求参数。
-  logContext: { analysisId?: string; taskId?: string; attempt?: number } = {}
   readonly evidence = new Map<string, Evidence>()
   readonly accessible = new Set<string>()
-  charsRead = 0
-  readCalls = 0
   allowedFileId?: string
   constructor(
     readonly repository: SourceRepository,
@@ -61,7 +57,7 @@ export class SourceContext {
     readonly signal?: AbortSignal,
     readonly retrieval?: RetrievalService
   ) {}
-  /** 读取正文并登记证据，同时统计实际读取量；不接受任意磁盘路径。 */
+  /** 读取正文并登记证据，返回本次读取的字符和行数以限制工具输出。 */
   read(fileId: string, start: number, end: number) {
     this.signal?.throwIfAborted()
     if (this.allowedFileId && fileId !== this.allowedFileId)
@@ -83,8 +79,6 @@ export class SourceContext {
     }
     this.evidence.set(evidence.evidenceId, evidence)
     this.accessible.add(evidence.evidenceId)
-    this.charsRead += end - start
-    this.readCalls++
     // 展示正文带原始行号前缀，模型直接引用行号，避免自行计数导致行列与偏移冲突。
     const offsets = this.repository.offsets(this.snapshot, fileId)
     const lines: string[] = []
