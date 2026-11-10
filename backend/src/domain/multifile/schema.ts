@@ -81,7 +81,7 @@ export const ReferenceIndexSchema = z.object({
 export const FileSemanticIndexSchema = z.object({
   // 索引只属于一个快照文件。
   fileId: z.string(),
-  // 文件职责摘要，供检索和关系核对使用。
+  // 文件职责摘要，供检索使用。
   summary: text,
   // 识别到的单元或待合并片段。
   units: z.array(ExecutionUnitSchema).max(1000),
@@ -125,7 +125,7 @@ export const IndexSubmissionSchema = FileSemanticIndexSchema.omit({
 })
 /** 从源单元发出的关系；只有证据验证通过的 resolved 关系才能作为确认调用。 */
 export const CrossFileReferenceSchema = z.object({
-  // 程序建立的关系身份，核对阶段不能擅自替换候选集合。
+  // 程序建立的关系身份。
   referenceId: z.string(),
   // 关系发起方的正式执行单元身份。
   sourceUnitId: z.string(),
@@ -137,17 +137,12 @@ export const CrossFileReferenceSchema = z.object({
   targetHint: text,
   // 导入依赖、调用、注册、请求具有不同语义。
   kind: z.enum(['call', 'import', 'registration', 'request']),
-  // 已证实、仅推断、未解决；相似度和同名不足以标记 resolved。
+  // 兼容历史分析记录中的 inferred。
   status: z.enum(['resolved', 'inferred', 'unresolved']),
   // 调用、导入和目标定义等原始证据。
   evidenceIds: ids,
   // 对外可解释的结论说明，不包含内部推理。
   diagnostic: text
-})
-/** 关系核对角色的结构化提交格式。 */
-export const ReferenceVerificationSchema = z.object({
-  // 本批次候选的核对结论，后续仍由程序检查身份及证据。
-  references: z.array(CrossFileReferenceSchema).max(100)
 })
 /** 模型仅提交单元内的节点和边；全局 ID、映射与 Mermaid 由程序生成。 */
 export const UnitFlowDraftSchema = z.object({

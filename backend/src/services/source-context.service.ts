@@ -108,7 +108,7 @@ export class SourceContext {
       if (evidence.startOffset <= cursor) cursor = Math.max(cursor, evidence.endOffset)
     if (cursor < range.endOffset) throw new ModelOutputValidationError('源码范围没有完整证据。')
   }
-  /** 核对和追问角色可以读取额外源码和检索候选。 */
+  /** 追问角色可以读取额外源码和检索候选。 */
   tools() {
     const read = tool(
       async (input) => {

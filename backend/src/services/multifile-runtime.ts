@@ -23,7 +23,6 @@ import {
 import type { CodeChunk, SourceRange, SourceSnapshot } from '../domain/source/schema'
 import { EvidenceSchema } from '../domain/source/schema'
 import { SourceContext } from './source-context.service'
-import { RetrievalService } from './retrieval.service'
 import {
   completeIndexReferences,
   referenceCandidates,
@@ -82,10 +81,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
   private readonly callAliases = new Map<string, Map<string, string>>()
   readonly references: CrossFileReference[] = []
   readonly diagnostics: PublicDiagnostic[] = []
-  retrieval?: RetrievalService
   context?: SourceContext
-  private candidates: ReturnType<typeof referenceCandidates> = []
-  private readonly verificationBatches = new Map<string, CrossFileReference[]>()
   constructor(
     readonly repo: SourceRepository,
     readonly snapshot: SourceSnapshot,
@@ -134,7 +130,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
     this.progress('detect', 1, 1)
     return this.snapshot.languageDetection
   }
-  /** 为全部文件建立保留原始位置的分块，并准备检索；不按搜索排名裁剪分析范围。 */
+  /** 为全部文件建立保留原始位置的分块。 */
   async basic() {
     this.signal.throwIfAborted()
     this.progress('basic', 0, this.snapshot.files.length)
@@ -142,15 +138,6 @@ export class AnalysisRuntime implements MultiFileRuntime {
     this.signal.throwIfAborted()
     this.repo.saveChunks(this.snapshot, this.chunks)
     this.progress('chunks-ready', this.chunks.length, this.chunks.length)
-    this.retrieval = new RetrievalService(
-      this.repo,
-      this.snapshot,
-      this.chunks,
-      this.signal,
-      this.concurrency
-    )
-    await this.retrieval.prepare()
-    this.diagnostics.push(...this.retrieval.diagnostics)
     this.progress('basic', this.chunks.length, this.chunks.length)
     this.progress('index', 0, this.chunks.length)
   }
@@ -174,9 +161,6 @@ export class AnalysisRuntime implements MultiFileRuntime {
         )
       )
       .map((chunk) => `index:${chunk.chunkId}`)
-  }
-  verificationTasks() {
-    return [...this.verificationBatches.keys()]
   }
   /** 缓存绑定源码、路径、语言及模型配置，防止相同正文在不同语境下误复用。 */
   private key(chunk: CodeChunk) {
@@ -382,8 +366,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
           this.snapshot,
           this.chunks,
           [],
-          this.signal,
-          this.retrieval
+          this.signal
         )
         context.allowedFileId = chunk.fileId
         // 仅为小文件合并索引和草稿，避免较大的单块同时输出两份结构而截断。
@@ -450,8 +433,6 @@ export class AnalysisRuntime implements MultiFileRuntime {
         })
         this.partial.set(id, index)
         this.contexts.set(id, context)
-      } else if (id.startsWith('verify:')) {
-        await this.verify(this.verificationBatches.get(id)!, feedback ?? undefined, taskContext)
       } else {
         const unit = this.indexes
           .flatMap((i) => i.units)
@@ -672,15 +653,13 @@ export class AnalysisRuntime implements MultiFileRuntime {
       this.snapshot,
       this.chunks,
       this.indexes,
-      this.signal,
-      this.retrieval
+      this.signal
     )
     for (const context of this.contexts.values())
       for (const [id, e] of context.evidence) {
         this.context.evidence.set(id, e)
         this.context.accessible.add(id)
       }
-    this.retrieval?.setIndexes(this.indexes)
     this.repo.saveFacts(
       this.snapshot.snapshotId,
       this.indexes,
@@ -761,13 +740,15 @@ export class AnalysisRuntime implements MultiFileRuntime {
         message: `${location}：${message}，请对照源码确认。`
       })
   }
-  /** 程序先找结构候选，再为需要核对的关系建立模型任务；检索命中不等于确认调用。 */
-  async resolve() {
+  /** 依据静态候选和源码证据绑定调用，保留未解析关系。 */
+  resolve() {
     this.references.length = 0
-    this.verificationBatches.clear()
-    this.progress('resolve', 0, this.indexes.flatMap((i) => i.units).length)
-    this.candidates = referenceCandidates(this.snapshot, this.indexes)
-    for (const { unit, call, candidates, imports, scopeEvidence } of this.candidates) {
+    const units = this.indexes.flatMap((i) => i.units)
+    this.progress('resolve', 0, units.length)
+    for (const { unit, call, candidates, imports, scopeEvidence } of referenceCandidates(
+      this.snapshot,
+      this.indexes
+    )) {
       const ref: CrossFileReference = {
         referenceId: randomUUID(),
         sourceUnitId: unit.unitId,
@@ -793,11 +774,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
         ref.status = 'resolved'
         ref.diagnostic = '通过调用位置、唯一作用域或导入路径绑定核对。'
         try {
-          validateResolvedReference(
-            ref,
-            this.context!,
-            this.indexes.flatMap((i) => i.units)
-          )
+          validateResolvedReference(ref, this.context!, units)
         } catch {
           ref.status = 'unresolved'
           ref.targetUnitId = undefined
@@ -806,137 +783,9 @@ export class AnalysisRuntime implements MultiFileRuntime {
       }
       this.references.push(ref)
     }
-    const unresolved = this.references.filter(
-      (r) =>
-        r.status !== 'resolved' &&
-        this.candidates.find((c) => c.call.callSiteId === r.callSiteId)!.unit.complete &&
-        this.candidates
-          .find((c) => c.call.callSiteId === r.callSiteId)!
-          .candidates.every((unit) => unit.complete) &&
-        this.candidates.find((c) => c.call.callSiteId === r.callSiteId)!.candidates.length > 0
-    )
-    for (let offset = 0; offset < unresolved.length; offset += 4)
-      this.verificationBatches.set(`verify:${offset / 4}`, unresolved.slice(offset, offset + 4))
-    this.progress('verify', 0, this.verificationBatches.size)
+    this.progress('resolve', units.length, units.length)
   }
-  /** 核对批次身份：调用点、候选集合与模型配置共同决定结论可否跨运行复用。 */
-  private verifyKey(batch: CrossFileReference[]) {
-    const facts = batch.map((ref) => {
-      const c = this.candidates.find((c) => c.call.callSiteId === ref.callSiteId)!
-      return {
-        callSiteId: ref.callSiteId!,
-        kind: ref.kind,
-        targetHint: ref.targetHint,
-        source: ref.sourceUnitId,
-        candidates: c.candidates.map((unit) => unit.unitId).sort()
-      }
-    })
-    return sha256(
-      JSON.stringify({
-        refs: facts.sort((a, b) => a.callSiteId.localeCompare(b.callSiteId)),
-        model: process.env.DEEPSEEK_MODEL,
-        base: process.env.DEEPSEEK_BASE_URL,
-        temperature: process.env.DEEPSEEK_TEMPERATURE,
-        version: 'verify-lines-v3'
-      })
-    )
-  }
-  /** 核对角色可补读跨文件源码，提交后仍需通过候选身份及原始证据校验；结论按批次内容缓存。 */
-  private async verify(batch: CrossFileReference[], feedback?: string, task?: AnalysisTaskContext) {
-    const facts = batch.map((ref) => {
-      const c = this.candidates.find((c) => c.call.callSiteId === ref.callSiteId)!
-      return {
-        reference: ref,
-        source: c.unit,
-        call: c.call,
-        candidates: c.candidates,
-        imports: c.imports
-      }
-    })
-    const context = new SourceContext(
-      this.repo,
-      this.snapshot,
-      this.chunks,
-      this.indexes,
-      this.signal,
-      this.retrieval
-    )
-    const evidence = facts.flatMap((f) => [
-      context.read(f.call.range.fileId, f.call.range.startOffset, f.call.range.endOffset),
-      ...f.imports.map((r) => context.read(r.range.fileId, r.range.startOffset, r.range.endOffset))
-    ])
-    const cached = feedback
-      ? undefined
-      : (this.repo.cacheGet(this.verifyKey(batch)) as
-          | Record<string, { status: string; targetUnitId?: string; diagnostic: string }>
-          | undefined)
-    if (cached) {
-      // 命中：按调用点应用缓存结论，证据重新登记，不做模型调用。
-      const units = this.indexes.flatMap((i) => i.units)
-      for (const ref of batch) {
-        const verdict = cached[ref.callSiteId!]
-        if (!verdict) throw new Error('核对缓存缺少候选结论。')
-        const applied: CrossFileReference = {
-          ...ref,
-          status: verdict.status as CrossFileReference['status'],
-          targetUnitId: verdict.targetUnitId,
-          diagnostic: verdict.diagnostic,
-          evidenceIds: evidence.map((e) => e.evidence.evidenceId)
-        }
-        if (applied.status === 'resolved' && applied.targetUnitId) {
-          const target = units.find((u) => u.unitId === applied.targetUnitId)
-          if (target)
-            applied.evidenceIds.push(
-              context.read(target.range.fileId, target.range.startOffset, target.range.endOffset)
-                .evidence.evidenceId
-            )
-        }
-        validateResolvedReference(applied, context, units)
-        Object.assign(ref, applied)
-      }
-    } else {
-      // 歧义候选先由简单RAG召回，定点读取仍由Worker完成，相似度不能确认目标。
-      const search = await Promise.all(
-        facts.map((f) => this.retrieval!.search(f.call.targetHint, 'hybrid'))
-      )
-      const checked = await runMultiFileChain(
-        'verify',
-        { facts, evidence, search },
-        context,
-        this.snapshot.languageDetection!.language,
-        this.budgetTracker,
-        feedback,
-        task
-      )
-      this.signal.throwIfAborted()
-      for (const ref of checked.references) {
-        const old = batch.find((r) => r.referenceId === ref.referenceId)
-        if (!old || ref.sourceUnitId !== old.sourceUnitId || ref.callSiteId !== old.callSiteId)
-          throw new ModelOutputValidationError('关系核对更改了候选身份。')
-        validateResolvedReference(
-          ref,
-          context,
-          this.indexes.flatMap((i) => i.units)
-        )
-        Object.assign(old, ref)
-      }
-      if (!feedback)
-        this.repo.cachePut(
-          this.verifyKey(batch),
-          Object.fromEntries(
-            batch.map((ref) => [
-              ref.callSiteId,
-              { status: ref.status, targetUnitId: ref.targetUnitId, diagnostic: ref.diagnostic }
-            ])
-          )
-        )
-    }
-    for (const [id, e] of context.evidence) {
-      this.context!.evidence.set(id, e)
-      this.context!.accessible.add(id)
-    }
-  }
-  /** 将未解决关系和检索降级整理为公开诊断，并保存已校验的索引事实。 */
+  /** 将未解决关系整理为公开诊断，并保存已校验的索引事实。 */
   finishReferences() {
     for (const index of this.indexes)
       for (const item of index.unresolvedItems)
@@ -946,9 +795,6 @@ export class AnalysisRuntime implements MultiFileRuntime {
           fileId: index.fileId,
           range: item.range
         })
-    for (const diagnostic of this.retrieval?.diagnostics ?? [])
-      if (!this.diagnostics.some((d) => d.code === diagnostic.code))
-        this.diagnostics.push(diagnostic)
     for (const ref of this.references)
       if (ref.status !== 'resolved')
         this.diagnostics.push({

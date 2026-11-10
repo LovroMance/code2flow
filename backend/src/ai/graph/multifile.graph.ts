@@ -56,13 +56,12 @@ export interface MultiFileRuntime {
   basic(): Promise<void>
   indexTasks(): string[]
   generationTasks(): string[]
-  verificationTasks(): string[]
   concurrency: number
   retries: number
   task(id: string, attempt: number, feedback: string | null): Promise<TaskOutcome>
   merge(): void
   blockingIndexTasks(ranges: SourceRange[]): string[]
-  resolve(): Promise<void>
+  resolve(): void
   finishReferences(): void
   coverage(): z.infer<typeof CoverageSchema>
   compose(): z.infer<typeof MultiFileFlowResultSchema>
@@ -117,38 +116,9 @@ export function createMultiFileGraph(
       if (!pending.length) r().merge()
       return { pending }
     })
-    .addNode('resolveReferences', async () => {
-      await r().resolve()
-      return { pending: r().verificationTasks() }
-    })
-    .addNode('verifyBatch', (state) => {
-      return { batch: state.pending.slice(0, r().concurrency) }
-    })
-    .addNode('verifyReference', async (state) => {
-      return {
-        outcomes: {
-          [state.taskId]: await r().task(
-            state.taskId,
-            (state.outcomes[state.taskId]?.attempts ?? 0) + 1,
-            state.outcomes[state.taskId]?.error ?? null
-          )
-        }
-      }
-    })
-    .addNode('validateReferences', (state) => {
-      const pending = state.pending.filter(
-        (id) => !state.batch.includes(id) || state.outcomes[id]?.error
-      )
-      const failure = state.batch
-        .map((id) => state.outcomes[id])
-        .find((outcome) => outcome?.error && (outcome.fatal || outcome.attempts > r().retries))
-      if (failure) throw new Error(`关系核对未完成：${failure.taskId}；${failure.error}`)
-      r().progress(
-        'verify',
-        r().verificationTasks().length - pending.length,
-        r().verificationTasks().length
-      )
-      return { pending }
+    .addNode('resolveReferences', () => {
+      r().resolve()
+      return { pending: [] }
     })
     .addNode('assessCoverage', (state) => {
       const coverage = r().coverage()
@@ -238,20 +208,7 @@ export function createMultiFileGraph(
       (state) => (state.pending.length ? 'planIndexBatch' : 'resolveReferences'),
       ['planIndexBatch', 'resolveReferences']
     )
-    .addConditionalEdges(
-      'resolveReferences',
-      (state) => (state.pending.length ? 'verifyBatch' : 'assessCoverage'),
-      ['verifyBatch', 'assessCoverage']
-    )
-    .addConditionalEdges('verifyBatch', (state) =>
-      state.batch.map((taskId) => new Send('verifyReference', { ...state, taskId }))
-    )
-    .addEdge('verifyReference', 'validateReferences')
-    .addConditionalEdges(
-      'validateReferences',
-      (state) => (state.pending.length ? 'verifyBatch' : 'assessCoverage'),
-      ['verifyBatch', 'assessCoverage']
-    )
+    .addEdge('resolveReferences', 'assessCoverage')
     .addConditionalEdges(
       'assessCoverage',
       (state) => (state.pending.length ? 'planIndexBatch' : 'buildGenerationTasks'),

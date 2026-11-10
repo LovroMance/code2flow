@@ -96,7 +96,6 @@ export function useFlowGeneration() {
             generate: '生成局部流程',
             complete: '校验流程图',
             resolve: '查找引用候选',
-            verify: '核对歧义关系',
             incomplete: '分析未完成'
           }
           progressText.value = `${stages[String(metadata.stage)] ?? '处理中'} ${metadata.completed ?? ''}${metadata.total ? `/${metadata.total}` : ''}`

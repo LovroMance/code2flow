@@ -35,7 +35,7 @@ function pathMatches(source: string, hint: string, target: string) {
   )
 }
 
-/** 索引时补全可由原文唯一确认的导入证据，避免将同一份坏索引反复交给关系核对。 */
+/** 索引时补全可由原文唯一确认的导入证据。 */
 export async function completeIndexReferences(index: FileSemanticIndex, context: SourceContext) {
   const file = context.snapshot.files.find((file) => file.fileId === index.fileId)!
   const content = context.repository.content(context.snapshot, file.fileId)
@@ -141,7 +141,7 @@ export function referenceCandidates(snapshot: SourceSnapshot, indexes: FileSeman
   )
 }
 // resolved 是静态依据已核对，不意味着运行时必然执行；保守保留动态目标。
-/** 对模型提交的已确认关系做原始结构证据检查，拒绝仅凭搜索相似度建立连边。 */
+/** 校验确认关系的唯一候选和原始源码证据。 */
 export function validateResolvedReference(
   ref: CrossFileReference,
   context: SourceContext,
