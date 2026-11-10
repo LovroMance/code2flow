@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import type { SourceFileInput } from '../../entities/flow/model/multifile'
 import { equalSourceFiles } from '../../features/workspace/model/sourceFiles'
 import { previewChunks } from '../../shared/api/multifile.api'
-import { chineseErrorMessage } from '../../shared/lib/errorMessage'
+import { getErrorMessage } from '../../shared/lib/errorMessage'
 
 const props = defineProps<{ files: SourceFileInput[]; sessionId: string; busy: boolean }>()
 const emit = defineEmits<{ back: [] }>()
@@ -67,7 +67,7 @@ async function runPreview() {
     chunkIndex.value = 0
     expandedFile.value = 0
   } catch (cause) {
-    if (!controller.signal.aborted) error.value = chineseErrorMessage(cause, '切块失败，请重试。')
+    if (!controller.signal.aborted) error.value = getErrorMessage(cause, '切块失败。')
   } finally {
     if (request === controller) {
       request = undefined
@@ -81,8 +81,8 @@ async function copySource() {
   let message = '已复制源码'
   try {
     await navigator.clipboard.writeText(content.value)
-  } catch {
-    message = '复制失败，请手动选中源码复制。'
+  } catch (cause) {
+    message = getErrorMessage(cause, '复制失败，请手动选中源码复制。')
   }
   if (chunk.value === selected) copyStatus.value = message
 }

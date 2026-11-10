@@ -271,6 +271,7 @@ button:not(:disabled) {
   max-height: 64px;
   overflow: auto;
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
   margin: 0;
   padding: 9px 12px;
   border: 1px solid #e5b5b1;
@@ -701,6 +702,7 @@ button:not(:disabled) {
   max-height: 40%;
   overflow: auto;
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
   padding: 9px 11px;
   border: 1px solid #e5b5b1;
   border-radius: 5px;

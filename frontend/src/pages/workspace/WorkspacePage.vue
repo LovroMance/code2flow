@@ -27,7 +27,7 @@ const {
   renameFile,
   removeFile,
   cancelGeneration,
-  failRendering,
+  handleRenderError,
   healthStatus,
   threadId,
   sessionTitle,
@@ -389,7 +389,7 @@ async function confirmDelete() {
               :mappings="sourceChanged ? [] : mappings"
               :is-streaming="isLoading"
               @select-node="handleSelectNode"
-              @render-error="failRendering"
+              @render-error="handleRenderError"
             />
             <p
               v-else

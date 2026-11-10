@@ -186,6 +186,8 @@
 }
 .session-list-error {
   color: #aa4540;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 .session-workbench .sidebar-debug-button {
   justify-content: flex-start;

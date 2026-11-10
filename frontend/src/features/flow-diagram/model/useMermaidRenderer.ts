@@ -1,5 +1,6 @@
 import { nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import type { NodeMapping } from '../../../entities/flow/model/types'
+import { getErrorMessage } from '../../../shared/lib/errorMessage'
 import { ensureMermaid } from '../../../shared/lib/mermaid/setup'
 import { buildInteractiveMermaid } from './buildInteractiveMermaid'
 
@@ -79,10 +80,10 @@ export function useMermaidRenderer(
       }
       bindFunctions?.(diagramElement.value)
       renderError.value = ''
-    } catch {
+    } catch (error) {
       // 不完整的流式片段保留上一张有效图；最终失败仍明确显示错误。
       if (!disposed && currentRevision === revision && !isStreaming()) {
-        renderError.value = '流程图渲染失败，请重新生成。'
+        renderError.value = getErrorMessage(error, '流程图渲染失败。')
       }
     } finally {
       scratch.remove()

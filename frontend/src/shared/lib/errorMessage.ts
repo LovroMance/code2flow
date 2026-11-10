@@ -1,26 +1,43 @@
 import { isAxiosError } from 'axios'
 
-/** 界面统一使用中文错误说明，不直接展示浏览器或依赖库的英文异常。 */
-export function chineseErrorMessage(error: unknown, fallback = '操作失败，请稍后重试。'): string {
-  if (isAxiosError<{ error?: unknown }>(error)) {
-    const serverMessage = error.response?.data?.error
-    if (typeof serverMessage === 'string' && /[\u4e00-\u9fff]/u.test(serverMessage))
-      return serverMessage
-    if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') return '请求超时，请稍后重试。'
-    if (error.code === 'ERR_CANCELED') return '请求已取消。'
-    if (!error.response) return '网络连接失败，请确认后端服务已启动。'
-    const status = error.response.status
-    if (status === 401 || status === 403) return '访问被拒绝，请检查登录状态或服务权限。'
-    if (status === 404) return '请求的接口或资源不存在，请刷新后重试。'
-    if (status === 413) return '上传内容过大，请减少文件数量或大小。'
-    if (status === 429) return '请求过于频繁，请稍后重试。'
-    return fallback
+function formatValue(value: unknown): string {
+  if (typeof value === 'string') return value.trim() ? value : ''
+  return value == null ? '' : (JSON.stringify(value, null, 2) ?? '')
+}
+
+/** 保留接口返回的错误正文，并附上 HTTP 状态。 */
+export function formatHttpError(status: number, statusText: string, body: unknown): string {
+  if (typeof body === 'string' && body.trimStart().startsWith('{')) {
+    try {
+      body = JSON.parse(body)
+    } catch {
+      // 保留无法解析的响应原文。
+    }
   }
-  const message = typeof error === 'string' ? error : error instanceof Error ? error.message : ''
-  if (error instanceof SyntaxError) return '服务返回的数据格式异常，无法解析。'
-  if (/abort|cancel/i.test(message) || (error instanceof Error && error.name === 'AbortError'))
-    return '操作已取消。'
-  if (/timeout|timed out/i.test(message)) return '请求超时，请稍后重试。'
-  if (/fetch|network|load failed/i.test(message)) return '网络连接失败，请确认后端服务已启动。'
-  return /[\u4e00-\u9fff]/u.test(message) ? message : fallback
+
+  let detail = ''
+  if (body && typeof body === 'object') {
+    const { error, message, details } = body as {
+      error?: unknown
+      message?: unknown
+      details?: unknown
+    }
+    detail = [...new Set([error, message, details].map(formatValue).filter(Boolean))].join('\n')
+  }
+  return [`HTTP ${status} ${statusText}`.trimEnd(), detail || formatValue(body)]
+    .filter(Boolean)
+    .join('\n')
+}
+
+/** 只有异常没有可显示的消息时才使用操作提示。 */
+export function getErrorMessage(error: unknown, fallback: string): string {
+  if (isAxiosError(error)) {
+    const { response, code, message } = error
+    if (response) return formatHttpError(response.status, response.statusText, response.data)
+    return [code, message].filter(Boolean).join(': ') || fallback
+  }
+  if (typeof error === 'string') return formatValue(error) || fallback
+  if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string')
+    return formatValue(error.message) || fallback
+  return fallback
 }

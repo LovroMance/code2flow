@@ -27,7 +27,7 @@ const { diagramElement, renderedSvg, renderError, isRendering } = useMermaidRend
   () => !!props.isStreaming
 )
 watch(renderError, (error) => {
-  if (error) emit('render-error', '流程图渲染失败，请重新生成。')
+  if (error) emit('render-error', error)
 })
 const {
   viewportElement,

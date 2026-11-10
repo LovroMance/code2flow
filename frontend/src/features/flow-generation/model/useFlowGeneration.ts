@@ -10,7 +10,7 @@ import { streamGenerateFlow } from '../../../shared/api/flow-stream.api'
 import { streamMultiFlow } from '../../../shared/api/multifile.api'
 import { ensureMermaid } from '../../../shared/lib/mermaid/setup'
 import type { MultiFileResult } from '../../../entities/flow/model/multifile'
-import { chineseErrorMessage } from '../../../shared/lib/errorMessage'
+import { getErrorMessage } from '../../../shared/lib/errorMessage'
 
 const EMPTY_MERMAID = 'flowchart TD\nA[等待输入代码] --> B[点击生成流程图]\nB --> C[展示结果]'
 const LOADING_MERMAID = 'flowchart TD\nA[请求已发送] --> B[等待 Agent 返回结果]'
@@ -64,8 +64,8 @@ export function useFlowGeneration() {
       detectedLanguage.value = result.detectedLanguage
       multiResult.value = result
       status.value = 'done'
-    } catch {
-      failRendering('流程图解析失败，请重新生成。')
+    } catch (error) {
+      failRendering(getErrorMessage(error, '流程图解析失败。'))
     }
   }
   function failRendering(reason: string) {
@@ -100,7 +100,6 @@ export function useFlowGeneration() {
           progressText.value = `${stages[String(metadata.stage)] ?? '处理中'} ${metadata.completed ?? ''}${metadata.total ? `/${metadata.total}` : ''}`
           if (Array.isArray(metadata.missingRanges))
             incomplete = metadata.missingRanges
-              .slice(0, 20)
               .map((value) => {
                 if (
                   !value ||
@@ -113,17 +112,14 @@ export function useFlowGeneration() {
                 return `${String(value.path)} 第 ${String(value.lineStart)}–${String(value.lineEnd)} 行`
               })
               .filter(Boolean)
-              .join('；')
+              .join('\n')
         }
       )
       await restoreMultiOutput(result)
-      if (errorMessage.value) throw new Error(errorMessage.value)
-      return result
     } catch (error) {
       failRendering(
-        `${chineseErrorMessage(error, '多文件生成失败。')}${incomplete ? ` 未完成的源码行范围：${incomplete}` : ''}`
+        `${getErrorMessage(error, '多文件生成失败。')}${incomplete ? `\n未完成的源码行范围：\n${incomplete}` : ''}`
       )
-      throw error
     } finally {
       abortController = undefined
     }
@@ -141,8 +137,7 @@ export function useFlowGeneration() {
       if (status.value === 'streaming') throw new Error('连接已中断，未收到生成完成事件，请重试。')
     } catch (error) {
       status.value = 'error'
-      errorMessage.value = chineseErrorMessage(error, '生成失败，请重试。')
-      throw error
+      errorMessage.value = getErrorMessage(error, '生成失败。')
     }
   }
 
@@ -160,8 +155,6 @@ export function useFlowGeneration() {
     }
 
     if (event.type === 'error' && typeof event.content === 'string') {
-      status.value = 'error'
-      errorMessage.value = event.content
       throw new Error(event.content)
     }
 

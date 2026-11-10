@@ -1,5 +1,5 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { chineseErrorMessage } from '../../../shared/lib/errorMessage'
+import { getErrorMessage } from '../../../shared/lib/errorMessage'
 import { SAMPLE_CODE } from '../config/sampleCode'
 import { equalSourceFiles, mappingFilePath } from './sourceFiles'
 import { getHealth } from '../../../shared/api/system.api'
@@ -34,9 +34,6 @@ function preference(key: string, value?: string) {
   } catch {
     return ''
   }
-}
-function message(error: unknown, fallback: string) {
-  return chineseErrorMessage(error, fallback)
 }
 
 export function useWorkspacePage() {
@@ -114,7 +111,9 @@ export function useWorkspacePage() {
       (mappings.value.length > 0 || multiResult.value !== null) &&
       !isWorkspaceBusy.value
   )
-  const combinedErrorMessage = computed(() => workspaceError.value || errorMessage.value)
+  const combinedErrorMessage = computed(() =>
+    [...new Set([errorMessage.value, workspaceError.value].filter(Boolean))].join('\n\n')
+  )
   function fileDocumentId(path: string) {
     return `${threadId.value}/${multiSnapshot.value?.snapshotId ?? 'draft'}/${multiSnapshot.value?.files.find((f) => f.path === path)?.fileId ?? path}`
   }
@@ -150,7 +149,7 @@ export function useWorkspacePage() {
     try {
       sessions.value = await sessionApi.getSessions()
     } catch (error) {
-      listError.value = message(error, '无法加载会话列表，请重试。')
+      listError.value = getErrorMessage(error, '无法加载会话列表。')
     } finally {
       listLoading.value = false
     }
@@ -214,7 +213,7 @@ export function useWorkspacePage() {
     try {
       await saveDraft()
     } catch (error) {
-      workspaceError.value = message(error, '草稿保存失败，请重试。')
+      workspaceError.value = getErrorMessage(error, '草稿保存失败。')
     }
   }
 
@@ -228,7 +227,7 @@ export function useWorkspacePage() {
       saveTimer = setTimeout(() => {
         if (!alive || isWorkspaceBusy.value) return
         void saveDraft().catch((error: unknown) => {
-          workspaceError.value = message(error, '草稿保存失败，切换前请重试。')
+          workspaceError.value = getErrorMessage(error, '草稿保存失败，切换前请重试。')
         })
       }, 700)
     },
@@ -298,7 +297,7 @@ export function useWorkspacePage() {
       if (detail.busy) throw new Error('该会话正在处理请求，请稍后刷新列表。')
       await applySession(detail)
     } catch (error) {
-      workspaceError.value = message(error, '切换失败，已保留当前会话。')
+      workspaceError.value = getErrorMessage(error, '切换失败，已保留当前会话。')
     } finally {
       sessionLoading.value = false
     }
@@ -322,7 +321,7 @@ export function useWorkspacePage() {
       })
       await applySession(detail)
     } catch (error) {
-      workspaceError.value = message(error, '新建会话失败，已保留当前内容。')
+      workspaceError.value = getErrorMessage(error, '新建会话失败，已保留当前内容。')
     } finally {
       sessionLoading.value = false
     }
@@ -368,7 +367,7 @@ export function useWorkspacePage() {
       if (next) await applySession(await sessionApi.getSession(next.id))
       else await saveDraft()
     } catch (error) {
-      workspaceError.value = message(error, '删除或加载会话失败，请刷新列表。')
+      workspaceError.value = getErrorMessage(error, '删除或加载会话失败，请刷新列表。')
     } finally {
       applying = false
       sessionLoading.value = false
@@ -395,10 +394,10 @@ export function useWorkspacePage() {
         await generateMultiFlow(threadId.value, snapshot.snapshotId)
       } else {
         await generateFlow({ code: code.value, threadId: threadId.value })
-        sourceSnapshot.value = code.value
+        if (status.value === 'done') sourceSnapshot.value = code.value
       }
     } catch (error) {
-      workspaceError.value = message(error, '生成失败，请重试。')
+      workspaceError.value = getErrorMessage(error, '生成准备失败。')
     } finally {
       sessionLoading.value = false
       // metadata 会更新语言；流结束后再保存，避免与同线程生成争用锁。
@@ -406,7 +405,10 @@ export function useWorkspacePage() {
         try {
           await saveDraft()
         } catch (error) {
-          workspaceError.value = message(error, '分析已结束，但草稿保存失败。')
+          const saveError = getErrorMessage(error, '分析已结束，但草稿保存失败。')
+          workspaceError.value = [...new Set([workspaceError.value, saveError].filter(Boolean))].join(
+            '\n\n'
+          )
         }
       }
       await refreshSessions()
@@ -432,7 +434,7 @@ export function useWorkspacePage() {
       followUpStatus.value = 'done'
     } catch (error) {
       followUpStatus.value = 'error'
-      workspaceError.value = message(error, '追问失败，请重试。')
+      workspaceError.value = getErrorMessage(error, '追问失败。')
     } finally {
       await refreshSessions()
     }
@@ -459,7 +461,7 @@ export function useWorkspacePage() {
       sessionLoading.value = false
       await startSession(content, name, inferLanguageFromExtension(extension))
     } catch (error) {
-      workspaceError.value = message(error, '读取文件失败，请重试。')
+      workspaceError.value = getErrorMessage(error, '读取文件失败。')
     } finally {
       sessionLoading.value = false
     }
@@ -498,10 +500,10 @@ export function useWorkspacePage() {
             throw new Error('空文件或二进制内容')
           loaded.push({ path: file.webkitRelativePath || file.name, content })
         } catch (error) {
-          errors.push(`${file.name}：${chineseErrorMessage(error, '文件读取失败。')}`)
+          errors.push(`${file.name}：${getErrorMessage(error, '文件读取失败。')}`)
         }
       }
-      if (errors.length) throw new Error(errors.join('；'))
+      if (errors.length) throw new Error(errors.join('\n'))
       for (const file of loaded) file.path = file.path.replace(/\\/g, '/')
       if (
         new Set(loaded.map((f) => f.path)).size !== loaded.length ||
@@ -522,7 +524,7 @@ export function useWorkspacePage() {
       uploadFileName.value = `${loaded.length}个文件`
       await saveDraft()
     } catch (error) {
-      workspaceError.value = message(error, '读取文件失败。')
+      workspaceError.value = getErrorMessage(error, '读取文件失败。')
     } finally {
       sessionLoading.value = false
     }
@@ -566,7 +568,7 @@ export function useWorkspacePage() {
     try {
       await saveDraft()
     } catch (error) {
-      workspaceError.value = message(error, '源码已清空，但保存失败，请重试保存。')
+      workspaceError.value = getErrorMessage(error, '源码已清空，但保存失败，请重试保存。')
     } finally {
       sessionLoading.value = false
     }
@@ -622,7 +624,7 @@ export function useWorkspacePage() {
       else await saveDraft()
     } catch (error) {
       if (!persisted) saveStatus.value = 'error'
-      workspaceError.value = message(error, '初始化会话失败，请重试保存或刷新列表。')
+      workspaceError.value = getErrorMessage(error, '初始化会话失败，请重试保存或刷新列表。')
     } finally {
       applying = false
       sessionLoading.value = false
@@ -643,7 +645,9 @@ export function useWorkspacePage() {
     renameFile,
     removeFile,
     cancelGeneration,
-    failRendering,
+    handleRenderError(reason: string) {
+      if (status.value !== 'error') failRendering(reason)
+    },
     documentId: computed(() =>
       files.value.length ? fileDocumentId(activePath.value) : `${threadId.value}/input`
     ),

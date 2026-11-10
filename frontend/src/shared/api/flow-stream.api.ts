@@ -1,4 +1,5 @@
 import type { FlowStreamEvent } from '../../entities/flow/model/types'
+import { getStreamBody } from './http'
 
 export async function streamGenerateFlow(
   input: {
@@ -19,34 +20,35 @@ export async function streamGenerateFlow(
     })
   })
 
-  if (!response.ok || !response.body) {
-    throw new Error('请求失败，无法读取后端返回。')
-  }
-
-  const reader = response.body.getReader()
+  const reader = (await getStreamBody(response)).getReader()
   const decoder = new TextDecoder()
   let buffer = ''
 
-  while (true) {
-    const { done, value } = await reader.read()
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
 
-    if (done) {
-      break
-    }
-
-    buffer += decoder.decode(value, { stream: true })
-    const events = buffer.split('\n\n')
-    buffer = events.pop() ?? ''
-
-    for (const chunk of events) {
-      const dataLine = chunk.split('\n').find((line) => line.startsWith('data: '))
-
-      if (!dataLine) {
-        continue
+      if (done) {
+        break
       }
 
-      const event = JSON.parse(dataLine.slice(6)) as FlowStreamEvent
-      onEvent(event)
+      buffer += decoder.decode(value, { stream: true })
+      const events = buffer.split('\n\n')
+      buffer = events.pop() ?? ''
+
+      for (const chunk of events) {
+        const dataLine = chunk.split('\n').find((line) => line.startsWith('data: '))
+
+        if (!dataLine) {
+          continue
+        }
+
+        const event = JSON.parse(dataLine.slice(6)) as FlowStreamEvent
+        onEvent(event)
+      }
     }
+  } finally {
+    await reader.cancel().catch(() => {})
+    reader.releaseLock()
   }
 }

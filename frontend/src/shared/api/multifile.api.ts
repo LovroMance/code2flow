@@ -1,4 +1,4 @@
-import { http } from './http'
+import { getStreamBody, http } from './http'
 import {
   parseDraft,
   parseChunkPreview,
@@ -56,8 +56,7 @@ export async function streamMultiFlow(
     body: JSON.stringify({ thread_id: id, snapshotId }),
     signal
   })
-  if (!response.ok || !response.body) throw new Error('多文件生成请求失败。')
-  const reader = response.body.getReader(),
+  const reader = (await getStreamBody(response)).getReader(),
     decoder = new TextDecoder()
   let buffer = '',
     metadata: Record<string, unknown> | undefined,
