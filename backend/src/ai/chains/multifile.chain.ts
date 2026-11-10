@@ -275,7 +275,7 @@ export async function runMultiFileChain(
   const tools = role === 'generate' ? [] : context.tools(role === 'index' ? 'index' : 'verify')
   const responseSchema = modelResponseSchema(schema.meta({ title: submissionName }))
   const agent = createAgent({
-    model: createOpenAIModel(budget.config.outputTokens),
+    model: createOpenAIModel(budget.config.outputTokens, role === 'index' ? 'index' : undefined),
     tools,
     systemPrompt: system,
     responseFormat: toolStrategy(responseSchema, { handleError: false }),
