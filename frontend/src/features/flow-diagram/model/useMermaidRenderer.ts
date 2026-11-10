@@ -2,13 +2,6 @@ import { nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vu
 import type { NodeMapping } from '../../../entities/flow/model/types'
 import { getErrorMessage } from '../../../shared/lib/errorMessage'
 import { ensureMermaid } from '../../../shared/lib/mermaid/setup'
-import { buildInteractiveMermaid } from './buildInteractiveMermaid'
-
-declare global {
-  interface Window {
-    code2flowNodeClick?: (nodeId: string) => void
-  }
-}
 
 let renderSequence = 0
 
@@ -61,12 +54,12 @@ export function useMermaidRenderer(
     document.body.append(scratch)
 
     try {
-      window.code2flowNodeClick = onSelectNode
-      const { svg, bindFunctions } = await ensureMermaid().render(
-        `code2flow-mermaid-${renderSequence++}`,
-        buildInteractiveMermaid(source, currentMappings),
-        scratch
-      )
+      const mermaid = ensureMermaid()
+      const maxTextSize = mermaid.mermaidAPI.getConfig().maxTextSize
+      if (maxTextSize !== undefined && source.length > maxTextSize)
+        throw new Error(`流程图有 ${source.length} 个字符，超过渲染上限 ${maxTextSize}。`)
+      const renderId = `code2flow-mermaid-${renderSequence++}`
+      const { svg, bindFunctions } = await mermaid.render(renderId, source, scratch)
       if (disposed || !diagramElement.value || currentRevision !== revision) return
 
       diagramElement.value.innerHTML = svg
@@ -76,6 +69,19 @@ export function useMermaidRenderer(
         element.style.width = `${width}px`
         element.style.height = `${height}px`
         element.style.maxWidth = 'none'
+        // Mermaid 的输出可能移除 data-id，此时从带渲染前缀的 SVG ID 取回逻辑 ID。
+        const mappedIds = new Set(currentMappings.map((mapping) => mapping.nodeId))
+        const idPrefix = `${renderId}-flowchart-`
+        for (const node of element.querySelectorAll<SVGGElement>('g.node')) {
+          const nodeId =
+            node.dataset.id ??
+            (node.id.startsWith(idPrefix)
+              ? node.id.slice(idPrefix.length).replace(/-\d+$/, '')
+              : undefined)
+          if (!nodeId || !mappedIds.has(nodeId)) continue
+          node.classList.add('clickable')
+          node.addEventListener('click', () => onSelectNode(nodeId))
+        }
         renderedSvg.value = element
       }
       bindFunctions?.(diagramElement.value)
@@ -97,7 +103,6 @@ export function useMermaidRenderer(
   onBeforeUnmount(() => {
     disposed = true
     if (timer) clearTimeout(timer)
-    if (window.code2flowNodeClick === onSelectNode) delete window.code2flowNodeClick
   })
 
   return { diagramElement, renderedSvg, renderError, isRendering }

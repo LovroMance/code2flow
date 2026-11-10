@@ -3,12 +3,13 @@ import { coveredLines, sourceLineRange } from './sourcePositions'
 import {
   MultiFileFlowResultSchema,
   type CrossFileReference,
+  type ExecutionUnit,
   type UnitFlowDraft,
   type MultiFileFlowResult
 } from '../domain/multifile/schema'
 import type { SourceContext } from '../services/source-context.service'
 
-/** 校验局部节点的源码证据、入口、边端点及关键控制位置，失败交回图重试。 */
+/** 校验组图所需的单元身份、源码证据、入口和边端点。 */
 export function validateUnitDraft(draft: UnitFlowDraft, context: SourceContext) {
   const unit = context.indexes.flatMap((i) => i.units).find((u) => u.unitId === draft.unitId)
   if (!unit) throw new ModelOutputValidationError('生成结果单元身份错误。')
@@ -45,41 +46,40 @@ export function validateUnitDraft(draft: UnitFlowDraft, context: SourceContext) 
   for (const edge of draft.edges)
     if (!ids.has(edge.from) || !ids.has(edge.to))
       throw new ModelOutputValidationError('局部边引用未知节点。')
+}
+
+/** 收集局部流程的控制点问题，供同一轮重试修正。 */
+export function collectUnitControlIssues(draft: UnitFlowDraft, unit: ExecutionUnit) {
+  const issues: Array<{ range: ExecutionUnit['range']; message: string }> = []
   for (const control of unit.controlRanges) {
     const mapped = draft.nodes.filter(
       (node) =>
         node.range.startOffset <= control.range.startOffset &&
         node.range.endOffset >= control.range.endOffset
     )
+    let detail: string
     if (!mapped.length) {
-      // 反馈携带控制位置的类型与原文，模型能精确定位漏掉的语句。
-      const text = context.repository
-        .content(context.snapshot, unit.range.fileId)
-        .slice(control.range.startOffset, control.range.endOffset)
-      const { lineStart, lineEnd } = coveredLines(control.range)
-      throw new ModelOutputValidationError(
-        `局部流程遗漏关键控制位置：${control.kind}（第 ${lineStart}–${lineEnd} 行）原文"${text}"；请补充节点并覆盖该行范围。`
-      )
-    }
-    if (
+      detail = '缺少覆盖该位置的节点'
+    } else if (
       (control.kind === 'branch' || control.kind === 'loop') &&
       !mapped.some(
         (node) =>
           node.kind === 'decision' &&
           draft.edges.filter((edge) => edge.from === node.localId).length >= 2
       )
-    )
-      throw new ModelOutputValidationError(
-        `控制位置行${control.range.lineStart}（${control.kind}）需要kind=decision的节点覆盖，且该节点至少有两条出边表示分支。`
-      )
-    if (
+    ) {
+      detail = '需要有至少两条出边的 decision 节点'
+    } else if (
       control.kind === 'return' &&
       !mapped.some((node) => node.kind === 'return' || node.kind === 'end')
-    )
-      throw new ModelOutputValidationError(
-        `控制位置行${control.range.lineStart}（return）需要kind=return或end的节点覆盖。`
-      )
+    ) {
+      detail = '建议使用 return 或 end 节点'
+    } else continue
+    const { lineStart, lineEnd } = coveredLines(control.range)
+    const lines = lineStart === lineEnd ? lineStart : `${lineStart}–${lineEnd}`
+    issues.push({ range: control.range, message: `第 ${lines} 行（${control.kind}）${detail}` })
   }
+  return issues
 }
 // 所有模型文本先编码成 Mermaid 数字实体，不允许注入指令、URL 或点击脚本。
 export function escapeMermaidLabel(text: string) {

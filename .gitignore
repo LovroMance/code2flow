@@ -8,6 +8,7 @@ coverage/
 .turbo/
 .cache/
 .vscode/
+.workbuddy/
 
 # Environment files
 .env

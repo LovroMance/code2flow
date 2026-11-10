@@ -23,7 +23,7 @@ npm install
 
 ## 多文件切块
 
-调试预览和正式分析共用 Tree-sitter 切块。支持 JavaScript、TypeScript、Python、Java、Go、C++、C#、Rust、Ruby、PHP 和 Bash 的语法边界。每块由连续整行组成，保留完整的顶层函数、类或语句，相邻块无重叠。源码定位使用首尾都包含的原始行号。
+调试预览和正式分析共用 Tree-sitter 切块。支持 JavaScript、TypeScript、Python、Java、Go、C++、C#、Rust、Ruby、PHP 和 Bash 的语法边界。每块由连续整行组成，优先保留完整的顶层语法单元。Java 类超出目标时，可以沿类成员边界切分，保留完整方法。相邻块无重叠，源码定位使用首尾都包含的原始行号。
 
 `CODE2FLOW_MULTI_CHUNK_TARGET_CHARS` 默认是 6000，按 UTF-16 计数，是打包目标。完整语法单元可以超出目标单独成块。模型上下文和输出限制仍按实际请求校验。旧的 `CODE2FLOW_MULTI_CHUNK_LINES` 和 `CODE2FLOW_MULTI_CHUNK_CHARS` 已停用。
 

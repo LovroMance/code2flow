@@ -1,5 +1,5 @@
 import { dirname, extname, join } from 'node:path'
-import { Language, Parser } from '@vscode/tree-sitter-wasm'
+import { Language, Parser, type Node } from '@vscode/tree-sitter-wasm'
 import type { CodeChunk } from '../domain/source/schema'
 import { lineOffsets, sha256, sourceRange, validateSourceRange } from './sourcePositions'
 
@@ -29,11 +29,12 @@ function loadGrammar(grammar: string) {
 }
 
 export function chunkerVersion(path: string, options: ChunkOptions) {
-  return `syntax-v3-${grammarFor(path) ?? 'none'}-${options.chunkTargetChars}-${options.allowLineFallback ? 'lines' : 'whole'}`
+  const grammar = grammarFor(path)
+  const version = grammar === 'java' ? 'v4' : 'v3'
+  return `syntax-${version}-${grammar ?? 'none'}-${options.chunkTargetChars}-${options.allowLineFallback ? 'lines' : 'whole'}`
 }
 
-/** 只采用完整顶层节点之间的边界。同一行的节点和前置注释保留在同一单元。 */
-async function syntaxCuts(grammar: string, text: string, offsets: number[]) {
+async function inspectSyntax<T>(grammar: string, text: string, inspect: (root: Node) => T) {
   const language = await loadGrammar(grammar)
   const parser = new Parser()
   try {
@@ -42,12 +43,23 @@ async function syntaxCuts(grammar: string, text: string, offsets: number[]) {
     const tree = parser.parse(text.replace(/\r\n?/g, '\n'))
     if (!tree) return undefined
     try {
-      const root = tree.rootNode
-      if (root.hasError) return undefined
-      const cuts: number[] = []
+      return tree.rootNode.hasError ? undefined : inspect(tree.rootNode)
+    } finally {
+      tree.delete()
+    }
+  } finally {
+    parser.delete()
+  }
+}
+
+/** 优先使用顶层边界。过大的 Java 类还可沿成员边界切分，保留同一行的节点和前置注释。 */
+function syntaxCuts(grammar: string, text: string, offsets: number[], targetChars: number) {
+  return inspectSyntax(grammar, text, (root) => {
+    const cuts: number[] = []
+    function collectCuts(parent: Node) {
       let previousEnd = -1
       let leadingComment: number | undefined
-      for (const node of root.namedChildren) {
+      for (const node of parent.namedChildren) {
         if (!node) continue
         const start = node.startPosition.row
         const end = node.endPosition.row - Number(node.endPosition.column === 0)
@@ -56,18 +68,55 @@ async function syntaxCuts(grammar: string, text: string, offsets: number[]) {
           continue
         }
         const row = leadingComment ?? start
-        const offset = offsets[row]
-        if (previousEnd >= 0 && row > previousEnd && offset !== undefined) cuts.push(offset)
+        const offset = offsets[row]!
+        if (previousEnd >= 0 && row > previousEnd) cuts.push(offset)
+        if (
+          grammar === 'java' &&
+          node.type === 'class_declaration' &&
+          (offsets[end + 1] ?? text.length) - offset > targetChars
+        ) {
+          const body = node.childForFieldName('body')
+          if (body) collectCuts(body)
+        }
         previousEnd = Math.max(previousEnd, end)
         leadingComment = undefined
       }
-      return cuts
-    } finally {
-      tree.delete()
     }
-  } finally {
-    parser.delete()
-  }
+    collectCuts(root)
+    return cuts
+  })
+}
+
+const importNodes: Record<string, string[]> = {
+  javascript: ['import_statement'],
+  typescript: ['import_statement'],
+  tsx: ['import_statement'],
+  python: ['import_statement', 'import_from_statement'],
+  go: ['import_declaration'],
+  java: ['import_declaration'],
+  'c-sharp': ['using_directive'],
+  rust: ['use_declaration'],
+  cpp: ['preproc_include']
+}
+
+/** 使用声明的精确原文范围，避免同一行上的另一条导入充当证据。 */
+export async function importDeclarationRanges(path: string, text: string) {
+  const grammar = grammarFor(path)
+  const nodes = grammar && importNodes[grammar]
+  if (!grammar || !nodes) return []
+  const offsets = lineOffsets(text)
+  return (await inspectSyntax(grammar, text, (root) =>
+    root.descendantsOfType(nodes).filter((node) => node !== null).map((node) => {
+      const start = node.startPosition
+      const end = node.endPosition
+      const source = node.childForFieldName('source')
+      return {
+        startOffset: offsets[start.row]! + start.column,
+        endOffset: offsets[end.row]! + end.column,
+        targetPath: source?.type === 'string' ? source.text.slice(1, -1) : undefined
+      }
+    })
+  )) ?? []
 }
 
 /** 当前版本的分块须完整覆盖原文，块之间无重叠且首尾只在行边界或 EOF。 */
@@ -90,7 +139,7 @@ export function validateChunks(fileId: string, text: string, chunks: CodeChunk[]
 export async function chunkSource(fileId: string, path: string, text: string, options: ChunkOptions) {
   const offsets = lineOffsets(text)
   const grammar = grammarFor(path)
-  const cuts = grammar ? await syntaxCuts(grammar, text, offsets) : undefined
+  const cuts = grammar ? await syntaxCuts(grammar, text, offsets, options.chunkTargetChars) : undefined
   const strategy: ChunkStrategy = cuts
     ? 'syntax'
     : options.allowLineFallback && text.length > options.chunkTargetChars

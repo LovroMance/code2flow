@@ -7,6 +7,19 @@ import type {
   FileSemanticIndex
 } from '../domain/multifile/schema'
 import type { SourceSnapshot } from '../domain/source/schema'
+import { importDeclarationRanges } from '../utils/sourceChunks'
+import { coveredLines, sourceRange } from '../utils/sourcePositions'
+
+type IndexedReference = FileSemanticIndex['references'][number]
+
+function bindingMatches(reference: IndexedReference, text: string) {
+  return (
+    (reference.name === 'default' || reference.name === '*' || text.includes(reference.name)) &&
+    !!reference.alias &&
+    text.includes(reference.alias) &&
+    text.includes(reference.targetPath)
+  )
+}
 
 function pathMatches(source: string, hint: string, target: string) {
   if (!hint) return false
@@ -20,6 +33,39 @@ function pathMatches(source: string, hint: string, target: string) {
       target.replace(/\.[^/.]+$/, '') === path ||
       target.replace(/\/(?:index|__init__)\.[^/.]+$/, '') === path
   )
+}
+
+/** 索引时补全可由原文唯一确认的导入证据，避免将同一份坏索引反复交给关系核对。 */
+export async function completeIndexReferences(index: FileSemanticIndex, context: SourceContext) {
+  const file = context.snapshot.files.find((file) => file.fileId === index.fileId)!
+  const content = context.repository.content(context.snapshot, file.fileId)
+  let declarations: Awaited<ReturnType<typeof importDeclarationRanges>> | undefined
+  for (const ref of index.references) {
+    context.validate(ref.range, ref.evidenceIds)
+    if (ref.kind !== 'import' || !ref.targetPath) continue
+    const { startOffset, endOffset } = ref.range
+    if (bindingMatches(ref, content.slice(startOffset, endOffset))) continue
+    declarations ??= await importDeclarationRanges(file.path, content)
+    const matches = declarations.filter((declaration) =>
+      declaration.startOffset < endOffset &&
+      declaration.endOffset > startOffset &&
+      (declaration.targetPath === undefined || declaration.targetPath === ref.targetPath) &&
+      bindingMatches(ref, content.slice(declaration.startOffset, declaration.endOffset))
+    )
+    if (matches.length === 1) {
+      const match = matches[0]!
+      const range = sourceRange(file.fileId, content, match.startOffset, match.endOffset)
+      const { evidence } = context.read(file.fileId, range.startOffset, range.endOffset)
+      ref.range = range
+      ref.evidenceIds = [evidence.evidenceId]
+    } else if (context.snapshot.files.some((target) => pathMatches(file.path, ref.targetPath, target.path))) {
+      const { lineStart, lineEnd } = coveredLines(ref.range)
+      throw new ModelOutputValidationError(
+        `${file.path} 第 ${lineStart}–${lineEnd} 行的导入证据缺少完整绑定。` +
+        `请提交同时覆盖名称 ${ref.name}、本地名称 ${ref.alias} 和路径 ${ref.targetPath} 的完整导入声明行范围。`
+      )
+    }
+  }
 }
 /** 依据导入路径、别名、接收者及显式作用域枚举候选，同名本身不能确认关系。 */
 export function referenceCandidates(snapshot: SourceSnapshot, indexes: FileSemanticIndex[]) {
@@ -144,12 +190,7 @@ export function validateResolvedReference(
       const text = context.repository
         .content(context.snapshot, r.range.fileId)
         .slice(r.range.startOffset, r.range.endOffset)
-      if (
-        (r.name !== 'default' && r.name !== '*' && !text.includes(r.name)) ||
-        !r.alias ||
-        !text.includes(r.alias) ||
-        !text.includes(r.targetPath)
-      )
+      if (!bindingMatches(r, text))
         throw new ModelOutputValidationError('绑定线索与原始文本不一致。')
     })
     for (const scope of candidate.scopeEvidence) {

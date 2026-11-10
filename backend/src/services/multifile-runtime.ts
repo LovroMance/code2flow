@@ -25,7 +25,11 @@ import type { CodeChunk, SourceRange, SourceSnapshot } from '../domain/source/sc
 import { EvidenceSchema } from '../domain/source/schema'
 import { SourceContext } from './source-context.service'
 import { RetrievalService } from './retrieval.service'
-import { referenceCandidates, validateResolvedReference } from './reference-resolution.service'
+import {
+  completeIndexReferences,
+  referenceCandidates,
+  validateResolvedReference
+} from './reference-resolution.service'
 import type { SourceRepository } from '../repositories/source.repository'
 import {
   coveredLines,
@@ -35,7 +39,11 @@ import {
   sourceRange,
   validateSourceRange
 } from '../utils/sourcePositions'
-import { composeMultiFileFlow, validateUnitDraft } from '../utils/composeMultiFileFlow'
+import {
+  collectUnitControlIssues,
+  composeMultiFileFlow,
+  validateUnitDraft
+} from '../utils/composeMultiFileFlow'
 import { mergeFileFragments, FragmentConflictError } from '../utils/mergeFileFragments'
 import { safeErrorDetails } from '../ai/observability/safe-error'
 import { ModelOutputTruncatedError, errorCauses } from '../domain/multifile/errors'
@@ -47,6 +55,13 @@ const CachedIndexSchema = z.object({
   // 单块文件合并模式随索引一同缓存的局部草稿；旧缓存条目没有该字段。
   drafts: z.array(UnitFlowDraftSchema).optional()
 })
+type ControlIssues = ReturnType<typeof collectUnitControlIssues>
+
+function controlFeedback(issues: ControlIssues) {
+  const listed = issues.slice(0, 20).map((issue) => issue.message).join('；')
+  const remaining = issues.length - 20
+  return `请一起核对这些控制点：${listed}${remaining > 0 ? `；另有 ${remaining} 处，请逐项检查 unit.controlRanges` : ''}。保留已正确表达的流程。`
+}
 /** 一次分析的业务上下文：持有索引、证据与局部结果，实现图节点操作。
  * 阶段顺序和重试由 multifile.graph 决定，本类不另建状态机。
  */
@@ -59,6 +74,8 @@ export class AnalysisRuntime implements MultiFileRuntime {
   readonly partial = new Map<string, FileSemanticIndex>()
   readonly contexts = new Map<string, SourceContext>()
   readonly drafts = new Map<string, UnitFlowDraft>()
+  // 保留结构合格的草稿，避免重试退步时丢弃可用结果。
+  private readonly draftCandidates = new Map<string, { draft: UnitFlowDraft; issues: ControlIssues }>()
   // 合并模式的临时草稿按分块暂存，merge 建立正式身份后重映射进 drafts。
   private readonly partialDrafts = new Map<string, UnitFlowDraft[]>()
   private readonly unitAliases = new Map<string, string>()
@@ -74,7 +91,8 @@ export class AnalysisRuntime implements MultiFileRuntime {
     readonly snapshot: SourceSnapshot,
     readonly analysisId: string,
     readonly signal: AbortSignal,
-    private readonly emit: (metadata: Record<string, unknown>) => void
+    private readonly emit: (metadata: Record<string, unknown>) => void,
+    private readonly stop: (reason: unknown) => void
   ) {
     this.budgetTracker = new AnalysisBudget(signal)
     this.concurrency = this.budgetTracker.config.concurrency
@@ -193,7 +211,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
     )
   }
   /** 检查任务归属、范围和证据；schema 合法并不代表模型真的读过对应源码。 */
-  private checkIndex(index: FileSemanticIndex, chunk: CodeChunk, context: SourceContext) {
+  private async checkIndex(index: FileSemanticIndex, chunk: CodeChunk, context: SourceContext) {
     if (index.fileId !== chunk.fileId) throw new ModelOutputValidationError('分块文件身份错误。')
     if (
       missingRanges(
@@ -269,7 +287,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
         }
       }
     }
-    for (const ref of index.references) context.validate(ref.range, ref.evidenceIds)
+    await completeIndexReferences(index, context)
     for (const item of index.unresolvedItems) {
       try {
         validateSourceRange(
@@ -321,7 +339,14 @@ export class AnalysisRuntime implements MultiFileRuntime {
     return traceStep(
       'code2flow.analysis-task',
       { taskId: id, attempt: attempts, validationFeedback: feedback },
-      () => this.executeTask(id, attempts, feedback),
+      async () => {
+        try {
+          return await this.executeTask(id, attempts, feedback)
+        } catch (error) {
+          this.stop(error)
+          throw error
+        }
+      },
       { metadata: { task_id: id, attempt: attempts, analysis_id: this.analysisId } }
     )
   }
@@ -332,8 +357,29 @@ export class AnalysisRuntime implements MultiFileRuntime {
   ): Promise<TaskOutcome> {
     let cacheKey: string | undefined
     let taskRange: SourceRange | undefined
+    let generationUnit: ExecutionUnit | undefined
     let wholeFile = false
-    const taskContext = { analysisId: this.analysisId, taskId: id, attempt: attempts }
+    const withTaskLocation = (error: unknown) => {
+      if (!taskRange || !(error instanceof ContextLimitError || error instanceof ModelOutputTruncatedError))
+        return error
+      const { fileId } = taskRange
+      const file = this.snapshot.files.find((file) => file.fileId === fileId)!
+      const { lineStart, lineEnd } = coveredLines(taskRange)
+      const location = `${file.path} 第 ${lineStart}–${lineEnd} 行`
+      if (error instanceof ModelOutputTruncatedError)
+        return new ModelOutputTruncatedError(`${location}：${error.message}`)
+      return new ContextLimitError(
+        wholeFile
+          ? `${location} 的整文件任务超过模型上下文，且无法确认语法边界。如接受按整行切块，可设置 CODE2FLOW_MULTI_ALLOW_LINE_FALLBACK=true。`
+          : `${location} 的任务超过模型上下文。请减小切块目标或使用上下文更大的模型，完整语法单元会保留。`
+      )
+    }
+    const taskContext: AnalysisTaskContext = {
+      analysisId: this.analysisId,
+      taskId: id,
+      attempt: attempts,
+      onTerminal: (error) => this.stop(withTaskLocation(error))
+    }
     try {
       this.signal.throwIfAborted()
       if (id.startsWith('index:')) {
@@ -392,7 +438,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
               ? (index as z.infer<typeof CombinedIndexSchema>).drafts
               : []
         }
-        this.checkIndex(index, chunk, context)
+        await this.checkIndex(index, chunk, context)
         // 只允许本文件补读，禁止把外部上下文错误当作可移植缓存。
         if ([...context.evidence.values()].some((e) => e.fileId !== chunk.fileId))
           throw new ModelOutputValidationError('文件分析任务只能读取本文件上下文。')
@@ -414,6 +460,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
         const unit = this.indexes
           .flatMap((i) => i.units)
           .find((u) => `generate:${u.unitId}` === id)!
+        generationUnit = unit
         taskRange = unit.range
         const context = this.context!
         const code = context.read(unit.range.fileId, unit.range.startOffset, unit.range.endOffset)
@@ -445,27 +492,35 @@ export class AnalysisRuntime implements MultiFileRuntime {
           })
         )
         cacheKey = key
-        // 局部缓存只在同一快照身份下重用；所有证据重新登记，不能复用旧evidenceId。
-        const cached = (
-          await traceStep('code2flow.generation-cache', { cacheKey: key }, async () => {
-            const value = this.repo.cacheGet(key)
-            return { hit: value !== undefined, value }
-          })
-        ).value
         let draft: UnitFlowDraft | undefined
+        let issues: ControlIssues = []
         let modelFeedback = feedback ?? undefined
-        // 合并模式预生成的草稿优先复用；不合格时丢弃并回退到生成角色，反馈携带校验原因。
+        // 预生成草稿有质量问题时仍可作为回退，交给生成角色时附上问题。
         const prepared = this.drafts.get(unit.unitId)
         if (prepared) {
           this.drafts.delete(unit.unitId)
           try {
-            draft = this.acceptDraft(prepared, unit, context, code)
+            this.acceptDraft(prepared, unit, context, code)
+            issues = collectUnitControlIssues(prepared, unit)
+            if (issues.length) {
+              this.draftCandidates.set(unit.unitId, { draft: prepared, issues })
+              modelFeedback = controlFeedback(issues)
+            } else draft = prepared
           } catch (error) {
             if (!(error instanceof ModelOutputValidationError)) throw error
             modelFeedback = error.message
           }
         }
         if (!draft) {
+          // 带反馈时直接重生成，避免再次命中同一份草稿。缓存证据绑定到当前快照。
+          const cached = feedback
+            ? undefined
+            : (
+                await traceStep('code2flow.generation-cache', { cacheKey: key }, async () => {
+                  const value = this.repo.cacheGet(key)
+                  return { hit: value !== undefined, value }
+                })
+              ).value
           if (cached) {
             const old = UnitFlowDraftSchema.parse(cached)
             draft = {
@@ -485,11 +540,22 @@ export class AnalysisRuntime implements MultiFileRuntime {
               modelFeedback,
               taskContext
             )
+          this.acceptDraft(draft, unit, context, code)
+          issues = collectUnitControlIssues(draft, unit)
         }
-        draft = this.acceptDraft(draft, unit, context, code)
         this.signal.throwIfAborted()
-        this.drafts.set(unit.unitId, draft)
-        this.repo.cachePut(key, draft)
+        if (issues.length) {
+          const candidate = this.draftCandidates.get(unit.unitId)
+          if (!candidate || issues.length <= candidate.issues.length)
+            this.draftCandidates.set(unit.unitId, { draft, issues })
+          if (attempts <= this.retries)
+            return { taskId: id, attempts, error: controlFeedback(issues), fatal: false }
+          this.finishDraftCandidate(unit)
+        } else {
+          this.draftCandidates.delete(unit.unitId)
+          this.drafts.set(unit.unitId, draft)
+          this.repo.cachePut(key, draft)
+        }
       }
       return { taskId: id, attempts, error: null, fatal: false }
     } catch (error) {
@@ -512,33 +578,14 @@ export class AnalysisRuntime implements MultiFileRuntime {
           error: safeErrorDetails(error)
         })
       if (cacheKey) this.repo.cacheDelete(cacheKey)
-      if (taskRange && (reason instanceof ContextLimitError || reason instanceof ModelOutputTruncatedError)) {
-        const { fileId } = taskRange
-        const file = this.snapshot.files.find((file) => file.fileId === fileId)!
-        const { lineStart, lineEnd } = coveredLines(taskRange)
-        const location = `${file.path} 第 ${lineStart}–${lineEnd} 行`
-        if (reason instanceof ModelOutputTruncatedError)
-          throw new ModelOutputTruncatedError(`${location}：${reason.message}`)
-        throw new ContextLimitError(
-          wholeFile
-            ? `${location} 的整文件任务超过模型上下文，且无法确认语法边界。如接受按整行切块，可设置 CODE2FLOW_MULTI_ALLOW_LINE_FALLBACK=true。`
-            : `${location} 的任务超过模型上下文。请减小切块目标或使用上下文更大的模型，完整语法单元会保留。`
-        )
-      }
-      // 只向 graph 传递已知业务错误或固定说明，不传递供应商原始异常。
-      const safe =
-        reason instanceof ModelOutputValidationError ||
-        reason instanceof ModelOutputTruncatedError ||
-        reason instanceof AnalysisLimitError ||
-        reason instanceof ModelConfigurationError
-          ? reason.message
-          : '分析遇到不可重试的程序或服务错误，请查看后端错误原因。'
-      if (!retryable) throw reason
+      if (!retryable) throw withTaskLocation(reason)
+      if (generationUnit && attempts > this.retries && this.finishDraftCandidate(generationUnit))
+        return { taskId: id, attempts, error: null, fatal: false }
       return {
         taskId: id,
         attempts,
-        error: safe,
-        fatal: !retryable
+        error: reason.message,
+        fatal: false
       }
     }
   }
@@ -717,7 +764,23 @@ export class AnalysisRuntime implements MultiFileRuntime {
       )
     )
       throw new ModelOutputValidationError('已确认调用点没有映射到节点。')
-    return draft
+  }
+  /** 仅发布通过结构校验的候选，并把剩余问题定位到对应单元和源码行。 */
+  private finishDraftCandidate(unit: ExecutionUnit) {
+    const candidate = this.draftCandidates.get(unit.unitId)
+    if (!candidate) return false
+    this.draftCandidates.delete(unit.unitId)
+    this.drafts.set(unit.unitId, candidate.draft)
+    const file = this.snapshot.files.find((file) => file.fileId === unit.range.fileId)!
+    const location = `${file.path} · ${unit.name || unit.kind}`.slice(0, 800)
+    for (const { range, message } of candidate.issues)
+      this.diagnostics.push({
+        code: 'flow_control_incomplete',
+        fileId: range.fileId,
+        range,
+        message: `${location}：${message}，请对照源码确认。`
+      })
+    return true
   }
   /** 程序先找结构候选，再为需要核对的关系建立模型任务；检索命中不等于确认调用。 */
   async resolve() {
@@ -866,6 +929,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
         feedback,
         task
       )
+      this.signal.throwIfAborted()
       for (const ref of checked.references) {
         const old = batch.find((r) => r.referenceId === ref.referenceId)
         if (!old || ref.sourceUnitId !== old.sourceUnitId || ref.callSiteId !== old.callSiteId)

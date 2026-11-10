@@ -89,7 +89,7 @@ export class MultiFileService {
     const snapshot = this.snapshot(id, snapshotId)
     const chunks = this.repo.chunks(snapshot)
     if (!chunks.length) return null
-    const target = /^syntax-v3-.+-(\d+)-(?:lines|whole)$/.exec(chunks[0]!.chunkerVersion)?.[1]
+    const target = /^syntax-v[34]-.+-(\d+)-(?:lines|whole)$/.exec(chunks[0]!.chunkerVersion)?.[1]
     return {
       chunkTargetChars: target ? Number(target) : null,
       files: snapshot.files.map(({ fileId, path }) => {
@@ -176,13 +176,17 @@ export class MultiFileService {
           })
           const failureController = new AbortController(),
             timeout = AbortSignal.timeout(Number(process.env.CODE2FLOW_MULTI_TIMEOUT_MS ?? 900000)),
-            combined = AbortSignal.any([signal, timeout, failureController.signal])
+            runSignal = AbortSignal.any([signal, timeout]),
+            combined = AbortSignal.any([runSignal, failureController.signal])
           const runtime = new AnalysisRuntime(
             this.repo,
             snapshot,
             analysisId,
             combined,
-            (metadata) => emit('metadata', metadata)
+            (metadata) => emit('metadata', metadata),
+            (reason) => {
+              if (!combined.aborted) failureController.abort(reason)
+            }
           )
           const graph = createMultiFileGraph(runtime, this.saver),
             config = inheritTraceConfig({
@@ -225,9 +229,10 @@ export class MultiFileService {
             emit('done')
             return result
           } catch (error) {
-            const wasAborted = combined.aborted
-            // 一项任务不可继续时，停止同次分析仍在进行的模型和检索请求。
-            failureController.abort()
+            const taskFailed = failureController.signal.aborted
+            const failure = taskFailed ? failureController.signal.reason : error
+            const wasAborted = runSignal.aborted && !taskFailed
+            failureController.abort(failure)
             // 错误状态也使用官方图更新；取消后不提交迟到结果。
             await graph.updateState(
               this.config(id),
@@ -246,7 +251,7 @@ export class MultiFileService {
               coverage: runtime.coverage(),
               missingRanges: runtime.incompleteRanges().slice(0, 200)
             })
-            throw error
+            throw failure
           }
         },
         analysisTraceConfig('multifile', id, { snapshot_id: snapshotId })
