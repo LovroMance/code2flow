@@ -27,7 +27,7 @@ npm install
 
 `CODE2FLOW_MULTI_CHUNK_TARGET_CHARS` 默认是 6000，按 UTF-16 计数，是打包目标。完整语法单元可以超出目标单独成块。模型上下文和输出限制仍按实际请求校验。旧的 `CODE2FLOW_MULTI_CHUNK_LINES` 和 `CODE2FLOW_MULTI_CHUNK_CHARS` 已停用。
 
-缺少语法包或解析失败时，默认保留整文件。接受在这类文件中按整行切分时，可在后端设置 `CODE2FLOW_MULTI_ALLOW_LINE_FALLBACK=true`。
+文件没有可用的语法切点时，整份作为一块送入索引，并受模型上下文限制。
 
 多文件分析不限制整次任务的累计输入、输出 Token，模型请求也不再发送单次输出 Token 上限。旧的 `CODE2FLOW_MULTI_MAX_INPUT_TOKENS`、`CODE2FLOW_MULTI_MAX_OUTPUT_TOKENS`、`CODE2FLOW_MODEL_MAX_OUTPUT_TOKENS` 配置不再生效；实际输出长度由模型服务决定，服务返回长度截断时仍终止任务并报错。本地上下文窗口通过 `CODE2FLOW_MODEL_CONTEXT_TOKENS` 设置，当前本机配置为 500000 Token；调整该配置不会改变供应商实际支持的上下文窗口。调用总次数、并发、超时及文件限制继续保留。
 

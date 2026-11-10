@@ -16,7 +16,7 @@ export const result: FlowGenerationResult = {
   }))
 }
 
-type Reply = { args?: unknown; text?: string; status?: number }
+type Reply = { args?: unknown; text?: string; status?: number; toolName?: string }
 export interface ModelRequest {
   messages: Array<{ role: string; content: string }>
   tools?: unknown[]
@@ -58,7 +58,7 @@ export async function createModelServer(replies: Reply[]) {
             index: 0,
             id: `call-${requests.length}`,
             type: 'function',
-            function: { name: 'submit_code_flow_result', arguments: '' }
+            function: { name: reply.toolName ?? 'submit_code_flow_result', arguments: '' }
           }
         ]
       })

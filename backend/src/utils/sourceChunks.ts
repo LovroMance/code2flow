@@ -3,8 +3,8 @@ import { Language, Parser, type Node } from '@vscode/tree-sitter-wasm'
 import type { CodeChunk } from '../domain/source/schema'
 import { lineOffsets, sha256, sourceRange, validateSourceRange } from './sourcePositions'
 
-export type ChunkOptions = { chunkTargetChars: number; allowLineFallback: boolean }
-type ChunkStrategy = NonNullable<CodeChunk['strategy']>
+export type ChunkOptions = { chunkTargetChars: number }
+type ChunkStrategy = 'syntax' | 'whole-file'
 
 const grammars = new Map(Object.entries({
   '.js': 'javascript', '.jsx': 'javascript', '.mjs': 'javascript', '.cjs': 'javascript',
@@ -30,8 +30,8 @@ function loadGrammar(grammar: string) {
 
 export function chunkerVersion(path: string, options: ChunkOptions) {
   const grammar = grammarFor(path)
-  const version = grammar === 'java' ? 'v4' : 'v3'
-  return `syntax-${version}-${grammar ?? 'none'}-${options.chunkTargetChars}-${options.allowLineFallback ? 'lines' : 'whole'}`
+  const version = grammar === 'java' ? 'v5' : 'v3'
+  return `syntax-${version}-${grammar ?? 'none'}-${options.chunkTargetChars}-whole`
 }
 
 async function inspectSyntax<T>(grammar: string, text: string, inspect: (root: Node) => T) {
@@ -56,7 +56,15 @@ async function inspectSyntax<T>(grammar: string, text: string, inspect: (root: N
 function syntaxCuts(grammar: string, text: string, offsets: number[], targetChars: number) {
   return inspectSyntax(grammar, text, (root) => {
     const cuts: number[] = []
-    function collectCuts(parent: Node) {
+    const enclosingClasses = new Map<number, string>()
+    const packageDeclaration = grammar === 'java'
+      ? root.namedChildren.find((node) => node?.type === 'package_declaration')
+      : undefined
+    const packageName = packageDeclaration?.namedChildren.find(
+      (node) => node?.type === 'identifier' || node?.type === 'scoped_identifier'
+    )?.text.replace(/\s/g, '')
+    const packageEnd = packageDeclaration ? offsets[packageDeclaration.endPosition.row + 1] ?? text.length : 0
+    function collectCuts(parent: Node, enclosingClass?: string) {
       let previousEnd = -1
       let leadingComment: number | undefined
       for (const node of parent.namedChildren) {
@@ -69,21 +77,25 @@ function syntaxCuts(grammar: string, text: string, offsets: number[], targetChar
         }
         const row = leadingComment ?? start
         const offset = offsets[row]!
-        if (previousEnd >= 0 && row > previousEnd) cuts.push(offset)
+        if (previousEnd >= 0 && row > previousEnd) {
+          cuts.push(offset)
+          if (enclosingClass) enclosingClasses.set(offset, enclosingClass)
+        }
         if (
           grammar === 'java' &&
           node.type === 'class_declaration' &&
           (offsets[end + 1] ?? text.length) - offset > targetChars
         ) {
           const body = node.childForFieldName('body')
-          if (body) collectCuts(body)
+          const name = node.childForFieldName('name')?.text
+          if (body && name) collectCuts(body, enclosingClass ? `${enclosingClass}.${name}` : name)
         }
         previousEnd = Math.max(previousEnd, end)
         leadingComment = undefined
       }
     }
     collectCuts(root)
-    return cuts
+    return { cuts, enclosingClasses, packageName, packageEnd }
   })
 }
 
@@ -139,29 +151,27 @@ export function validateChunks(fileId: string, text: string, chunks: CodeChunk[]
 export async function chunkSource(fileId: string, path: string, text: string, options: ChunkOptions) {
   const offsets = lineOffsets(text)
   const grammar = grammarFor(path)
-  const cuts = grammar ? await syntaxCuts(grammar, text, offsets, options.chunkTargetChars) : undefined
-  const strategy: ChunkStrategy = cuts
-    ? 'syntax'
-    : options.allowLineFallback && text.length > options.chunkTargetChars
-      ? 'line-fallback'
-      : 'whole-file'
-  const boundaries = cuts ?? (strategy === 'line-fallback' ? offsets : [])
+  const syntax = grammar ? await syntaxCuts(grammar, text, offsets, options.chunkTargetChars) : undefined
+  const strategy: ChunkStrategy = syntax ? 'syntax' : 'whole-file'
   const chunks: Array<CodeChunk & { strategy: ChunkStrategy }> = []
   const contentHash = sha256(text)
   const version = chunkerVersion(path, options)
   let start = 0
   let end = 0
   function pushChunk() {
+    const packageName = syntax && start >= syntax.packageEnd ? syntax.packageName : undefined
+    const enclosingClass = syntax?.enclosingClasses.get(start)
     chunks.push({
       ...sourceRange(fileId, text, start, end, offsets),
       chunkId: `${fileId}_c${chunks.length}`,
       contentHash,
       chunkerVersion: version,
-      strategy
+      strategy,
+      ...(packageName || enclosingClass ? { javaScope: { packageName, enclosingClass } } : {})
     })
     start = end
   }
-  for (const next of [...boundaries, text.length]) {
+  for (const next of [...(syntax?.cuts ?? []), text.length]) {
     if (next - start > options.chunkTargetChars && end > start) pushChunk()
     end = next
   }

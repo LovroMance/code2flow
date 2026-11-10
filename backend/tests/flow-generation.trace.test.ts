@@ -1,8 +1,12 @@
 import { MemorySaver } from '@langchain/langgraph'
+import { SqliteSaver } from '@langchain/langgraph-checkpoint-sqlite'
 import { BaseCallbackHandler } from '@langchain/core/callbacks/base'
 import { analysisTraceConfig, traceStep } from '../src/ai/observability/langsmith'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { generateFlow } from '../src/services/flow-generation.service'
+import { MultiFileService } from '../src/services/multifile.service'
+import { SessionService } from '../src/services/session.service'
+import { sha256 } from '../src/utils/sourcePositions'
 import { code, result, createModelServer } from './fixtures/model.fixture'
 
 // 仅验证 LangSmith 服务追踪，语言检测使用固定结果，避免外部调用。
@@ -18,6 +22,59 @@ let server: Awaited<ReturnType<typeof createModelServer>> | undefined
 beforeEach(() => {
   vi.stubEnv('LANGSMITH_TRACING', 'false')
   vi.stubEnv('CODE2FLOW_MAX_RETRIES', '0')
+})
+
+it('多文件索引仅发送提交工具，并用精简提交组图', async () => {
+  vi.stubEnv('CODE2FLOW_MODEL_CONTEXT_TOKENS', '100000')
+  vi.stubEnv('CODE2FLOW_MULTI_CONCURRENCY', '1')
+  vi.stubEnv('CODE2FLOW_EMBEDDING_MODEL', '')
+  const saver = SqliteSaver.fromConnString(':memory:')
+  try {
+    const sessionId = 'multifile-index'
+    new SessionService(saver).ensure(sessionId)
+    const service = new MultiFileService(saver)
+    const snapshot = await service.createSnapshot(sessionId, [
+      { path: 'main.js', content: code },
+      { path: 'other.js', content: code }
+    ])
+    const model = await useModel(snapshot.files.map(({ fileId }) => {
+      const range = { fileId, lineStart: 1, lineEnd: 1 }
+      const evidenceIds = [`e${sha256(`${snapshot.snapshotId}|${fileId}|0|${code.length}`).slice(0, 12)}`]
+      return {
+        toolName: 'submit_file_index',
+        args: {
+          fileId, summary: '赋值', analyzedRanges: [{ lineStart: 1, lineEnd: 1 }], references: [],
+          unresolvedItems: [],
+          units: [{
+            unitId: 'unit', name: '入口', scope: '', kind: 'top-level', range, signature: '',
+            summary: '赋值', controlRanges: [], callSites: [], evidenceIds
+          }],
+          drafts: [{
+            unitId: 'unit', entryLocalId: 'set', emptyReason: '', edges: [],
+            nodes: [{
+              localId: 'set', kind: 'action', label: '赋值', description: '设置变量', range,
+              evidenceIds, callSiteIds: []
+            }]
+          }]
+        }
+      }
+    }))
+
+    const flow = await service.generate(sessionId, snapshot.snapshotId, new AbortController().signal, () => {})
+
+    expect(flow.hasExecutableFlow).toBe(true)
+    expect(flow.coverage.complete).toBe(true)
+    expect(new Set(flow.mappings.map((mapping) => mapping.fileId))).toEqual(
+      new Set(snapshot.files.map((file) => file.fileId))
+    )
+    expect(model.requests).toHaveLength(2)
+    for (const request of model.requests) {
+      expect(request.tools).toMatchObject([{ function: { name: 'submit_file_index' } }])
+      expect(JSON.stringify(request.tools)).not.toMatch(/read_code|startKnown|endKnown|"boundary"|"complete"|schemaVersion/)
+    }
+  } finally {
+    saver.db.close()
+  }
 })
 afterEach(async () => {
   await server?.close()

@@ -89,7 +89,7 @@ export class MultiFileService {
     const snapshot = this.snapshot(id, snapshotId)
     const chunks = this.repo.chunks(snapshot)
     if (!chunks.length) return null
-    const target = /^syntax-v[34]-.+-(\d+)-(?:lines|whole)$/.exec(chunks[0]!.chunkerVersion)?.[1]
+    const target = /^syntax-v\d+-.+-(\d+)-(?:lines|whole)$/.exec(chunks[0]!.chunkerVersion)?.[1]
     return {
       chunkTargetChars: target ? Number(target) : null,
       files: snapshot.files.map(({ fileId, path }) => {

@@ -122,7 +122,7 @@ export function chineseErrorMessage(
       preserveBusinessMessage &&
       /^[\u4e00-\u9fff]/u.test(message) &&
       (type === 'Error' ||
-        /^(Session|AnalysisLimit|ContextLimit|ModelConfiguration|LanguageDetectionConfig|MultiConfiguration|FragmentConflict)Error$/.test(
+        /^(Session|AnalysisLimit|ContextLimit|ModelConfiguration|LanguageDetectionConfig|MultiConfiguration)Error$/.test(
           type
         ))
     )

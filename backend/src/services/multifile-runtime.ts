@@ -12,7 +12,6 @@ import {
 import type { MultiFileRuntime, TaskOutcome } from '../ai/graph/multifile.graph'
 import { runDetectLanguage } from '../ai/tools/detect-language.tool'
 import {
-  CombinedIndexSchema,
   FileSemanticIndexSchema,
   UnitFlowDraftSchema,
   type FileSemanticIndex,
@@ -44,7 +43,6 @@ import {
   composeMultiFileFlow,
   validateUnitDraft
 } from '../utils/composeMultiFileFlow'
-import { mergeFileFragments, FragmentConflictError } from '../utils/mergeFileFragments'
 import { safeErrorDetails } from '../ai/observability/safe-error'
 import { ModelOutputTruncatedError, errorCauses } from '../domain/multifile/errors'
 import { traceStep } from '../ai/observability/langsmith'
@@ -140,15 +138,6 @@ export class AnalysisRuntime implements MultiFileRuntime {
     this.progress('basic', 0, this.snapshot.files.length)
     this.chunks = await this.repo.basicChunks(this.snapshot, this.budgetTracker.config)
     this.signal.throwIfAborted()
-    for (const chunk of this.chunks) {
-      if (chunk.startOffset !== 0 || chunk.strategy !== 'line-fallback') continue
-      const file = this.snapshot.files.find((file) => file.fileId === chunk.fileId)!
-      this.diagnostics.push({
-        code: 'chunk_line_fallback',
-        fileId: file.fileId,
-        message: `${file.path} 的语法边界无法确认，已按配置使用整行切块。`
-      })
-    }
     this.repo.saveChunks(this.snapshot, this.chunks)
     this.progress('chunks-ready', this.chunks.length, this.chunks.length)
     this.retrieval = new RetrievalService(
@@ -171,12 +160,9 @@ export class AnalysisRuntime implements MultiFileRuntime {
   generationTasks() {
     return this.indexes.flatMap((i) => i.units).map((u) => `generate:${u.unitId}`)
   }
-  /** 将边界冲突或阻塞缺口定位回相关索引任务，供图执行有界重试。 */
-  repairIndexes(error?: unknown) {
-    const ranges =
-      error instanceof FragmentConflictError ? [error.range] : this.coverage().unresolvedRanges
-    if (error && !(error instanceof FragmentConflictError)) throw error
-    const tasks = this.chunks
+  /** 将阻塞语义问题定位到可重新分析的源码块。 */
+  blockingIndexTasks(ranges: SourceRange[]) {
+    return this.chunks
       .filter((chunk) =>
         ranges.some(
           (range) =>
@@ -185,10 +171,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
             range.endOffset > chunk.startOffset
         )
       )
-      .map((chunk) => {
-        return `index:${chunk.chunkId}`
-      })
-    return tasks
+      .map((chunk) => `index:${chunk.chunkId}`)
   }
   verificationTasks() {
     return [...this.verificationBatches.keys()]
@@ -206,7 +189,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
         base: process.env.DEEPSEEK_BASE_URL,
         temperature: process.env.DEEPSEEK_TEMPERATURE,
         chunker: chunk.chunkerVersion,
-        version: 'index-lines-v3'
+        version: 'index-lines-v4'
       })
     )
   }
@@ -232,14 +215,20 @@ export class AnalysisRuntime implements MultiFileRuntime {
     )
       throw new ModelOutputValidationError('分配的源码块没有完整处理。')
     const ids = new Set<string>(),
-      calls = new Set<string>()
+      calls = new Set<string>(),
+      unitEnds = new Map<string, number>()
     for (const unit of index.units) {
-      if (unit.complete !== (unit.boundary.startKnown && unit.boundary.endKnown))
-        throw new ModelOutputValidationError('单元完整状态与边界标记不一致。')
       if (ids.has(unit.unitId)) throw new ModelOutputValidationError('临时单元ID重复。')
       ids.add(unit.unitId)
       if (unit.range.fileId !== index.fileId) throw new ModelOutputValidationError('单元跨文件。')
+      if (unit.range.startOffset < chunk.startOffset || unit.range.endOffset > chunk.endOffset)
+        throw new ModelOutputValidationError('单元超出分配的源码块。')
       context.validate(unit.range, unit.evidenceIds)
+      const unitKey = JSON.stringify([unit.scope, unit.name, unit.range.startOffset])
+      const previousEnd = unitEnds.get(unitKey)
+      if (previousEnd !== undefined && previousEnd !== unit.range.endOffset)
+        throw new ModelOutputValidationError('同一作用域和起点的同名单元提交了不同结束行。')
+      unitEnds.set(unitKey, unit.range.endOffset)
       for (const control of unit.controlRanges) {
         context.validate(control.range, unit.evidenceIds)
         // 控制位置常带行首缩进或行尾换行等空白噪声，修剪到实际语句并重算行列，
@@ -370,7 +359,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
         return new ModelOutputTruncatedError(`${location}：${error.message}`)
       return new ContextLimitError(
         wholeFile
-          ? `${location} 的整文件任务超过模型上下文，且无法确认语法边界。如接受按整行切块，可设置 CODE2FLOW_MULTI_ALLOW_LINE_FALLBACK=true。`
+          ? `${location} 无法按语法分块，整文件超过模型上下文。请使用上下文更大的模型。`
           : `${location} 的任务超过模型上下文。请减小切块目标或使用上下文更大的模型，完整语法单元会保留。`
       )
     }
@@ -418,7 +407,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
           drafts = withDrafts ? rebound.drafts : []
         } else {
           const code = context.read(chunk.fileId, chunk.startOffset, chunk.endOffset)
-          index = await runMultiFileChain(
+          const submission = await runMultiFileChain(
             'index',
             {
               file: this.snapshot.files.find((f) => f.fileId === chunk.fileId),
@@ -433,13 +422,18 @@ export class AnalysisRuntime implements MultiFileRuntime {
             taskContext,
             withDrafts ? { withDrafts: true } : undefined
           )
-          drafts =
-            withDrafts && 'drafts' in index
-              ? (index as z.infer<typeof CombinedIndexSchema>).drafts
-              : []
+          const { drafts: submittedDrafts, ...fields } =
+            'drafts' in submission ? submission : { ...submission, drafts: [] }
+          drafts = submittedDrafts
+          index = {
+            ...fields,
+            units: fields.units.map((unit) => ({ ...unit, complete: true })),
+            status: fields.unresolvedItems.some((item) => item.blocking) ? 'partial' : 'complete',
+            schemaVersion: '2'
+          }
         }
         await this.checkIndex(index, chunk, context)
-        // 只允许本文件补读，禁止把外部上下文错误当作可移植缓存。
+        // 缓存只允许本文件的源码凭证。
         if ([...context.evidence.values()].some((e) => e.fileId !== chunk.fileId))
           throw new ModelOutputValidationError('文件分析任务只能读取本文件上下文。')
         this.signal.throwIfAborted()
@@ -589,28 +583,13 @@ export class AnalysisRuntime implements MultiFileRuntime {
       }
     }
   }
-  /** 合并各块的重叠片段，建立正式单元/调用点身份，再汇总文件索引与证据。 */
+  /** 汇总分块索引、证据并建立正式单元和调用点身份。 */
   merge() {
-    const units = new Map<string, ExecutionUnit>()
-    this.context = new SourceContext(
-      this.repo,
-      this.snapshot,
-      this.chunks,
-      this.indexes,
-      this.signal,
-      this.retrieval
-    )
-    for (const context of this.contexts.values())
-      for (const [id, e] of context.evidence) {
-        this.context.evidence.set(id, e)
-        this.context.accessible.add(id)
-      }
-    this.indexes = this.snapshot.files.map((file) => {
-      const parts = mergeFileFragments(
-        file.fileId,
-        this.repo.content(this.snapshot, file.fileId),
-        [...this.partial.values()].filter((i) => i.fileId === file.fileId)
-      )
+    this.indexes = this.snapshot.files.map((file): FileSemanticIndex => {
+      const parts = this.chunks
+        .filter((chunk) => chunk.fileId === file.fileId)
+        .map((chunk) => this.partial.get(`index:${chunk.chunkId}`)!)
+      const units = new Map<string, ExecutionUnit>()
       const references: FileSemanticIndex['references'] = []
       for (const part of parts) {
         for (const unit of part.units) {
@@ -651,7 +630,9 @@ export class AnalysisRuntime implements MultiFileRuntime {
         }
         references.push(...part.references)
       }
-      const fileUnits = [...units.values()].filter((u) => u.range.fileId === file.fileId)
+      const fileUnits = [...units.values()].sort(
+        (a, b) => a.range.startOffset - b.range.startOffset || b.range.endOffset - a.range.endOffset
+      )
       for (const unit of fileUnits) {
         const calls = new Map<string, string>()
         unit.callSites = unit.callSites.map((c, index) => {
@@ -661,6 +642,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
         })
         this.callAliases.set(unit.unitId, calls)
       }
+      const unresolvedItems = parts.flatMap((i) => i.unresolvedItems)
       return {
         fileId: file.fileId,
         summary: parts
@@ -674,25 +656,11 @@ export class AnalysisRuntime implements MultiFileRuntime {
           ).values()
         ],
         analyzedRanges: parts.flatMap((i) => i.analyzedRanges),
-        unresolvedItems: parts.flatMap((i) => i.unresolvedItems),
-        status: parts[0]!.status,
-        schemaVersion: '2' as const
+        unresolvedItems,
+        status: unresolvedItems.some((item) => item.blocking) ? 'partial' : 'complete',
+        schemaVersion: '2'
       }
     })
-    // 拒绝同作用域、同起点但结束冲突的单元；嵌套范围仍然合法。
-    for (const index of this.indexes)
-      for (const unit of index.units)
-        if (
-          index.units.some(
-            (other) =>
-              other !== unit &&
-              other.range.startOffset === unit.range.startOffset &&
-              other.scope === unit.scope &&
-              other.name === unit.name &&
-              other.range.endOffset !== unit.range.endOffset
-          )
-        )
-          throw new FragmentConflictError(unit.range)
     this.context = new SourceContext(
       this.repo,
       this.snapshot,
@@ -982,7 +950,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
       ...this.context!.evidence.values()
     ])
   }
-  /** 对已分析偏移求并集，并检查边界与阻塞项；不把重叠读取重复算作覆盖。 */
+  /** 对已分析偏移求并集并检查阻塞项。 */
   coverage() {
     const files = this.snapshot.files.map((f) => {
       const length = this.repo.content(this.snapshot, f.fileId).length,
@@ -999,10 +967,9 @@ export class AnalysisRuntime implements MultiFileRuntime {
         missing
       }
     })
-    const unresolvedRanges = this.indexes.flatMap((index) => [
-      ...index.units.filter((unit) => !unit.complete).map((unit) => unit.range),
-      ...index.unresolvedItems.filter((item) => item.blocking).map((item) => item.range)
-    ])
+    const unresolvedRanges = this.indexes.flatMap((index) =>
+      index.unresolvedItems.filter((item) => item.blocking).map((item) => item.range)
+    )
     return {
       complete: files.every((f) => !f.missing.length) && !unresolvedRanges.length,
       files,

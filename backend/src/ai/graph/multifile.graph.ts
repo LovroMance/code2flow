@@ -3,6 +3,7 @@ import type { BaseCheckpointSaver } from '@langchain/langgraph'
 import { z } from 'zod'
 import { LanguageDetectionSchema } from '../../domain/flow/schema'
 import { MultiFileFlowResultSchema, CoverageSchema } from '../../domain/multifile/schema'
+import type { SourceRange } from '../../domain/source/schema'
 
 /** 单个任务本轮结果；error 为 null 表示成功，fatal 表示重试也无法解决。 */
 export const TaskOutcomeSchema = z.object({
@@ -60,7 +61,7 @@ export interface MultiFileRuntime {
   retries: number
   task(id: string, attempt: number, feedback: string | null): Promise<TaskOutcome>
   merge(): void
-  repairIndexes(error?: unknown): string[]
+  blockingIndexTasks(ranges: SourceRange[]): string[]
   resolve(): Promise<void>
   finishReferences(): void
   coverage(): z.infer<typeof CoverageSchema>
@@ -113,30 +114,7 @@ export function createMultiFileGraph(
         .find((outcome) => outcome?.error && (outcome.fatal || outcome.attempts > r().retries))
       r().progress('index', r().indexTasks().length - pending.length, r().indexTasks().length)
       if (failure) throw new Error(`文件索引未完成：${failure.taskId}；${failure.error}`)
-      if (!pending.length) {
-        try {
-          r().merge()
-        } catch (error) {
-          const repair = r().repairIndexes(error)
-          if (
-            !repair.length ||
-            repair.some((id) => (state.outcomes[id]?.attempts ?? 0) > r().retries)
-          )
-            throw error
-          return {
-            pending: repair,
-            outcomes: Object.fromEntries(
-              repair.map((id) => [
-                id,
-                {
-                  ...state.outcomes[id]!,
-                  error: '合并发现执行单元边界冲突，请定点补读相关源码并修正边界标记。'
-                }
-              ])
-            )
-          }
-        }
-      }
+      if (!pending.length) r().merge()
       return { pending }
     })
     .addNode('resolveReferences', async () => {
@@ -175,7 +153,7 @@ export function createMultiFileGraph(
     .addNode('assessCoverage', (state) => {
       const coverage = r().coverage()
       if (!coverage.complete) {
-        const repair = r().repairIndexes()
+        const repair = r().blockingIndexTasks(coverage.unresolvedRanges ?? [])
         if (
           repair.length &&
           repair.every((id) => (state.outcomes[id]?.attempts ?? 0) <= r().retries)
@@ -187,7 +165,7 @@ export function createMultiFileGraph(
                 id,
                 {
                   ...state.outcomes[id]!,
-                  error: '执行单元跨块边界仍未确认，请补读前后邻近源码并修正片段身份或起止边界。'
+                  error: '此块存在影响生成的未解决问题，请核对本块源码并修正索引。'
                 }
               ])
             ),

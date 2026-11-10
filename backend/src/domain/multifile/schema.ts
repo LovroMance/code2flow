@@ -22,7 +22,7 @@ export const CallSiteSchema = z.object({
   // 支撑该调用位置的实际读取凭证。
   evidenceIds: ids
 })
-/** 可独立生成局部流程的语义单元；长单元可能先以多个不完整片段出现。 */
+/** 可独立生成局部流程的语义单元。 */
 export const ExecutionUnitSchema = z.object({
   // Worker 提交临时 ID，合并后由程序分配正式 unitId。
   unitId: z.string(),
@@ -41,9 +41,9 @@ export const ExecutionUnitSchema = z.object({
     'declaration',
     'other'
   ]),
-  // 完整单元或当前已读片段在原始正文中的范围。
+  // 单元在原始正文中的范围。
   range: SourceRangeSchema,
-  // 用于识别重叠片段是否属于同一个单元的签名线索。
+  // 供源码检索使用的签名线索。
   signature: text,
   // 单元职责摘要，不保存模型内部推理。
   summary: text,
@@ -60,9 +60,7 @@ export const ExecutionUnitSchema = z.object({
   callSites: z.array(CallSiteSchema).max(500),
   // 支撑该单元及边界的实际读取凭证。
   evidenceIds: ids,
-  // 是否真正读到单元起止边界；块的起止不等于函数起止。
-  boundary: z.object({ startKnown: z.boolean(), endKnown: z.boolean() }),
-  // 只有两侧边界均确认时才可完整，合并时仍会交叉校验。
+  // 新索引由程序登记完整单元，历史索引可能含有未完成的片段。
   complete: z.boolean()
 })
 /** 文件中的导入、导出及作用域线索，本身不等于执行调用边。 */
@@ -79,7 +77,7 @@ export const ReferenceIndexSchema = z.object({
   range: SourceRangeSchema,
   evidenceIds: ids
 })
-/** 单块 Worker 输出与文件合并索引共用的结构，不包含最终 Mermaid。 */
+/** 持久化语义索引，不包含最终 Mermaid。 */
 export const FileSemanticIndexSchema = z.object({
   // 索引只属于一个快照文件。
   fileId: z.string(),
@@ -98,19 +96,32 @@ export const FileSemanticIndexSchema = z.object({
         range: SourceRangeSchema,
         // 是否阻止进入最终生成阶段。
         blocking: z.boolean(),
-        // 区分跨块边界、语义缺口和外部依赖缺失。
+        // boundary 和 unitId 用于兼容历史索引。
         kind: z.enum(['boundary', 'semantic', 'dependency']),
-        // 关联的片段或单元身份，无法绑定时为 null。
-        unitId: z.string().nullable()
+        unitId: z.string().nullable().optional()
       })
     )
     .max(100),
   // 实际完整读到并分析的偏移区间，用其并集计算覆盖，不能填未读区域。
   analyzedRanges: z.array(OffsetRangeSchema).max(1000),
-  // 当前索引的完整性声明，仍需通过程序覆盖和边界校验。
+  // 由程序根据阻塞项计算索引状态。
   status: z.enum(['partial', 'complete']),
   // 索引协议版本，用于拒绝不兼容的结构。
   schemaVersion: z.literal('2')
+})
+
+export const IndexSubmissionSchema = FileSemanticIndexSchema.omit({
+  status: true,
+  schemaVersion: true
+}).extend({
+  units: z.array(ExecutionUnitSchema.omit({ complete: true })).max(1000),
+  unresolvedItems: z
+    .array(
+      FileSemanticIndexSchema.shape.unresolvedItems.element.omit({ unitId: true }).extend({
+        kind: z.enum(['semantic', 'dependency'])
+      })
+    )
+    .max(100)
 })
 /** 从源单元发出的关系；只有证据验证通过的 resolved 关系才能作为确认调用。 */
 export const CrossFileReferenceSchema = z.object({
@@ -172,7 +183,7 @@ export const UnitFlowDraftSchema = z.object({
   emptyReason: text
 })
 /** 单块文件的一次性提交：语义索引与各单元局部流程草稿同轮产出，省去独立生成调用。 */
-export const CombinedIndexSchema = FileSemanticIndexSchema.extend({
+export const CombinedIndexSchema = IndexSubmissionSchema.extend({
   drafts: z.array(UnitFlowDraftSchema).max(500)
 })
 /** 用户可见的降级或分析提示，避免暴露供应商原始异常及源码正文。 */

@@ -108,8 +108,8 @@ export class SourceContext {
       if (evidence.startOffset <= cursor) cursor = Math.max(cursor, evidence.endOffset)
     if (cursor < range.endOffset) throw new ModelOutputValidationError('源码范围没有完整证据。')
   }
-  /** 索引角色只获 read_code；核对和追问角色额外获得目录、索引与检索工具。 */
-  tools(role: 'index' | 'verify' | 'followup' = 'verify') {
+  /** 核对和追问角色可以读取额外源码和检索候选。 */
+  tools() {
     const read = tool(
       async (input) => {
         this.signal?.throwIfAborted()
@@ -208,7 +208,6 @@ export class SourceContext {
         schema: ReadSchema
       }
     )
-    if (role === 'index') return [read]
     return [
       read,
       tool(

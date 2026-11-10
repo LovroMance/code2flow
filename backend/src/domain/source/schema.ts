@@ -67,8 +67,12 @@ export const CodeChunkSchema = SourceRangeSchema.extend({
   contentHash: z.string(),
   // 切片算法版本，避免算法变更后误用旧缓存。
   chunkerVersion: z.string(),
-  // 旧快照的分块没有此字段。
-  strategy: z.enum(['syntax', 'whole-file', 'line-fallback']).optional()
+  // 兼容没有此字段或曾使用按行切块的历史快照。
+  strategy: z.enum(['syntax', 'whole-file', 'line-fallback']).optional(),
+  // Java 分块开始位置之前声明的作用域，供索引使用。
+  javaScope: z
+    .object({ packageName: z.string().optional(), enclosingClass: z.string().optional() })
+    .optional()
 })
 /** 程序实际读取过的源码凭证；模型输出的范围必须有相应证据覆盖。 */
 export const EvidenceSchema = SourceRangeSchema.extend({

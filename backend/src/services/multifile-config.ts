@@ -4,19 +4,17 @@ export class MultiConfigurationError extends Error {}
 
 const positive = z.coerce.number().int().positive()
 const chunkConfigSchema = z.object({
-  chunkTargetChars: positive.min(256).max(12000),
-  allowLineFallback: z.enum(['true', 'false']).transform((value) => value === 'true')
+  chunkTargetChars: positive.min(256).max(12000)
 })
 const chunkConfigInput = () => ({
-  chunkTargetChars: process.env.CODE2FLOW_MULTI_CHUNK_TARGET_CHARS ?? 6000,
-  allowLineFallback: process.env.CODE2FLOW_MULTI_ALLOW_LINE_FALLBACK ?? 'false'
+  chunkTargetChars: process.env.CODE2FLOW_MULTI_CHUNK_TARGET_CHARS ?? 6000
 })
 
 /** 调试预览只需要切块配置，可以独立于模型配置运行。 */
 export function chunkConfig() {
   const result = chunkConfigSchema.safeParse(chunkConfigInput())
   if (!result.success)
-    throw new MultiConfigurationError('切块配置无效，请检查后端的切块字符数目标和整行降级设置。')
+    throw new MultiConfigurationError('切块配置无效，请检查后端的切块字符数目标。')
   return result.data
 }
 

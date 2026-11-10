@@ -100,7 +100,7 @@ export function createMultiFileRouter(service: () => MultiFileService = getMulti
           error instanceof SessionError
             ? error.message
             : error instanceof Error &&
-                /^(文件索引未完成|局部流程未完成|关系核对未完成|源码覆盖未完成|单元边界冲突)/.test(
+                /^(文件索引未完成|局部流程未完成|关系核对未完成|源码覆盖未完成)/.test(
                   error.message
                 )
               ? error.message
