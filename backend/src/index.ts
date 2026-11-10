@@ -5,7 +5,7 @@ import { configureLangSmith } from './ai/observability/langsmith'
 dotenv.config()
 configureLangSmith()
 
-const port = Number(process.env.PORT ?? 3000)
+const port = Number(process.env.PORT)
 const app = createApp()
 
 app.listen(port, () => {

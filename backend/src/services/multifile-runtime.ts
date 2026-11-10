@@ -99,12 +99,14 @@ export class AnalysisRuntime implements MultiFileRuntime {
     this.signal.throwIfAborted()
     if (
       !process.env.DEEPSEEK_API_KEY?.trim() ||
-      (process.env.DEEPSEEK_MODEL !== undefined && !process.env.DEEPSEEK_MODEL.trim()) ||
+      !process.env.DEEPSEEK_MODEL?.trim() ||
       !Number.isFinite(Number(process.env.DEEPSEEK_TEMPERATURE ?? 0))
     )
       throw new ModelConfigurationError('生成模型密钥、模型名称或温度配置无效。')
     try {
-      const url = new URL(process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com')
+      const baseURL = process.env.DEEPSEEK_BASE_URL
+      if (!baseURL) throw new Error()
+      const url = new URL(baseURL)
       if (!['http:', 'https:'].includes(url.protocol)) throw new Error()
     } catch {
       throw new ModelConfigurationError('生成模型端点配置无效。')

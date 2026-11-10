@@ -22,9 +22,9 @@ export async function runDetectLanguage(
 
 async function detectLanguage(code: string, signal?: AbortSignal): Promise<LanguageDetection> {
   const config = ConfigSchema.safeParse({
-    model: process.env.TYPESAFE_DEFAULT_MODEL ?? 'jev-1.14.0',
-    timeout: process.env.CODE2FLOW_LANGUAGE_TIMEOUT_MS ?? 5000,
-    minConfidence: process.env.CODE2FLOW_LANGUAGE_MIN_CONFIDENCE ?? 0.6
+    model: process.env.TYPESAFE_DEFAULT_MODEL,
+    timeout: process.env.CODE2FLOW_LANGUAGE_TIMEOUT_MS,
+    minConfidence: process.env.CODE2FLOW_LANGUAGE_MIN_CONFIDENCE
   })
   if (!config.success) {
     console.error('[code-flow][jev] config-error', {

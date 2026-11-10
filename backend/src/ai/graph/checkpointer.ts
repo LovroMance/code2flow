@@ -34,8 +34,8 @@ export async function loadLegacyCheckpoint(threadId: string, saver?: BaseCheckpo
     )
       return undefined
   }
-  const file =
-    process.env.CODE2FLOW_CHECKPOINT_FILE ?? '.code2flow/checkpoints/code-flow-checkpoints.json'
+  const file = process.env.CODE2FLOW_CHECKPOINT_FILE
+  if (!file) throw new Error('请配置 CODE2FLOW_CHECKPOINT_FILE。')
   try {
     const store = JSON.parse(await readFile(file, 'utf8'))
     return z

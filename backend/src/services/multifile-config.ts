@@ -38,11 +38,11 @@ export function multiConfig() {
       ...chunkConfigSchema.shape
     })
     .safeParse({
-      maxFiles: process.env.CODE2FLOW_MULTI_MAX_FILES ?? 20,
-      maxTotalBytes: process.env.CODE2FLOW_MULTI_MAX_TOTAL_BYTES ?? 2097152,
-      concurrency: process.env.CODE2FLOW_MULTI_CONCURRENCY ?? 3,
-      maxCalls: process.env.CODE2FLOW_MULTI_MAX_MODEL_CALLS ?? 120,
-      timeout: process.env.CODE2FLOW_MULTI_TIMEOUT_MS ?? 900000,
+      maxFiles: process.env.CODE2FLOW_MULTI_MAX_FILES,
+      maxTotalBytes: process.env.CODE2FLOW_MULTI_MAX_TOTAL_BYTES,
+      concurrency: process.env.CODE2FLOW_MULTI_CONCURRENCY,
+      maxCalls: process.env.CODE2FLOW_MULTI_MAX_MODEL_CALLS,
+      timeout: process.env.CODE2FLOW_MULTI_TIMEOUT_MS,
       contextTokens: process.env.CODE2FLOW_MODEL_CONTEXT_TOKENS,
       retries: process.env.CODE2FLOW_MAX_RETRIES ?? 1,
       ...chunkConfigInput()

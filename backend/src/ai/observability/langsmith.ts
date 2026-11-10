@@ -13,8 +13,9 @@ export function configureLangSmith() {
     console.warn('[code2flow][langsmith] 未填写 LANGSMITH_API_KEY，已关闭远程追踪。')
     return
   }
-  const endpoint = process.env.LANGSMITH_ENDPOINT?.trim() || 'https://api.smith.langchain.com'
+  const endpoint = process.env.LANGSMITH_ENDPOINT?.trim()
   try {
+    if (!endpoint) throw new Error('缺少地址')
     const url = new URL(endpoint)
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password)
       throw new Error('无效地址')
@@ -23,11 +24,16 @@ export function configureLangSmith() {
     console.warn('[code2flow][langsmith] LANGSMITH_ENDPOINT 无效，已关闭远程追踪。')
     return
   }
+  const project = process.env.LANGSMITH_PROJECT?.trim()
+  if (!project) {
+    process.env.LANGSMITH_TRACING = 'false'
+    console.warn('[code2flow][langsmith] 未填写 LANGSMITH_PROJECT，已关闭远程追踪。')
+    return
+  }
   process.env.LANGSMITH_ENDPOINT = endpoint
-  process.env.LANGSMITH_PROJECT = process.env.LANGSMITH_PROJECT?.trim() || 'code2flow-dev'
+  process.env.LANGSMITH_PROJECT = project
   // SDK 对空字符串和未设置的处理不同；可选 workspace 留空时使用账号默认值。
   if (!process.env.LANGSMITH_WORKSPACE_ID?.trim()) delete process.env.LANGSMITH_WORKSPACE_ID
-  process.env.LANGCHAIN_CALLBACKS_BACKGROUND ??= 'true'
   console.info('[code2flow][langsmith] 远程追踪已启用，输入输出将上传至配置的项目。')
 }
 

@@ -25,6 +25,10 @@ beforeEach(() => {
 })
 
 it('多文件索引仅发送提交工具，并用精简提交组图', async () => {
+  vi.stubEnv('CODE2FLOW_MULTI_MAX_FILES', '20')
+  vi.stubEnv('CODE2FLOW_MULTI_MAX_TOTAL_BYTES', '2097152')
+  vi.stubEnv('CODE2FLOW_MULTI_MAX_MODEL_CALLS', '120')
+  vi.stubEnv('CODE2FLOW_MULTI_TIMEOUT_MS', '900000')
   vi.stubEnv('CODE2FLOW_MODEL_CONTEXT_TOKENS', '100000')
   vi.stubEnv('CODE2FLOW_MULTI_CONCURRENCY', '1')
   vi.stubEnv('CODE2FLOW_EMBEDDING_MODEL', '')
@@ -92,13 +96,13 @@ async function useModel(replies: Parameters<typeof createModelServer>[0]) {
     }))
   )
   vi.stubEnv('DEEPSEEK_API_KEY', 'test-only')
+  vi.stubEnv('DEEPSEEK_MODEL', 'deepseek-chat')
   vi.stubEnv('DEEPSEEK_BASE_URL', server.baseURL)
   return server
 }
 describe('LangSmith 服务追踪', () => {
   it('保留真实 Agent 和模型的父子关联、输入输出及供应商用量', async () => {
     vi.stubEnv('LANGSMITH_TRACING', 'false')
-    vi.stubEnv('DEEPSEEK_MODEL', 'deepseek-chat')
     await useModel([{}])
     const starts: Array<{
       id: string

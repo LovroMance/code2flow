@@ -1,8 +1,9 @@
 import { ChatOpenAI } from '@langchain/openai'
 
 export function createOpenAIModel(purpose?: 'index') {
-  const model = process.env.DEEPSEEK_MODEL ?? 'deepseek-chat'
-  const baseURL = process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com'
+  const model = process.env.DEEPSEEK_MODEL?.trim()
+  const baseURL = process.env.DEEPSEEK_BASE_URL?.trim()
+  if (!model || !baseURL) throw new Error('请配置 DEEPSEEK_MODEL 和 DEEPSEEK_BASE_URL。')
   const useLowReasoning =
     purpose === 'index' &&
     model === 'deepseek-v4.1-flash' &&

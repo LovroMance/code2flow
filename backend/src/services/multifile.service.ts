@@ -22,8 +22,8 @@ export async function previewChunks(input: SourceFileInput[]) {
   const config = chunkConfig()
   const files = SourceRepository.validateFiles(
     input,
-    Number(process.env.CODE2FLOW_MULTI_MAX_FILES ?? 20),
-    Number(process.env.CODE2FLOW_MULTI_MAX_TOTAL_BYTES ?? 2097152)
+    Number(process.env.CODE2FLOW_MULTI_MAX_FILES),
+    Number(process.env.CODE2FLOW_MULTI_MAX_TOTAL_BYTES)
   )
   return {
     ...config,
@@ -70,8 +70,8 @@ export class MultiFileService {
         id,
         SourceRepository.validateFiles(
           files,
-          Number(process.env.CODE2FLOW_MULTI_MAX_FILES ?? 20),
-          Number(process.env.CODE2FLOW_MULTI_MAX_TOTAL_BYTES ?? 2097152)
+          Number(process.env.CODE2FLOW_MULTI_MAX_FILES),
+          Number(process.env.CODE2FLOW_MULTI_MAX_TOTAL_BYTES)
         )
       )
     })
@@ -118,8 +118,8 @@ export class MultiFileService {
       const files = input.files.length
         ? SourceRepository.validateFiles(
             input.files,
-            Number(process.env.CODE2FLOW_MULTI_MAX_FILES ?? 20),
-            Number(process.env.CODE2FLOW_MULTI_MAX_TOTAL_BYTES ?? 2097152)
+            Number(process.env.CODE2FLOW_MULTI_MAX_FILES),
+            Number(process.env.CODE2FLOW_MULTI_MAX_TOTAL_BYTES)
           )
         : []
       const activePath = files.length ? normalizeSourcePath(input.activePath) : input.activePath
@@ -175,7 +175,7 @@ export class MultiFileService {
             detectedLanguage: snapshot.languageDetection?.language ?? 'unknown'
           })
           const failureController = new AbortController(),
-            timeout = AbortSignal.timeout(Number(process.env.CODE2FLOW_MULTI_TIMEOUT_MS ?? 900000)),
+            timeout = AbortSignal.timeout(Number(process.env.CODE2FLOW_MULTI_TIMEOUT_MS)),
             runSignal = AbortSignal.any([signal, timeout]),
             combined = AbortSignal.any([runSignal, failureController.signal])
           const runtime = new AnalysisRuntime(
@@ -286,7 +286,7 @@ export class MultiFileService {
           }
           const combined = AbortSignal.any([
             signal,
-            AbortSignal.timeout(Number(process.env.CODE2FLOW_MULTI_TIMEOUT_MS ?? 900000))
+            AbortSignal.timeout(Number(process.env.CODE2FLOW_MULTI_TIMEOUT_MS))
           ])
           const budget = new AnalysisBudget(combined),
             chunks = this.repo.chunks(snapshot)
