@@ -11,10 +11,27 @@ import { SourceContext } from './source-context.service'
 import { RetrievalService } from './retrieval.service'
 import { AnalysisRuntime } from './multifile-runtime'
 import { withSessionLock, SessionError, isSessionBusy } from './session-lock'
-import { normalizeSourcePath } from '../utils/sourcePositions'
-import { SOURCE_LIMITS } from './multifile-config'
+import { chunkSource, normalizeSourcePath } from '../utils/sourcePositions'
+import { chunkConfig, SOURCE_LIMITS } from './multifile-config'
 import { z } from 'zod'
 import { analysisTraceConfig, inheritTraceConfig, traceStep } from '../ai/observability/langsmith'
+
+/** 用本次提交的草稿预览分块，按输入顺序返回文件和范围。 */
+export function previewChunks(input: SourceFileInput[]) {
+  const config = chunkConfig()
+  const files = SourceRepository.validateFiles(
+    input,
+    Number(process.env.CODE2FLOW_MULTI_MAX_FILES ?? 20),
+    Number(process.env.CODE2FLOW_MULTI_MAX_TOTAL_BYTES ?? 2097152)
+  )
+  return {
+    ...config,
+    files: files.map(({ path, content }, index) => ({
+      path,
+      chunks: chunkSource(`preview_${index + 1}`, content, config.chunkChars, config.chunkLines)
+    }))
+  }
+}
 
 export class MultiFileService {
   readonly repo: SourceRepository
@@ -36,7 +53,7 @@ export class MultiFileService {
       this.ensure(id)
       return this.repo.create(
         id,
-        this.repo.validateFiles(
+        SourceRepository.validateFiles(
           files,
           Number(process.env.CODE2FLOW_MULTI_MAX_FILES ?? 20),
           Number(process.env.CODE2FLOW_MULTI_MAX_TOTAL_BYTES ?? 2097152)
@@ -57,7 +74,7 @@ export class MultiFileService {
     return withSessionLock(id, async () => {
       this.ensure(id)
       const files = input.files.length
-        ? this.repo.validateFiles(
+        ? SourceRepository.validateFiles(
             input.files,
             Number(process.env.CODE2FLOW_MULTI_MAX_FILES ?? 20),
             Number(process.env.CODE2FLOW_MULTI_MAX_TOTAL_BYTES ?? 2097152)
@@ -209,7 +226,7 @@ export class MultiFileService {
           const draft = this.repo.draft(id)
           if (draft) {
             if (!draft.files.length) throw new SessionError('草稿已清空，请重新生成后追问。', 409)
-            const files = this.repo.validateFiles(draft.files)
+            const files = SourceRepository.validateFiles(draft.files)
             if (
               files.length !== snapshot.files.length ||
               files.some((f) => {

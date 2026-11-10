@@ -1,7 +1,7 @@
 import { Router, json, type Request, type Response } from 'express'
 import { z } from 'zod'
 import { SourceFilesSchema, DraftSchema } from '../domain/source/schema'
-import { getMultiFileService, type MultiFileService } from '../services/multifile.service'
+import { getMultiFileService, previewChunks, type MultiFileService } from '../services/multifile.service'
 import { SessionError } from '../services/session-lock'
 import { AnalysisLimitError, ModelConfigurationError } from '../ai/chains/multifile.chain'
 import { LanguageDetectionConfigError } from '../ai/clients/jev.client'
@@ -26,6 +26,13 @@ export function createMultiFileRouter(service: () => MultiFileService = getMulti
     })
   )
   router.use(json({ limit: '16mb' }))
+  router.post(
+    '/debug/chunks',
+    handle(async (req, res) => {
+      const files = SourceFilesSchema.min(2).parse(req.body?.files)
+      res.json(previewChunks(files))
+    })
+  )
   router.get(
     '/sessions/:id',
     handle(async (req, res) => {

@@ -117,6 +117,45 @@ function integer(value: unknown, min = 0): asserts value is number {
   if (typeof value !== 'number' || !Number.isInteger(value) || value < min)
     throw new Error('多文件响应数值无效。')
 }
+export function parseChunkPreview(value: unknown, input: SourceFileInput[]) {
+  const { chunkLines, chunkChars, files } = record(value)
+  integer(chunkLines, 2)
+  integer(chunkChars, 2)
+  if (!Array.isArray(files) || files.length !== input.length)
+    throw new Error('切块响应中的文件数量不匹配。')
+  return {
+    chunkLines,
+    chunkChars,
+    files: files.map((item, index) => {
+      const { path, chunks } = record(item)
+      const content = input[index]!.content
+      str(path)
+      if (!Array.isArray(chunks) || !chunks.length) throw new Error('切块响应缺少分块。')
+      let covered = 0
+      const ranges = chunks.map((chunk) => {
+        const {
+          chunkId, chunkerVersion, startOffset, endOffset, lineStart, lineEnd, columnStart, columnEnd
+        } = record(chunk)
+        str(chunkId)
+        str(chunkerVersion)
+        integer(startOffset)
+        integer(endOffset, 1)
+        integer(lineStart, 1)
+        integer(lineEnd, lineStart)
+        integer(columnStart, 1)
+        integer(columnEnd, 1)
+        if (startOffset > covered || endOffset <= covered || endOffset > content.length)
+          throw new Error('切块响应中的源码范围无效。')
+        covered = endOffset
+        return {
+          chunkId, chunkerVersion, startOffset, endOffset, lineStart, lineEnd, columnStart, columnEnd
+        }
+      })
+      if (covered !== content.length) throw new Error('切块结果没有覆盖全部源码。')
+      return { path, content, chunks: ranges }
+    })
+  }
+}
 export function parseSourceFiles(value: unknown): SourceFileInput[] {
   if (!Array.isArray(value)) throw new Error('缺少文件集合。')
   return value.map((item) => {

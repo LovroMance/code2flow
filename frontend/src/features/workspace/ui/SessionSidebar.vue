@@ -9,12 +9,14 @@ defineProps<{
   loading: boolean
   error: string
   busy: boolean
+  debugOpen: boolean
 }>()
 const emit = defineEmits<{
   toggle: []
   create: []
   select: [id: string]
   refresh: []
+  'toggle-debug': []
   'update:search': [value: string]
 }>()
 
@@ -141,7 +143,7 @@ function time(value: string) {
           :key="session.id"
           type="button"
           class="session-item"
-          :aria-current="session.id === activeId ? 'true' : undefined"
+          :aria-current="session.id === activeId && !debugOpen ? 'true' : undefined"
           :disabled="busy || session.busy"
           :title="`${session.title}\n${session.fileName || '直接输入'}\n${session.id}`"
           @click="emit('select', session.id)"
@@ -161,5 +163,20 @@ function time(value: string) {
         </button>
       </div>
     </div>
+    <button
+      type="button"
+      class="sidebar-debug-button"
+      :aria-pressed="debugOpen"
+      aria-label="开发调试"
+      title="开发调试"
+      @click="emit('toggle-debug')"
+    >
+      <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="4" width="18" height="16" rx="2" />
+        <path d="m7 9 3 3-3 3m6 0h4" />
+      </svg>
+      <span v-if="!collapsed">开发调试</span>
+    </button>
   </aside>
 </template>

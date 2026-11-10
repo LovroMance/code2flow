@@ -82,7 +82,7 @@ export class SourceRepository {
     }
   }
   /** 校验路径唯一性、内容及上传体积，返回归一化文件集合。 */
-  validateFiles(files: SourceFileInput[], maxFiles = 20, maxBytes = 2097152) {
+  static validateFiles(files: SourceFileInput[], maxFiles = 20, maxBytes = 2097152) {
     if (
       !Number.isInteger(maxFiles) ||
       maxFiles < 1 ||

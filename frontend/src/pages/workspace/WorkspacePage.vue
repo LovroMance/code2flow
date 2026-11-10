@@ -4,6 +4,7 @@ import type { CodeEditorExpose } from '../../features/code-editor/model/types'
 import CodeEditor from '../../features/code-editor/ui/CodeEditor.vue'
 import FlowDiagram from '../../features/flow-diagram/ui/FlowDiagram.vue'
 import SessionSidebar from '../../features/workspace/ui/SessionSidebar.vue'
+import ChunkDebugPage from '../debug/ChunkDebugPage.vue'
 import { useWorkspacePage } from '../../features/workspace/model/useWorkspacePage'
 import { CODE_FILE_ACCEPT } from '../../entities/flow/model/languages'
 
@@ -12,6 +13,7 @@ const fileInputRef = ref<HTMLInputElement | null>(null)
 const renameDialog = ref<HTMLDialogElement | null>(null)
 const deleteDialog = ref<HTMLDialogElement | null>(null)
 const renameTitle = ref('')
+const debugOpen = ref(false)
 const byteSize = (content: string) => new TextEncoder().encode(content).byteLength
 const {
   code,
@@ -105,14 +107,24 @@ async function confirmDelete() {
       :loading="listLoading"
       :error="listError"
       :busy="isWorkspaceBusy"
+      :debug-open="debugOpen"
       @toggle="toggleSidebar"
-      @create="resetSession"
-      @select="selectSession"
+      @create="debugOpen = false; resetSession()"
+      @select="debugOpen = false; selectSession($event)"
       @refresh="refreshSessions"
+      @toggle-debug="debugOpen = !debugOpen"
       @update:search="sessionSearch = $event"
     />
 
+    <ChunkDebugPage
+      v-show="debugOpen"
+      :files="files"
+      :session-id="threadId"
+      :busy="sessionLoading"
+      @back="debugOpen = false"
+    />
     <section
+      v-show="!debugOpen"
       class="workspace-stage session-workspace"
       :aria-busy="sessionLoading"
     >

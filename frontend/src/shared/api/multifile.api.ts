@@ -1,6 +1,7 @@
 import { http } from './http'
 import {
   parseDraft,
+  parseChunkPreview,
   parseMultiDetail,
   parseMultiResult,
   parseSnapshot,
@@ -11,6 +12,9 @@ import {
 } from '../../entities/flow/model/multifile'
 
 const sessionPath = (id: string) => `/v2/sessions/${encodeURIComponent(id)}`
+export async function previewChunks(files: SourceFileInput[], signal: AbortSignal) {
+  return parseChunkPreview((await http.post('/v2/debug/chunks', { files }, { signal })).data, files)
+}
 export async function getMultiDetail(id: string) {
   return parseMultiDetail((await http.get(sessionPath(id))).data)
 }

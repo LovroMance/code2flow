@@ -2,6 +2,24 @@ import { z } from 'zod'
 
 export class MultiConfigurationError extends Error {}
 
+const positive = z.coerce.number().int().positive()
+const chunkConfigSchema = z.object({
+  chunkLines: positive.min(2).max(200),
+  chunkChars: positive.min(256).max(12000)
+})
+const chunkConfigInput = () => ({
+  chunkLines: process.env.CODE2FLOW_MULTI_CHUNK_LINES ?? 60,
+  chunkChars: process.env.CODE2FLOW_MULTI_CHUNK_CHARS ?? 2000
+})
+
+/** 调试预览只需要切块配置，可以独立于模型配置运行。 */
+export function chunkConfig() {
+  const result = chunkConfigSchema.safeParse(chunkConfigInput())
+  if (!result.success)
+    throw new MultiConfigurationError('切块配置无效，请检查后端的切块行数和字符数上限。')
+  return result.data
+}
+
 /** 模型请求和预算预留共用同一个单次输出上限。 */
 export function modelOutputTokens() {
   const parsed = z.coerce
@@ -18,7 +36,6 @@ export function modelOutputTokens() {
 
 /** 统一解析运行预算；上下文窗口必须按真实供应商配置，不能猜测默认值。 */
 export function multiConfig() {
-  const positive = z.coerce.number().int().positive()
   const result = z
     .object({
       // 上传文件数量和 UTF-8 总字节上限。
@@ -37,8 +54,7 @@ export function multiConfig() {
       // graph 控制的额外重试次数，不叠加 SDK 自动重试。
       retries: z.coerce.number().int().min(0).max(10),
       outputTokens: positive,
-      chunkLines: positive.min(2).max(200),
-      chunkChars: positive.min(256).max(12000)
+      ...chunkConfigSchema.shape
     })
     .safeParse({
       maxFiles: process.env.CODE2FLOW_MULTI_MAX_FILES ?? 20,
@@ -51,8 +67,7 @@ export function multiConfig() {
       contextTokens: process.env.CODE2FLOW_MODEL_CONTEXT_TOKENS,
       retries: process.env.CODE2FLOW_MAX_RETRIES ?? 1,
       outputTokens: modelOutputTokens(),
-      chunkLines: process.env.CODE2FLOW_MULTI_CHUNK_LINES ?? 60,
-      chunkChars: process.env.CODE2FLOW_MULTI_CHUNK_CHARS ?? 2000
+      ...chunkConfigInput()
     })
   if (!result.success)
     throw new MultiConfigurationError(

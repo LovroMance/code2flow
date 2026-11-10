@@ -1,5 +1,6 @@
 /* A 版以 1536 × 1024 为对照：226px 侧栏、60px 顶栏和连续双栏画布。 */
 .session-workbench.app-shell {
+  --debug-highlight: #e8f3ec;
   display: grid;
   grid-template-columns: 226px minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
@@ -185,6 +186,30 @@
 }
 .session-list-error {
   color: #aa4540;
+}
+.session-workbench .sidebar-debug-button {
+  justify-content: flex-start;
+  flex: 0 0 auto;
+  min-height: 36px;
+  margin-block: auto 10px;
+  padding: 0 10px;
+  border: 0;
+  border-inline-start: 2px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-main);
+  font-size: 13px;
+}
+.session-sidebar-collapsed .sidebar-debug-button {
+  justify-content: center;
+  padding: 0;
+}
+.sidebar-debug-button:hover {
+  background: var(--accent-soft);
+}
+.sidebar-debug-button[aria-pressed='true'] {
+  border-inline-start-color: var(--accent);
+  background: var(--debug-highlight);
 }
 .session-workspace.workspace-stage {
   align-self: stretch;
