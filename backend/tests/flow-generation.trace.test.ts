@@ -24,7 +24,7 @@ beforeEach(() => {
   vi.stubEnv('CODE2FLOW_MAX_RETRIES', '0')
 })
 
-it('多文件索引仅发送提交工具，并用精简提交组图', async () => {
+it('多文件索引使用精简提交，合并草稿和独立生成均可省略节点证据', async () => {
   vi.stubEnv('CODE2FLOW_MULTI_MAX_FILES', '20')
   vi.stubEnv('CODE2FLOW_MULTI_MAX_TOTAL_BYTES', '2097152')
   vi.stubEnv('CODE2FLOW_MULTI_MAX_MODEL_CALLS', '120')
@@ -37,45 +37,84 @@ it('多文件索引仅发送提交工具，并用精简提交组图', async () =
     const sessionId = 'multifile-index'
     new SessionService(saver).ensure(sessionId)
     const service = new MultiFileService(saver)
+    const source = `export ${code}`
     const snapshot = await service.createSnapshot(sessionId, [
-      { path: 'main.js', content: code },
-      { path: 'other.js', content: code }
+      { path: 'main.js', content: source },
+      { path: 'other.js', content: source }
     ])
-    const model = await useModel(snapshot.files.map(({ fileId }) => {
+    const flowDraft = (fileId: string, unitId: string) => ({
+      unitId, entryLocalId: 'set', edges: [],
+      nodes: [{
+        localId: 'set', kind: 'action', label: '赋值', description: '设置变量',
+        range: { fileId, lineStart: 1, lineEnd: 1 }, callSiteIds: []
+      }]
+    })
+    const generationFileId = snapshot.files[1]!.fileId
+    const indexReplies = snapshot.files.map(({ fileId }) => {
       const range = { fileId, lineStart: 1, lineEnd: 1 }
-      const evidenceIds = [`e${sha256(`${snapshot.snapshotId}|${fileId}|0|${code.length}`).slice(0, 12)}`]
+      const evidenceIds = [`e${sha256(`${snapshot.snapshotId}|${fileId}|0|${source.length}`).slice(0, 12)}`]
       return {
         toolName: 'submit_file_index',
         args: {
-          fileId, summary: '赋值', analyzedRanges: [{ lineStart: 1, lineEnd: 1 }], references: [],
+          fileId, summary: '赋值', references: [{ kind: 'export', name: 'answer', range, evidenceIds }],
           unresolvedItems: [],
           units: [{
-            unitId: 'unit', name: '入口', scope: '', kind: 'top-level', range, signature: '',
+            unitId: 'unit', name: '入口', kind: 'top-level', range,
             summary: '赋值', controlRanges: [], callSites: [], evidenceIds
           }],
-          drafts: [{
-            unitId: 'unit', entryLocalId: 'set', emptyReason: '', edges: [],
-            nodes: [{
-              localId: 'set', kind: 'action', label: '赋值', description: '设置变量', range,
-              evidenceIds, callSiteIds: []
-            }]
-          }]
+          drafts: fileId === generationFileId ? [] : [flowDraft(fileId, 'unit')]
         }
       }
-    }))
+    })
+    const unitKey = JSON.stringify([generationFileId, 0, source.length, '入口', '', 'top-level'])
+    const model = await useModel([
+      ...indexReplies,
+      { toolName: 'submit_unit_flow', args: flowDraft(generationFileId, `u_${sha256(unitKey).slice(0, 10)}`) }
+    ])
 
+    const saveFacts = vi.spyOn(service.repo, 'saveFacts')
+    const saveCheckpoint = vi.spyOn(saver, 'put')
     const flow = await service.generate(sessionId, snapshot.snapshotId, new AbortController().signal, () => {})
 
+    expect(saveFacts).toHaveBeenCalledTimes(1)
+    const indexes = service.repo.indexes(snapshot)
+    expect(indexes).toHaveLength(snapshot.files.length)
+    for (const index of indexes) {
+      expect(index.units).toMatchObject([{ scope: '', signature: '' }])
+      expect(index.references).toMatchObject([{ alias: 'answer', targetPath: '' }])
+    }
+    const firstResult = saveCheckpoint.mock.calls.findIndex(([, checkpoint]) => checkpoint.channel_values.result)
+    expect(firstResult).toBeGreaterThanOrEqual(0)
+    expect(saveFacts.mock.invocationCallOrder[0]).toBeLessThan(
+      saveCheckpoint.mock.invocationCallOrder[firstResult]!
+    )
     expect(flow.hasExecutableFlow).toBe(true)
     expect(flow.coverage.complete).toBe(true)
     expect(new Set(flow.mappings.map((mapping) => mapping.fileId))).toEqual(
       new Set(snapshot.files.map((file) => file.fileId))
     )
-    expect(model.requests).toHaveLength(2)
-    for (const request of model.requests) {
-      expect(request.tools).toMatchObject([{ function: { name: 'submit_file_index' } }])
-      expect(JSON.stringify(request.tools)).not.toMatch(/read_code|startKnown|endKnown|"boundary"|"complete"|schemaVersion/)
+    for (const mapping of flow.mappings) {
+      const evidenceId = `e${sha256(`${snapshot.snapshotId}|${mapping.fileId}|0|${source.length}`).slice(0, 12)}`
+      expect(mapping.evidenceIds).toEqual([evidenceId])
     }
+    expect(model.requests).toHaveLength(3)
+    for (const request of model.requests) {
+      const message = request.messages.find(({ role }) => role === 'user')!
+      expect(message.content).not.toMatch(/"(?:complete|byteSize|lineCount|chunkerVersion|strategy|snapshotId)":/)
+      expect(JSON.parse(message.content).payload.code.evidence).toMatchObject({
+        evidenceId: expect.any(String),
+        fileId: expect.any(String),
+        lineStart: 1,
+        lineEnd: 1
+      })
+    }
+    for (const request of model.requests.slice(0, 2)) {
+      expect(request.tools).toMatchObject([{ function: { name: 'submit_file_index' } }])
+      expect(JSON.stringify(request.tools)).not.toMatch(
+        /read_code|startKnown|endKnown|"boundary"|"complete"|schemaVersion|analyzedRanges/
+      )
+    }
+    expect(model.requests[2]!.tools).toMatchObject([{ function: { name: 'submit_unit_flow' } }])
   } finally {
     saver.db.close()
   }

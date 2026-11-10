@@ -11,7 +11,6 @@ export function safeErrorDetails(error: unknown) {
     'units',
     'references',
     'unresolvedItems',
-    'analyzedRanges',
     'fileId',
     'schemaVersion',
     'status',

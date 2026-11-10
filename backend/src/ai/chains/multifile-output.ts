@@ -3,7 +3,17 @@ import { SourceLineRangeSchema } from '../../domain/source/schema'
 import { coveredLines, lineOffsets, sourceLineRange } from '../../utils/sourcePositions'
 import { ModelOutputValidationError } from '../../domain/multifile/errors'
 
-const internalFields = ['columnStart', 'columnEnd', 'startOffset', 'endOffset']
+const internalRangeFields = ['columnStart', 'columnEnd', 'startOffset', 'endOffset']
+const internalPayloadFields = new Set([
+  ...internalRangeFields,
+  'contentHash',
+  'metering',
+  'linePositions',
+  'byteSize',
+  'lineCount',
+  'chunkerVersion',
+  'strategy'
+])
 
 /** 模型读取的范围使用首尾都包含的行号。 */
 export function slimModelInput(value: unknown): unknown {
@@ -12,7 +22,12 @@ export function slimModelInput(value: unknown): unknown {
   const record = value as Record<string, unknown>
   const out = Object.fromEntries(
     Object.entries(record)
-      .filter(([key]) => !internalFields.includes(key) && !['contentHash', 'metering', 'linePositions'].includes(key))
+      .filter(
+        ([key]) =>
+          !internalPayloadFields.has(key) &&
+          !(key === 'complete' && typeof record.unitId === 'string') &&
+          !(key === 'snapshotId' && typeof record.evidenceId === 'string')
+      )
       .map(([key, item]) => [key, slimModelInput(item)])
   )
   const { lineStart, lineEnd, columnEnd } = record
@@ -23,19 +38,16 @@ export function slimModelInput(value: unknown): unknown {
 
 /** 结构化提交只要求行号，落库前恢复内部范围。 */
 export function modelResponseSchema(schema: z.ZodType) {
-  const { $schema, ...lineSchema } = z.toJSONSchema(SourceLineRangeSchema)
   const visit = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(visit)
     if (!value || typeof value !== 'object') return value
     const node = Object.fromEntries(Object.entries(value).map(([key, item]) => [key, visit(item)]))
     const properties = node.properties as Record<string, unknown> | undefined
     if (properties?.fileId && properties.lineStart && properties.lineEnd && properties.columnEnd) {
-      for (const field of internalFields) delete properties[field]
+      for (const field of internalRangeFields) delete properties[field]
       if (Array.isArray(node.required))
-        node.required = node.required.filter((key) => !internalFields.includes(key))
+        node.required = node.required.filter((key) => !internalRangeFields.includes(key))
     }
-    if (properties?.analyzedRanges)
-      properties.analyzedRanges = { ...Object(properties.analyzedRanges), items: lineSchema }
     return node
   }
   const converted = visit(z.toJSONSchema(schema)) as Record<string, unknown>
@@ -65,11 +77,6 @@ export function completeModelRanges(input: unknown, contentFor: (fileId: string)
     const node = Object.fromEntries(Object.entries(value).map(([key, item]) => [key, visit(item)]))
     const fileId = node.fileId
     if (typeof fileId !== 'string') return node
-    if (Array.isArray(node.analyzedRanges))
-      node.analyzedRanges = node.analyzedRanges.map((item) => {
-        const { startOffset, endOffset } = resolve(fileId, item)
-        return { startOffset, endOffset }
-      })
     if ('lineStart' in node && 'lineEnd' in node)
       return { ...node, ...resolve(fileId, node) }
     return node

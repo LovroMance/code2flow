@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { NodeKindSchema } from '../flow/schema'
 import { SupportedLanguageSchema } from '../flow/language'
-import { OffsetRangeSchema, SourceRangeSchema } from '../source/schema'
+import { SourceRangeSchema } from '../source/schema'
 
 const text = z.string().max(1000)
 const ids = z.array(z.string().min(1)).max(100)
@@ -69,7 +69,7 @@ export const ReferenceIndexSchema = z.object({
   kind: z.enum(['import', 'export', 'registration', 'request', 'scope']),
   // 被导入、导出或声明的原名。
   name: text,
-  // 本文件中的别名，无别名时由角色按契约填写。
+  // 本地绑定名称，省略时由程序使用原名。
   alias: text,
   // 源码中的目标路径或模块路径线索。
   targetPath: text,
@@ -102,8 +102,6 @@ export const FileSemanticIndexSchema = z.object({
       })
     )
     .max(100),
-  // 实际完整读到并分析的偏移区间，用其并集计算覆盖，不能填未读区域。
-  analyzedRanges: z.array(OffsetRangeSchema).max(1000),
   // 由程序根据阻塞项计算索引状态。
   status: z.enum(['partial', 'complete']),
   // 索引协议版本，用于拒绝不兼容的结构。
@@ -114,7 +112,10 @@ export const IndexSubmissionSchema = FileSemanticIndexSchema.omit({
   status: true,
   schemaVersion: true
 }).extend({
-  units: z.array(ExecutionUnitSchema.omit({ complete: true })).max(1000),
+  units: z
+    .array(ExecutionUnitSchema.omit({ complete: true }).partial({ scope: true, signature: true }))
+    .max(1000),
+  references: z.array(ReferenceIndexSchema.partial({ alias: true, targetPath: true })).max(1000),
   unresolvedItems: z
     .array(
       FileSemanticIndexSchema.shape.unresolvedItems.element.omit({ unitId: true }).extend({
@@ -175,11 +176,15 @@ export const UnitFlowDraftSchema = z.object({
   // 局部入口节点；纯声明没有执行流程时为 null。
   entryLocalId: z.string().nullable(),
   // 无节点时必须解释原因，不能用空流程掩盖可执行单元生成失败。
-  emptyReason: text
+  emptyReason: text.optional()
+})
+/** 节点提交可省略证据，内部草稿仍须携带已绑定的证据 ID。 */
+export const UnitFlowSubmissionSchema = UnitFlowDraftSchema.extend({
+  nodes: z.array(UnitFlowDraftSchema.shape.nodes.element.partial({ evidenceIds: true })).max(500)
 })
 /** 单块文件的一次性提交：语义索引与各单元局部流程草稿同轮产出，省去独立生成调用。 */
 export const CombinedIndexSchema = IndexSubmissionSchema.extend({
-  drafts: z.array(UnitFlowDraftSchema).max(500)
+  drafts: z.array(UnitFlowSubmissionSchema).max(500)
 })
 /** 用户可见的降级或分析提示，避免暴露供应商原始异常及源码正文。 */
 export const PublicDiagnosticSchema = z.object({
@@ -234,5 +239,6 @@ export type ExecutionUnit = z.infer<typeof ExecutionUnitSchema>
 export type FileSemanticIndex = z.infer<typeof FileSemanticIndexSchema>
 export type CrossFileReference = z.infer<typeof CrossFileReferenceSchema>
 export type UnitFlowDraft = z.infer<typeof UnitFlowDraftSchema>
+export type UnitFlowSubmission = z.infer<typeof UnitFlowSubmissionSchema>
 export type MultiFileFlowResult = z.infer<typeof MultiFileFlowResultSchema>
 export type PublicDiagnostic = z.infer<typeof PublicDiagnosticSchema>

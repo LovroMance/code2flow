@@ -88,8 +88,8 @@ export class SourceContext {
       }
     }
   }
-  /** 先校验原始行列，再检查当前角色可见的证据并集是否完整覆盖目标范围。 */
-  validate(range: SourceRange, evidenceIds: string[]) {
+  /** 校验内部范围的偏移和行列是否与当前源码一致。 */
+  validateRange(range: SourceRange) {
     const content = this.repository.content(this.snapshot, range.fileId)
     try {
       validateSourceRange(range, range.fileId, content)
@@ -97,6 +97,10 @@ export class SourceContext {
       if (!(error instanceof Error) || error.constructor !== Error) throw error
       throw new ModelOutputValidationError('源码范围校验失败，请对照源码前缀提交起止行号。')
     }
+  }
+  /** 先校验原始行列，再检查当前角色可见的证据并集是否完整覆盖目标范围。 */
+  validate(range: SourceRange, evidenceIds: string[]) {
+    this.validateRange(range)
     if (!evidenceIds.length || evidenceIds.some((id) => !this.accessible.has(id)))
       throw new ModelOutputValidationError('引用了任务不可访问的证据。')
     const ranges = evidenceIds
@@ -217,10 +221,11 @@ export class SourceContext {
           if (cursor > this.snapshot.files.length) throw new Error('目录游标无效。')
           const data = this.snapshot.files
             .slice(cursor, cursor + (page.limit ?? 20))
-            .map((file) => ({
-              ...file,
+            .map(({ fileId, path }) => ({
+              fileId,
+              path,
               language: this.snapshot.languageDetection?.language ?? 'unknown',
-              status: this.indexes.find((i) => i.fileId === file.fileId)?.status ?? 'pending'
+              status: this.indexes.find((i) => i.fileId === fileId)?.status ?? 'pending'
             }))
           return {
             data,

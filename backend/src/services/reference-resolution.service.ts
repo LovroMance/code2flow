@@ -141,49 +141,24 @@ export function referenceCandidates(snapshot: SourceSnapshot, indexes: FileSeman
   )
 }
 // resolved 是静态依据已核对，不意味着运行时必然执行；保守保留动态目标。
-/** 校验确认关系的唯一候选和原始源码证据。 */
+/** 校验已选中的唯一目标及其绑定证据，调用文本已在索引阶段校验。 */
 export function validateResolvedReference(
   ref: CrossFileReference,
   context: SourceContext,
-  units: ExecutionUnit[]
+  { unit: source, call, imports, scopeEvidence }: ReturnType<typeof referenceCandidates>[number],
+  target: ExecutionUnit
 ) {
-  const source = units.find((u) => u.unitId === ref.sourceUnitId),
-    target = units.find((u) => u.unitId === ref.targetUnitId)
-  const call = source?.callSites.find((c) => c.callSiteId === ref.callSiteId)
-  if (!source || !call) throw new ModelOutputValidationError('关系引用的调用点不存在。')
-  for (const id of ref.evidenceIds)
-    if (!context.accessible.has(id))
-      throw new ModelOutputValidationError('关系证据不属于当前任务。')
-  if (ref.status !== 'resolved') return
-  if (!source.complete || !target?.complete)
-    throw new ModelOutputValidationError('关系单元边界尚未确认。')
-  if (!target || ref.kind === 'request' || ref.kind === 'import')
+  if (ref.kind === 'request' || ref.kind === 'import')
     throw new ModelOutputValidationError('该关系不能作为确定执行边。')
   context.validate(call.range, ref.evidenceIds)
   context.validate(target.range, ref.evidenceIds)
-  const callText = context.repository
-    .content(context.snapshot, call.range.fileId)
-    .slice(call.range.startOffset, call.range.endOffset)
-  if (!callText.includes(call.text) || !callText.includes(call.targetHint))
-    throw new ModelOutputValidationError('调用文本与引用线索没有源码依据。')
   const targetText = context.repository
     .content(context.snapshot, target.range.fileId)
     .slice(target.range.startOffset, target.range.endOffset)
   if (!target.name || !targetText.includes(target.name))
     throw new ModelOutputValidationError('目标声明缺少名称证据。')
-  const indexes = context.indexes,
-    candidate = referenceCandidates(context.snapshot, indexes).find(
-      (c) => c.call.callSiteId === call.callSiteId
-    )
-  if (
-    !candidate ||
-    candidate.candidates.length !== 1 ||
-    candidate.candidates[0]!.unitId !== target.unitId
-  )
-    throw new ModelOutputValidationError('目标不唯一或缺少路径、作用域绑定依据。')
   if (source.range.fileId !== target.range.fileId) {
-    const imports = candidate.imports
-    if (!imports.length && !candidate.scopeEvidence.length)
+    if (!imports.length && !scopeEvidence.length)
       throw new ModelOutputValidationError('跨文件调用缺少导入、注册或包作用域依据。')
     imports.forEach((r) => {
       context.validate(r.range, ref.evidenceIds)
@@ -193,7 +168,7 @@ export function validateResolvedReference(
       if (!bindingMatches(r, text))
         throw new ModelOutputValidationError('绑定线索与原始文本不一致。')
     })
-    for (const scope of candidate.scopeEvidence) {
+    for (const scope of scopeEvidence) {
       context.validate(scope.range, ref.evidenceIds)
       if (
         !context.repository

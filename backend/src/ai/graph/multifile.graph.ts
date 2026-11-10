@@ -5,15 +5,14 @@ import { LanguageDetectionSchema } from '../../domain/flow/schema'
 import { MultiFileFlowResultSchema, CoverageSchema } from '../../domain/multifile/schema'
 import type { SourceRange } from '../../domain/source/schema'
 
-/** 单个任务本轮结果；error 为 null 表示成功，fatal 表示重试也无法解决。 */
+/** 单个任务本轮结果；error 为 null 表示成功。不可重试的错误直接抛出。 */
 export const TaskOutcomeSchema = z.object({
   // 与 pending 中的调度身份一致。
   taskId: z.string(),
   // 累计执行次数，包括第一次调用。
   attempts: z.number().int(),
   // 下一轮传给同角色的安全校验反馈。
-  error: z.string().nullable(),
-  fatal: z.boolean()
+  error: z.string().nullable()
 })
 export type TaskOutcome = z.infer<typeof TaskOutcomeSchema>
 export function mergeTaskOutcomes(
@@ -24,13 +23,10 @@ export function mergeTaskOutcomes(
 }
 /** 官方 checkpointer 保存的调度状态；源码正文及索引明细保存在业务表中。 */
 export const MultiFileState = new StateSchema({
-  // 分别绑定不可变源码集合和本次生成，重新生成时清空旧结果与问答。
+  // 绑定不可变源码集合，重新生成时清空旧结果与问答。
   snapshotId: z.string().default(''),
-  analysisId: z.string().default(''),
   // 程序调用 Jev 得到的语言，后续所有角色共用。
   languageDetection: LanguageDetectionSchema.nullable().default(null),
-  // 调度大阶段；具体进度通过 runtime.progress 发出。
-  stage: z.enum(['index', 'generate', 'complete']).default('index'),
   // 未完成任务、当前并发批次、Send 分支当前任务。
   pending: z.array(z.string()).default([]),
   batch: z.array(z.string()).default([]),
@@ -39,8 +35,7 @@ export const MultiFileState = new StateSchema({
   outcomes: new ReducedValue(z.record(z.string(), TaskOutcomeSchema).default({}), {
     reducer: mergeTaskOutcomes
   }),
-  // 生成前检查覆盖，完成后保存整图；失败时不保留可用旧图。
-  coverage: CoverageSchema.nullable().default(null),
+  // 组图并校验成功后保存整图；失败时不保留可用旧图。
   result: MultiFileFlowResultSchema.nullable().default(null),
   // 仅保存用户问题和对外解释，不保存模型内部推理。
   messages: z
@@ -88,7 +83,7 @@ export function createMultiFileGraph(
     })
     .addNode('buildBasicIndex', async () => {
       await r().basic()
-      return { pending: r().indexTasks(), stage: 'index' as const }
+      return { pending: r().indexTasks() }
     })
     .addNode('planIndexBatch', (state) => {
       return { batch: state.pending.slice(0, r().concurrency) }
@@ -110,7 +105,7 @@ export function createMultiFileGraph(
       )
       const failure = state.batch
         .map((id) => state.outcomes[id])
-        .find((outcome) => outcome?.error && (outcome.fatal || outcome.attempts > r().retries))
+        .find((outcome) => outcome?.error && outcome.attempts > r().retries)
       r().progress('index', r().indexTasks().length - pending.length, r().indexTasks().length)
       if (failure) throw new Error(`文件索引未完成：${failure.taskId}；${failure.error}`)
       if (!pending.length) r().merge()
@@ -138,20 +133,19 @@ export function createMultiFileGraph(
                   error: '此块存在影响生成的未解决问题，请核对本块源码并修正索引。'
                 }
               ])
-            ),
-            coverage
+            )
           }
         throw new Error(
           `存在未解决的阻塞问题：${JSON.stringify({ unresolvedRanges: coverage.unresolvedRanges })}`
         )
       }
       r().finishReferences()
-      return { coverage, pending: [] }
+      return { pending: [] }
     })
     .addNode('buildGenerationTasks', () => {
       const pending = r().generationTasks()
       r().progress('generate', 0, pending.length)
-      return { pending, stage: 'generate' as const }
+      return { pending }
     })
     .addNode('planGenerationBatch', (state) => {
       return { batch: state.pending.slice(0, r().concurrency) }
@@ -173,7 +167,7 @@ export function createMultiFileGraph(
       )
       const failure = state.batch
         .map((id) => state.outcomes[id])
-        .find((outcome) => outcome?.error && (outcome.fatal || outcome.attempts > r().retries))
+        .find((outcome) => outcome?.error && outcome.attempts > r().retries)
       r().progress(
         'generate',
         r().generationTasks().length - pending.length,
@@ -182,14 +176,11 @@ export function createMultiFileGraph(
       if (failure) throw new Error(`局部流程未完成：${failure.taskId}；${failure.error}`)
       return { pending }
     })
-    .addNode('composeResult', () => {
-      return { result: r().compose() }
-    })
-    .addNode('validateResult', (state) => {
-      if (!state.result) throw new Error('缺少最终结果。')
-      r().validate(state.result)
-      r().progress('complete', state.result.mappings.length, state.result.mappings.length)
-      return { stage: 'complete' as const }
+    .addNode('validateResult', () => {
+      const result = r().compose()
+      r().validate(result)
+      r().progress('complete', result.mappings.length, result.mappings.length)
+      return { result }
     })
     .addEdge(START, 'prepareAnalysis')
     .addEdge('prepareAnalysis', 'detectLanguage')
@@ -216,8 +207,8 @@ export function createMultiFileGraph(
     )
     .addConditionalEdges(
       'buildGenerationTasks',
-      (state) => (state.pending.length ? 'planGenerationBatch' : 'composeResult'),
-      ['planGenerationBatch', 'composeResult']
+      (state) => (state.pending.length ? 'planGenerationBatch' : 'validateResult'),
+      ['planGenerationBatch', 'validateResult']
     )
     .addConditionalEdges('planGenerationBatch', (state) =>
       state.batch.map((taskId) => new Send('generateUnit', { ...state, taskId }))
@@ -225,10 +216,9 @@ export function createMultiFileGraph(
     .addEdge('generateUnit', 'validateUnit')
     .addConditionalEdges(
       'validateUnit',
-      (state) => (state.pending.length ? 'planGenerationBatch' : 'composeResult'),
-      ['planGenerationBatch', 'composeResult']
+      (state) => (state.pending.length ? 'planGenerationBatch' : 'validateResult'),
+      ['planGenerationBatch', 'validateResult']
     )
-    .addEdge('composeResult', 'validateResult')
     .addEdge('validateResult', END)
     .compile({ checkpointer: saver })
 }

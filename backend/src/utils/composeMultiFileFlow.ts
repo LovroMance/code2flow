@@ -237,8 +237,6 @@ export function composeMultiFileFlow(
     if (!from || !to) throw new Error('已确认关联缺少调用节点或目标入口。')
     lines.push(`${from} -.->|"${ref.kind === 'call' ? '调用' : '触发'}"| ${to}`)
   }
-  if (new Set(mappings.map((m) => m.nodeId)).size !== mappings.length)
-    throw new Error('最终节点ID重复。')
   const mermaid = mappings.length ? lines.join('\n') : ''
   // 图源完全由受控结构生成，双向覆盖和标签使用同一来源；实际语法解析由前端执行。
   return MultiFileFlowResultSchema.parse({

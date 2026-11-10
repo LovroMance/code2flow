@@ -164,7 +164,7 @@ export class MultiFileService {
           const baseGraph = createMultiFileGraph(undefined, this.saver)
           await baseGraph.updateState(
             this.config(id),
-            { snapshotId, analysisId, result: null, error: '分析尚未完成。', messages: [] },
+            { snapshotId, result: null, error: '分析尚未完成。', messages: [] },
             'validateResult'
           )
           emit('metadata', {
@@ -200,17 +200,14 @@ export class MultiFileService {
             const state = await graph.invoke(
               {
                 snapshotId,
-                analysisId,
                 result: null,
                 error: null,
                 messages: [],
                 pending: [],
                 batch: [],
-                stage: 'index',
-                coverage: null,
                 languageDetection: snapshot.languageDetection,
                 outcomes: {
-                  __reset__: { taskId: '__reset__', attempts: 0, error: null, fatal: false }
+                  __reset__: { taskId: '__reset__', attempts: 0, error: null }
                 }
               },
               config

@@ -113,21 +113,6 @@ export function sourceLineRange(
     throw new Error(`源码行范围无效：第 ${lineStart}–${lineEnd} 行。`)
   return sourceRange(fileId, text, start, offsets[lineEnd] ?? text.length, offsets)
 }
-/** 对已分析区间求并集后返回缺口，重叠块不会重复提高覆盖率。 */
-export function missingRanges(
-  length: number,
-  ranges: Array<{ startOffset: number; endOffset: number }>
-) {
-  const missing: Array<{ startOffset: number; endOffset: number }> = []
-  let cursor = 0
-  for (const range of [...ranges].sort((a, b) => a.startOffset - b.startOffset)) {
-    if (range.startOffset > cursor)
-      missing.push({ startOffset: cursor, endOffset: range.startOffset })
-    cursor = Math.max(cursor, range.endOffset)
-  }
-  if (cursor < length) missing.push({ startOffset: cursor, endOffset: length })
-  return missing
-}
 export function languageSample(files: Array<{ path: string; content: string }>) {
   const file = [...files].sort(
     (a, b) => b.content.trim().length - a.content.trim().length || a.path.localeCompare(b.path)

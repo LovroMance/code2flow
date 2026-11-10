@@ -50,7 +50,6 @@ export function schemaFieldPath(path: unknown) {
     units: '执行单元',
     references: '引用关系',
     unresolvedItems: '未解决问题',
-    analyzedRanges: '已分析范围',
     fileId: '文件编号',
     schemaVersion: '格式版本',
     status: '状态',
