@@ -47,6 +47,14 @@ export function createMultiFileRouter(service: () => MultiFileService = getMulti
     })
   )
   router.get(
+    '/sessions/:id/snapshots/:snapshotId/chunks',
+    handle(async (req, res) => {
+      const p = params.parse(req.params)
+      res.setHeader('Cache-Control', 'no-store')
+      res.json(service().snapshotChunks(p.id, p.snapshotId!))
+    })
+  )
+  router.get(
     '/sessions/:id/snapshots/:snapshotId/files/:fileId',
     handle(async (req, res) => {
       const p = params.parse(req.params)

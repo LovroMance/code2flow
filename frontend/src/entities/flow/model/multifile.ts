@@ -114,37 +114,44 @@ function integer(value: unknown, min = 0): asserts value is number {
   if (typeof value !== 'number' || !Number.isInteger(value) || value < min)
     throw new Error('多文件响应数值无效。')
 }
-export function parseChunkPreview(value: unknown, input: SourceFileInput[]) {
+export function parseChunkPreview(value: unknown, input?: SourceFileInput[]) {
   const { chunkTargetChars, files } = record(value)
-  integer(chunkTargetChars, 2)
-  if (!Array.isArray(files) || files.length !== input.length)
+  if (input || chunkTargetChars !== null) integer(chunkTargetChars, 2)
+  if (!Array.isArray(files) || !files.length || (input && files.length !== input.length))
     throw new Error('切块响应中的文件数量不匹配。')
   return {
     chunkTargetChars,
     files: files.map((item, index) => {
-      const { path, strategy, chunks } = record(item)
-      const content = input[index]!.content
+      const { path, strategy, chunks, content: snapshotContent } = record(item)
+      const content = input?.[index]?.content ?? snapshotContent
+      str(content)
       const offsets = [0, ...Array.from(content.matchAll(/\r\n|\r|\n/g), (match) =>
         match.index! + match[0].length
       )]
       str(path)
-      if (strategy !== 'syntax' && strategy !== 'whole-file' && strategy !== 'line-fallback')
+      if (strategy !== 'syntax' && strategy !== 'whole-file' && strategy !== 'line-fallback' &&
+          (input || strategy !== null))
         throw new Error('切块响应中的策略无效。')
       if (!Array.isArray(chunks) || !chunks.length) throw new Error('切块响应缺少分块。')
       let covered = 0
       const ranges = chunks.map((chunk) => {
-        const {
-          chunkId, chunkerVersion, lineStart, lineEnd
-        } = record(chunk)
+        const range = record(chunk)
+        const { chunkId, chunkerVersion, lineStart, lineEnd } = range
         str(chunkId)
         str(chunkerVersion)
         integer(lineStart, 1)
         integer(lineEnd, lineStart)
-        const startOffset = offsets[lineStart - 1]
+        const firstLineStart = offsets[lineStart - 1]
         const lastLineStart = offsets[lineEnd - 1]
-        const endOffset = offsets[lineEnd] ?? content.length
-        if (startOffset !== covered || lastLineStart === undefined ||
-            lastLineStart === content.length || endOffset <= covered)
+        const firstLineEnd = offsets[lineStart] ?? content.length
+        const lastLineEnd = offsets[lineEnd] ?? content.length
+        const startOffset = input ? firstLineStart : range.startOffset
+        const endOffset = input ? lastLineEnd : range.endOffset
+        integer(startOffset)
+        integer(endOffset, startOffset + 1)
+        if (startOffset !== covered ||
+            firstLineStart === undefined || startOffset < firstLineStart || startOffset >= firstLineEnd ||
+            lastLineStart === undefined || endOffset <= lastLineStart || endOffset > lastLineEnd)
           throw new Error('切块响应中的源码范围无效。')
         covered = endOffset
         return {

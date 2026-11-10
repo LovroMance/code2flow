@@ -74,7 +74,7 @@ export function useFlowGeneration() {
     errorMessage.value = reason
   }
   /** 管理多文件流式状态与取消；结果通过契约校验和 Mermaid 解析后才交给页面。 */
-  async function generateMultiFlow(threadId: string, snapshotId: string) {
+  async function generateMultiFlow(threadId: string, snapshotId: string, onChunksReady: () => void) {
     resetOutput()
     status.value = 'streaming'
     mermaid.value = ''
@@ -86,10 +86,12 @@ export function useFlowGeneration() {
         snapshotId,
         abortController.signal,
         (metadata) => {
+          if (metadata.stage === 'chunks-ready') onChunksReady()
           const stages: Record<string, string> = {
             prepare: '准备快照',
             detect: '识别语言',
             basic: '建立检索',
+            'chunks-ready': '源码切块完成',
             index: '分析全部文件',
             generate: '生成局部流程',
             complete: '校验流程图',

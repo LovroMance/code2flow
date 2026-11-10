@@ -2,16 +2,24 @@
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import type { SourceFileInput } from '../../entities/flow/model/multifile'
 import { equalSourceFiles } from '../../features/workspace/model/sourceFiles'
-import { previewChunks } from '../../shared/api/multifile.api'
+import { getSnapshotChunks, previewChunks } from '../../shared/api/multifile.api'
 import { getErrorMessage } from '../../shared/lib/errorMessage'
 
-const props = defineProps<{ files: SourceFileInput[]; sessionId: string; busy: boolean }>()
+const props = defineProps<{
+  files: SourceFileInput[]
+  sessionId: string
+  snapshotId: string | null
+  sourceChanged: boolean
+  waitingForSnapshotChunks: boolean
+  open: boolean
+  busy: boolean
+}>()
 const emit = defineEmits<{ back: [] }>()
 
 type Preview = Awaited<ReturnType<typeof previewChunks>>
 type Chunk = Preview['files'][number]['chunks'][number]
 
-const run = shallowRef<{ input: SourceFileInput[]; result: Preview }>()
+const run = shallowRef<{ previewInput?: SourceFileInput[]; result: Preview }>()
 const loading = ref(false)
 const error = ref('')
 const copyStatus = ref('')
@@ -19,9 +27,14 @@ const fileIndex = ref(0)
 const chunkIndex = ref(0)
 const expandedFile = ref(0)
 let request: AbortController | undefined
+let snapshotChecked = false
 
 const result = computed(() => run.value?.result)
-const stale = computed(() => !!run.value && !equalSourceFiles(props.files, run.value.input))
+const fromSnapshot = computed(() => !!run.value && !run.value.previewInput)
+const stale = computed(() => {
+  const input = run.value?.previewInput
+  return input ? !equalSourceFiles(props.files, input) : fromSnapshot.value && props.sourceChanged
+})
 const totalChunks = computed(() => result.value?.files.reduce((sum, file) => sum + file.chunks.length, 0))
 const file = computed(() => result.value?.files[fileIndex.value])
 const chunk = computed(() => file.value?.chunks[chunkIndex.value])
@@ -52,28 +65,43 @@ function selectFile(index: number) {
   }
 }
 
-async function runPreview() {
-  if (loading.value || props.busy || props.files.length < 2) return
+async function loadChunks(
+  load: (signal: AbortSignal) => Promise<Preview | null>,
+  input?: SourceFileInput[]
+) {
+  if (loading.value) return
   const controller = new AbortController()
-  const input = props.files.map(({ path, content }) => ({ path, content }))
   request = controller
   loading.value = true
   error.value = ''
   try {
-    const result = await previewChunks(input, controller.signal)
+    const result = await load(controller.signal)
     if (controller.signal.aborted) return
-    run.value = { input, result }
+    if (!input) snapshotChecked = true
+    if (!result) return
+    run.value = { previewInput: input, result }
     fileIndex.value = 0
     chunkIndex.value = 0
     expandedFile.value = 0
   } catch (cause) {
-    if (!controller.signal.aborted) error.value = getErrorMessage(cause, '切块失败。')
+    if (!controller.signal.aborted)
+      error.value = getErrorMessage(cause, input ? '切块失败。' : '读取已保存切块失败。')
   } finally {
     if (request === controller) {
       request = undefined
       loading.value = false
     }
   }
+}
+
+function runPreview() {
+  if (props.busy || props.files.length < 2) return
+  const input = props.files.map(({ path, content }) => ({ path, content }))
+  return loadChunks((signal) => previewChunks(input, signal), input)
+}
+
+function loadSnapshot(sessionId: string, snapshotId: string) {
+  return loadChunks((signal) => getSnapshotChunks(sessionId, snapshotId, signal))
 }
 
 async function copySource() {
@@ -91,18 +119,25 @@ watch(chunk, () => {
   copyStatus.value = ''
 })
 watch(
-  () => props.sessionId,
-  () => {
-    request?.abort()
-    run.value = undefined
-    error.value = ''
-  }
+  [() => props.sessionId, () => props.snapshotId, () => props.waitingForSnapshotChunks, () => props.open],
+  ([sessionId, snapshotId, waiting, open], [previousSessionId, previousSnapshotId, wasWaiting]) => {
+    if (sessionId !== previousSessionId || snapshotId !== previousSnapshotId || waiting !== wasWaiting) {
+      request?.abort()
+      request = undefined
+      loading.value = false
+      snapshotChecked = false
+      run.value = undefined
+      error.value = ''
+    }
+    if (open && snapshotId && !waiting && !snapshotChecked) void loadSnapshot(sessionId, snapshotId)
+  },
+  { immediate: true }
 )
 onBeforeUnmount(() => request?.abort())
 </script>
 
 <template>
-  <section class="workspace-stage session-workspace" :aria-busy="loading || busy">
+  <section class="workspace-stage session-workspace" :aria-busy="loading || (busy && !result)">
     <header class="session-header">
       <div class="session-heading-copy">
         <span class="session-breadcrumb">开发调试 <span>/</span></span>
@@ -115,18 +150,20 @@ onBeforeUnmount(() => request?.abort())
 
     <div class="debug-toolbar">
       <span>当前会话 · {{ files.length }} 个文件</span>
-      <span v-if="result" class="debug-config" title="完整语法单元可超过该目标，字符数按 UTF-16 计算">
+      <span v-if="result?.chunkTargetChars" class="debug-config" title="完整语法单元可超过该目标，字符数按 UTF-16 计算">
         每块目标 {{ result.chunkTargetChars }} 字符
       </span>
-      <button type="button" class="primary-button" :disabled="loading || busy || files.length < 2"
-        @click="runPreview">
-        {{ loading ? '切块中…' : '运行切块' }}
+      <button v-if="!fromSnapshot || stale" type="button" class="primary-button"
+        :disabled="loading || busy || files.length < 2" @click="runPreview">
+        {{ loading ? '处理中…' : '运行切块' }}
       </button>
     </div>
     <p v-if="error" class="error-banner" role="alert">{{ error }}</p>
     <p v-if="result" class="debug-summary" role="status">
       <span class="debug-dot" :class="{ 'debug-dot-stale': stale }" />
-      {{ stale ? '源码已修改 · 待重新切块' : '切块完成' }}
+      {{ fromSnapshot
+        ? (stale ? '源码已修改 · 显示上次分析的切块' : '生成时保存的切块')
+        : (stale ? '源码已修改 · 待重新切块' : '切块完成') }}
       · {{ result.files.length }} 个文件 · {{ totalChunks }} 个块
     </p>
 
@@ -141,7 +178,7 @@ onBeforeUnmount(() => request?.abort())
             <span>{{ item.chunks.length }} 块</span>
           </button>
           <template v-if="expandedFile === index">
-            <p v-if="item.strategy !== 'syntax'" class="debug-file-strategy">
+            <p v-if="item.strategy && item.strategy !== 'syntax'" class="debug-file-strategy">
               {{ item.strategy === 'whole-file' ? '语法边界未确认，保留整文件' : '语法边界未确认，按整行切块' }}
             </p>
             <button v-for="(range, position) in item.chunks" :key="range.chunkId" type="button"
@@ -176,7 +213,7 @@ onBeforeUnmount(() => request?.abort())
         <details class="debug-details">
           <summary>块详情</summary>
           <div>
-            <span>预览块 ID {{ chunk.chunkId }}</span>
+            <span>块 ID {{ chunk.chunkId }}</span>
             <span>切块版本 {{ chunk.chunkerVersion }}</span>
             <span>原始源码 {{ lineRange(chunk) }}</span>
           </div>
@@ -184,7 +221,9 @@ onBeforeUnmount(() => request?.abort())
       </section>
     </div>
     <p v-else class="session-message-empty debug-empty">
-      {{ busy ? '正在加载当前会话…' : files.length < 2
+      {{ waitingForSnapshotChunks ? '正在等待生成流程完成源码切块…'
+        : loading ? '正在加载切块…'
+        : busy ? '正在处理当前会话…' : files.length < 2
         ? '请返回工作台，上传至少两个代码文件。'
         : '点击「运行切块」查看当前文件的分块结果。' }}
     </p>

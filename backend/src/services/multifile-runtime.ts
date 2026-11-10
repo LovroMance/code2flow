@@ -132,6 +132,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
       })
     }
     this.repo.saveChunks(this.snapshot, this.chunks)
+    this.progress('chunks-ready', this.chunks.length, this.chunks.length)
     this.retrieval = new RetrievalService(
       this.repo,
       this.snapshot,

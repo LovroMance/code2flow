@@ -84,6 +84,33 @@ export class MultiFileService {
     const snapshot = this.snapshot(id, snapshotId)
     return { fileId, content: this.repo.content(snapshot, fileId) }
   }
+  /** 读取生成已保存的源码块，沿用快照正文和原始位置。 */
+  snapshotChunks(id: string, snapshotId: string) {
+    const snapshot = this.snapshot(id, snapshotId)
+    const chunks = this.repo.chunks(snapshot)
+    if (!chunks.length) return null
+    const target = /^syntax-v3-.+-(\d+)-(?:lines|whole)$/.exec(chunks[0]!.chunkerVersion)?.[1]
+    return {
+      chunkTargetChars: target ? Number(target) : null,
+      files: snapshot.files.map(({ fileId, path }) => {
+        const items = chunks
+          .filter((chunk) => chunk.fileId === fileId)
+          .sort((a, b) => a.startOffset - b.startOffset)
+        return {
+          path,
+          content: this.repo.content(snapshot, fileId),
+          strategy: items[0]?.strategy ?? null,
+          chunks: items.map(({ chunkId, chunkerVersion, startOffset, endOffset, ...range }) => ({
+            ...coveredLines(range),
+            chunkId,
+            chunkerVersion,
+            startOffset,
+            endOffset
+          }))
+        }
+      })
+    }
+  }
   /** 保存可编辑工作区，使用会话锁与 revision 防止旧草稿覆盖新内容。 */
   async saveDraft(id: string, input: z.infer<typeof DraftSchema>) {
     return withSessionLock(id, async () => {

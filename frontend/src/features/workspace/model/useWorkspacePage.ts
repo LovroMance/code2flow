@@ -41,6 +41,7 @@ export function useWorkspacePage() {
   const files = ref<SourceFileInput[]>([])
   const activePath = ref('')
   const multiSnapshot = ref<SourceSnapshot | null>(null)
+  const waitingForSnapshotChunks = ref(false)
   const snapshotFiles = ref<SourceFileInput[] | null>(null)
   const multiRevision = ref(0)
   const code = computed({
@@ -388,10 +389,13 @@ export function useWorkspacePage() {
       sourceSnapshot.value = null
       if (files.value.length) {
         resetOutput(true)
+        waitingForSnapshotChunks.value = true
         const snapshot = await multiApi.createSnapshot(threadId.value, files.value)
         multiSnapshot.value = snapshot
         snapshotFiles.value = files.value.map((f) => ({ ...f }))
-        await generateMultiFlow(threadId.value, snapshot.snapshotId)
+        await generateMultiFlow(threadId.value, snapshot.snapshotId, () => {
+          waitingForSnapshotChunks.value = false
+        })
       } else {
         await generateFlow({ code: code.value, threadId: threadId.value })
         if (status.value === 'done') sourceSnapshot.value = code.value
@@ -399,6 +403,7 @@ export function useWorkspacePage() {
     } catch (error) {
       workspaceError.value = getErrorMessage(error, '生成准备失败。')
     } finally {
+      waitingForSnapshotChunks.value = false
       sessionLoading.value = false
       // metadata 会更新语言；流结束后再保存，避免与同线程生成争用锁。
       if (persisted) {
@@ -640,6 +645,8 @@ export function useWorkspacePage() {
     files,
     activePath,
     multiResult,
+    snapshotId: computed(() => multiSnapshot.value?.snapshotId ?? null),
+    waitingForSnapshotChunks,
     handleUploadFiles,
     selectFile,
     renameFile,

@@ -20,6 +20,8 @@ const {
   files,
   activePath,
   multiResult,
+  snapshotId,
+  waitingForSnapshotChunks,
   documentId,
   documentIds,
   handleUploadFiles,
@@ -118,8 +120,12 @@ async function confirmDelete() {
 
     <ChunkDebugPage
       v-show="debugOpen"
+      :open="debugOpen"
       :files="files"
       :session-id="threadId"
+      :snapshot-id="snapshotId"
+      :source-changed="sourceChanged"
+      :waiting-for-snapshot-chunks="waitingForSnapshotChunks"
       :busy="sessionLoading"
       @back="debugOpen = false"
     />

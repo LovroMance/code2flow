@@ -15,6 +15,13 @@ const sessionPath = (id: string) => `/v2/sessions/${encodeURIComponent(id)}`
 export async function previewChunks(files: SourceFileInput[], signal: AbortSignal) {
   return parseChunkPreview((await http.post('/v2/debug/chunks', { files }, { signal })).data, files)
 }
+export async function getSnapshotChunks(id: string, snapshotId: string, signal: AbortSignal) {
+  const { data } = await http.get(
+    `${sessionPath(id)}/snapshots/${encodeURIComponent(snapshotId)}/chunks`,
+    { signal }
+  )
+  return data === null ? null : parseChunkPreview(data)
+}
 export async function getMultiDetail(id: string) {
   return parseMultiDetail((await http.get(sessionPath(id))).data)
 }
