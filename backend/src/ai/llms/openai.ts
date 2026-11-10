@@ -1,7 +1,6 @@
 import { ChatOpenAI } from '@langchain/openai'
-import { modelOutputTokens } from '../../services/multifile-config'
 
-export function createOpenAIModel(maxTokens = modelOutputTokens(), purpose?: 'index') {
+export function createOpenAIModel(purpose?: 'index') {
   const model = process.env.DEEPSEEK_MODEL ?? 'deepseek-chat'
   const baseURL = process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com'
   const useLowReasoning =
@@ -13,7 +12,7 @@ export function createOpenAIModel(maxTokens = modelOutputTokens(), purpose?: 'in
     apiKey: process.env.DEEPSEEK_API_KEY,
     model,
     configuration: { baseURL },
-    maxTokens,
+    // 不发送 max_tokens，由模型服务决定单次输出长度。
     // 通过兼容接口的原始字段传递百炼推理强度。
     ...(useLowReasoning && { modelKwargs: { reasoning_effort: 'low' } }),
     streaming: true,

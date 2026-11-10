@@ -29,6 +29,8 @@ npm install
 
 缺少语法包或解析失败时，默认保留整文件。接受在这类文件中按整行切分时，可在后端设置 `CODE2FLOW_MULTI_ALLOW_LINE_FALLBACK=true`。
 
+多文件分析不限制整次任务的累计输入、输出 Token，模型请求也不再发送单次输出 Token 上限。旧的 `CODE2FLOW_MULTI_MAX_INPUT_TOKENS`、`CODE2FLOW_MULTI_MAX_OUTPUT_TOKENS`、`CODE2FLOW_MODEL_MAX_OUTPUT_TOKENS` 配置不再生效；实际输出长度由模型服务决定，服务返回长度截断时仍终止任务并报错。本地上下文窗口通过 `CODE2FLOW_MODEL_CONTEXT_TOKENS` 设置，当前本机配置为 500000 Token；调整该配置不会改变供应商实际支持的上下文窗口。调用总次数、并发、超时及文件限制继续保留。
+
 ## 常用命令
 
 ```bash

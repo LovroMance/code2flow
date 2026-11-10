@@ -20,20 +20,6 @@ export function chunkConfig() {
   return result.data
 }
 
-/** 模型请求和预算预留共用同一个单次输出上限。 */
-export function modelOutputTokens() {
-  const parsed = z.coerce
-    .number()
-    .int()
-    .positive()
-    .safeParse(process.env.CODE2FLOW_MODEL_MAX_OUTPUT_TOKENS ?? 4000)
-  if (!parsed.success)
-    throw new MultiConfigurationError(
-      '单次模型输出上限 CODE2FLOW_MODEL_MAX_OUTPUT_TOKENS 必须为正整数。'
-    )
-  return parsed.data
-}
-
 /** 统一解析运行预算；上下文窗口必须按真实供应商配置，不能猜测默认值。 */
 export function multiConfig() {
   const result = z
@@ -43,17 +29,14 @@ export function multiConfig() {
       maxTotalBytes: positive,
       // 图批次及全局模型请求使用的并发上限。
       concurrency: positive.max(20),
-      // 整次分析允许的模型调用数及累计输入、输出预算。
+      // 整次分析允许的模型调用数，不限制累计输入、输出 token。
       maxCalls: positive,
-      maxInput: positive,
-      maxOutput: positive,
       // 整次分析超时时间，单位毫秒。
       timeout: positive,
-      // 单次模型调用的真实上下文窗口，包含输入和预留输出。
+      // 单次模型调用的上下文窗口；本地估算输入，实际输入和输出由供应商校验。
       contextTokens: positive,
       // graph 控制的额外重试次数，不叠加 SDK 自动重试。
       retries: z.coerce.number().int().min(0).max(10),
-      outputTokens: positive,
       ...chunkConfigSchema.shape
     })
     .safeParse({
@@ -61,12 +44,9 @@ export function multiConfig() {
       maxTotalBytes: process.env.CODE2FLOW_MULTI_MAX_TOTAL_BYTES ?? 2097152,
       concurrency: process.env.CODE2FLOW_MULTI_CONCURRENCY ?? 3,
       maxCalls: process.env.CODE2FLOW_MULTI_MAX_MODEL_CALLS ?? 120,
-      maxInput: process.env.CODE2FLOW_MULTI_MAX_INPUT_TOKENS ?? 600000,
-      maxOutput: process.env.CODE2FLOW_MULTI_MAX_OUTPUT_TOKENS ?? 80000,
       timeout: process.env.CODE2FLOW_MULTI_TIMEOUT_MS ?? 900000,
       contextTokens: process.env.CODE2FLOW_MODEL_CONTEXT_TOKENS,
       retries: process.env.CODE2FLOW_MAX_RETRIES ?? 1,
-      outputTokens: modelOutputTokens(),
       ...chunkConfigInput()
     })
   if (!result.success)

@@ -1,5 +1,5 @@
 const typeLabels: Record<string, string> = {
-  ModelOutputTruncatedError: '模型输出达到单次上限，结果已截断',
+  ModelOutputTruncatedError: '模型服务返回长度限制，结果已截断',
   ModelOutputValidationError: '模型提交结果未通过字段、范围或证据校验',
   Error: '操作失败',
   MiddlewareError: '分析中间件执行失败',
