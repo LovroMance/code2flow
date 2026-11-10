@@ -1,7 +1,7 @@
 import { dirname, extname, join } from 'node:path'
 import { Language, Parser, type Node } from '@vscode/tree-sitter-wasm'
-import type { CodeChunk } from '../domain/source/schema'
-import { lineOffsets, sha256, sourceRange, validateSourceRange } from './sourcePositions'
+import type { CodeChunk, SourceRange } from '../domain/source/schema'
+import { lineOffsets, sha256, sourceLineRange, sourceRange, validateSourceRange } from './sourcePositions'
 
 export type ChunkOptions = { chunkTargetChars: number }
 type ChunkStrategy = 'syntax' | 'whole-file'
@@ -127,6 +127,52 @@ export async function importDeclarationRanges(path: string, text: string) {
         endOffset: offsets[end.row]! + end.column,
         targetPath: source?.type === 'string' ? source.text.slice(1, -1) : undefined
       }
+    })
+  )) ?? []
+}
+
+export type SourceSwitch = {
+  line: number
+  endLine: number
+  arms: Array<{ line: number; bodyLine: number; endLine: number; range: SourceRange; isDefault: boolean }>
+  separateArms: boolean
+}
+
+/** 为可静态区分的 JS/TS switch 提供分支体范围，复用分块使用的解析器。 */
+export async function sourceSwitches(fileId: string, path: string, text: string): Promise<SourceSwitch[]> {
+  const grammar = grammarFor(path)
+  if (grammar !== 'javascript' && grammar !== 'typescript' && grammar !== 'tsx') return []
+  const startLine = (node: Node) => node.startPosition.row + 1
+  const endLine = (node: Node) => node.endPosition.row + Number(node.endPosition.column !== 0)
+  const offsets = lineOffsets(text)
+  return (await inspectSyntax(grammar, text, (root) =>
+    root.descendantsOfType('switch_statement').filter((node) => node !== null).map((node) => {
+      const cases = node.childForFieldName('body')?.namedChildren.filter(
+        (item) => item?.type === 'switch_case' || item?.type === 'switch_default'
+      ) ?? []
+      const bodies = cases.map((item) => item!.childrenForFieldName('body').filter((child) => child !== null))
+      const arms = cases.map((item, index) => {
+        const first = bodies[index]!.find((child) => child.type !== 'break_statement' && child.type !== 'comment')
+        const line = startLine(item!)
+        return {
+          line,
+          bodyLine: first ? startLine(first) : endLine(item!) + 1,
+          endLine: endLine(item!),
+          range: sourceLineRange(fileId, text, line, line, offsets),
+          isDefault: item!.type === 'switch_default'
+        }
+      })
+      // 同行分支、空分支和 fallthrough 仅作语义提示，行级映射不足以据此判定漏画。
+      const separateArms = arms.length > 1 && arms.some((arm) => arm.isDefault) &&
+        arms.every((arm, index) => {
+          const next = arms[index + 1]
+          const body = bodies[index]!
+          const terminal = body[body.length - 1]?.type
+          return arm.bodyLine > arm.line && arm.bodyLine <= arm.endLine &&
+            (!next || (arm.endLine < next.line &&
+              ['break_statement', 'continue_statement', 'return_statement', 'throw_statement'].includes(terminal ?? '')))
+        })
+      return { line: startLine(node), endLine: endLine(node), arms, separateArms }
     })
   )) ?? []
 }

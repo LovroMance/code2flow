@@ -46,6 +46,7 @@ import {
 import { safeErrorDetails } from '../ai/observability/safe-error'
 import { ModelOutputTruncatedError, errorCauses } from '../domain/multifile/errors'
 import { traceStep } from '../ai/observability/langsmith'
+import { sourceSwitches } from '../utils/sourceChunks'
 
 const CachedIndexSchema = z.object({
   index: FileSemanticIndexSchema,
@@ -74,6 +75,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
   readonly drafts = new Map<string, UnitFlowDraft>()
   // 保留结构合格的草稿，避免重试退步时丢弃可用结果。
   private readonly draftCandidates = new Map<string, { draft: UnitFlowDraft; issues: ControlIssues }>()
+  private readonly switchesByFile = new Map<string, ReturnType<typeof sourceSwitches>>()
   // 合并模式的临时草稿按分块暂存，merge 建立正式身份后重映射进 drafts。
   private readonly partialDrafts = new Map<string, UnitFlowDraft[]>()
   private readonly unitAliases = new Map<string, string>()
@@ -458,11 +460,14 @@ export class AnalysisRuntime implements MultiFileRuntime {
         taskRange = unit.range
         const context = this.context!
         const code = context.read(unit.range.fileId, unit.range.startOffset, unit.range.endOffset)
+        const file = this.snapshot.files.find((f) => f.fileId === unit.range.fileId)!
+        const candidate = this.draftCandidates.get(unit.unitId)
         const payload = {
           unit,
           code,
           relatedReferences: this.references.filter((r) => r.sourceUnitId === unit.unitId),
-          unresolved: this.indexes.find((i) => i.fileId === unit.range.fileId)!.unresolvedItems
+          unresolved: this.indexes.find((i) => i.fileId === unit.range.fileId)!.unresolvedItems,
+          ...(feedback && candidate ? { previousDraft: candidate.draft } : {})
         }
         const stable = (value: unknown): unknown =>
           Array.isArray(value)
@@ -487,19 +492,14 @@ export class AnalysisRuntime implements MultiFileRuntime {
         )
         cacheKey = key
         let draft: UnitFlowDraft | undefined
-        let issues: ControlIssues = []
         let modelFeedback = feedback ?? undefined
-        // 预生成草稿有质量问题时仍可作为回退，交给生成角色时附上问题。
+        // 预生成草稿与模型新提交使用同一套验收规则。
         const prepared = this.drafts.get(unit.unitId)
         if (prepared) {
           this.drafts.delete(unit.unitId)
           try {
             this.acceptDraft(prepared, unit, context, code)
-            issues = collectUnitControlIssues(prepared, unit)
-            if (issues.length) {
-              this.draftCandidates.set(unit.unitId, { draft: prepared, issues })
-              modelFeedback = controlFeedback(issues)
-            } else draft = prepared
+            draft = prepared
           } catch (error) {
             if (!(error instanceof ModelOutputValidationError)) throw error
             modelFeedback = error.message
@@ -535,19 +535,25 @@ export class AnalysisRuntime implements MultiFileRuntime {
               taskContext
             )
           this.acceptDraft(draft, unit, context, code)
-          issues = collectUnitControlIssues(draft, unit)
         }
+        let switches = this.switchesByFile.get(file.fileId)
+        if (!switches) {
+          switches = sourceSwitches(file.fileId, file.path, this.repo.content(this.snapshot, file.fileId))
+          this.switchesByFile.set(file.fileId, switches)
+        }
+        const issues = collectUnitControlIssues(draft, unit, await switches)
+        const repairs = issues.filter((issue) => issue.repair)
         this.signal.throwIfAborted()
-        if (issues.length) {
-          const candidate = this.draftCandidates.get(unit.unitId)
-          if (!candidate || issues.length <= candidate.issues.length)
+        if (repairs.length) {
+          if (!candidate || repairs.length <= candidate.issues.filter((issue) => issue.repair).length)
             this.draftCandidates.set(unit.unitId, { draft, issues })
           if (attempts <= this.retries)
-            return { taskId: id, attempts, error: controlFeedback(issues), fatal: false }
+            return { taskId: id, attempts, error: controlFeedback(repairs), fatal: false }
           this.finishDraftCandidate(unit)
         } else {
           this.draftCandidates.delete(unit.unitId)
           this.drafts.set(unit.unitId, draft)
+          this.reportControlIssues(unit, issues)
           this.repo.cachePut(key, draft)
         }
       }
@@ -739,16 +745,21 @@ export class AnalysisRuntime implements MultiFileRuntime {
     if (!candidate) return false
     this.draftCandidates.delete(unit.unitId)
     this.drafts.set(unit.unitId, candidate.draft)
+    this.reportControlIssues(unit, candidate.issues)
+    return true
+  }
+
+  private reportControlIssues(unit: ExecutionUnit, issues: ControlIssues) {
+    if (!issues.length) return
     const file = this.snapshot.files.find((file) => file.fileId === unit.range.fileId)!
     const location = `${file.path} · ${unit.name || unit.kind}`.slice(0, 800)
-    for (const { range, message } of candidate.issues)
+    for (const { range, message } of issues)
       this.diagnostics.push({
         code: 'flow_control_incomplete',
         fileId: range.fileId,
         range,
         message: `${location}：${message}，请对照源码确认。`
       })
-    return true
   }
   /** 程序先找结构候选，再为需要核对的关系建立模型任务；检索命中不等于确认调用。 */
   async resolve() {

@@ -8,6 +8,7 @@ import {
   type MultiFileFlowResult
 } from '../domain/multifile/schema'
 import type { SourceContext } from '../services/source-context.service'
+import type { SourceSwitch } from './sourceChunks'
 
 /** 校验组图所需的单元身份、源码证据、入口和边端点。 */
 export function validateUnitDraft(draft: UnitFlowDraft, context: SourceContext) {
@@ -48,10 +49,68 @@ export function validateUnitDraft(draft: UnitFlowDraft, context: SourceContext) 
       throw new ModelOutputValidationError('局部边引用未知节点。')
 }
 
-/** 收集局部流程的控制点问题，供同一轮重试修正。 */
-export function collectUnitControlIssues(draft: UnitFlowDraft, unit: ExecutionUnit) {
-  const issues: Array<{ range: ExecutionUnit['range']; message: string }> = []
+/** 只在能识别分流点和各分支体时，判定从 switch 到分支体的路径是否缺失。 */
+function missingSwitchArms(draft: UnitFlowDraft, source: SourceSwitch) {
+  if (!source.separateArms) return []
+  const nodes = new Map(draft.nodes.map((node) => [
+    node.localId,
+    { ...coveredLines(node.range), kind: node.kind }
+  ]))
+  const firstArm = source.arms[0]!
+  const entry = [...nodes].filter(([, node]) =>
+    node.kind === 'decision' && node.lineStart >= source.line && node.lineStart <= firstArm.line
+  )
+  if (entry.length !== 1) return []
+  const outgoing = new Map<string, string[]>()
+  for (const edge of draft.edges) {
+    const targets = outgoing.get(edge.from) ?? []
+    targets.push(edge.to)
+    outgoing.set(edge.from, targets)
+  }
+  const seen = new Set<string>()
+  const pending = [entry[0]![0]]
+  const reached = new Set<number>()
+  while (pending.length) {
+    const id = pending.pop()!
+    const node = nodes.get(id)
+    if (!node || seen.has(id) || node.lineStart < source.line || node.lineStart > source.endLine)
+      continue
+    seen.add(id)
+    const arm = source.arms.find((item) =>
+      node.lineStart >= item.line && node.lineStart <= item.endLine &&
+      node.lineEnd >= item.bodyLine && node.lineEnd <= item.endLine
+    )
+    if (arm) reached.add(arm.line)
+    pending.push(...(outgoing.get(id) ?? []))
+  }
+  // 至少有一个分支体被单独映射，才用该粒度判断其余路径。
+  return reached.size ? source.arms.filter((arm) => !reached.has(arm.line)) : []
+}
+
+/** 行覆盖及节点类型只作提示。可定位到具体缺失路径时才建议重新调用模型。 */
+export function collectUnitControlIssues(
+  draft: UnitFlowDraft,
+  unit: Pick<ExecutionUnit, 'controlRanges'>,
+  switches: SourceSwitch[] = []
+) {
+  const issues: Array<{ range: ExecutionUnit['range']; message: string; repair?: true }> = []
+  const indexedBranches = new Set(unit.controlRanges.filter((control) => control.kind === 'branch')
+    .map((control) => coveredLines(control.range).lineStart))
+  const switchCases = new Set<number>()
+  for (const source of switches) {
+    if (!indexedBranches.has(source.line)) continue
+    for (const arm of source.arms) switchCases.add(arm.line)
+    for (const arm of missingSwitchArms(draft, source)) {
+      issues.push({
+        range: arm.range,
+        message: `第 ${source.line} 行的 switch 无法到达第 ${arm.line} 行的${arm.isDefault ? '默认分支' : '分支'}动作`,
+        repair: true
+      })
+    }
+  }
   for (const control of unit.controlRanges) {
+    const { lineStart, lineEnd } = coveredLines(control.range)
+    if (control.kind === 'branch' && lineStart === lineEnd && switchCases.has(lineStart)) continue
     const mapped = draft.nodes.filter(
       (node) =>
         node.range.startOffset <= control.range.startOffset &&
@@ -75,7 +134,6 @@ export function collectUnitControlIssues(draft: UnitFlowDraft, unit: ExecutionUn
     ) {
       detail = '建议使用 return 或 end 节点'
     } else continue
-    const { lineStart, lineEnd } = coveredLines(control.range)
     const lines = lineStart === lineEnd ? lineStart : `${lineStart}–${lineEnd}`
     issues.push({ range: control.range, message: `第 ${lines} 行（${control.kind}）${detail}` })
   }

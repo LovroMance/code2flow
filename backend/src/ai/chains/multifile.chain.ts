@@ -126,10 +126,10 @@ controlRanges分别登记branch、loop、exception、return的关键语句范围
 只提交分配范围内的完整单元。taskRange.javaScope 提供 Java 块首的包和外层类，引用范围仍须来自本块。无法确认语义时记录 semantic，缺失外部依赖记录 dependency，影响生成时标记 blocking。
 references只记录源码中的导入路径、原名、别名、导出和注册线索；显式包/命名空间声明使用scope引用并使unit.scope保持相同限定名，不能仅因名字相同虚构scope。外层单元不重复登记嵌套函数体内的控制位置。不把同名当成已确认调用。summary简短，控制位置不能省略关键分支、循环、异常和返回。不复制长正文。`
 /** 单块文件合并模式的附加规则：索引与草稿同轮产出，省掉独立生成调用。 */
-const INDEX_DRAFT_RULES = `本任务payload.withDrafts为true：除索引字段外，必须同时提交drafts数组，为units中每个单元生成局部流程草稿。draft.unitId必须等于对应unit的临时unitId；nodes的range与evidenceIds规则同索引，node.callSiteIds登记该节点包含的本单元callSiteId（须覆盖该单元全部调用点，不止预期会确认的）；edges的from/to引用本任务localId；entryLocalId指向第一个有语义的节点，不要提交start节点。尽量覆盖unit.controlRanges，可合并表达紧密相关的操作；优先用至少两条出边的decision表达branch/loop，用return或end表达return。纯声明单元提交空nodes、entryLocalId=null并填写emptyReason。`
+const INDEX_DRAFT_RULES = `本任务payload.withDrafts为true：除索引字段外，必须同时提交drafts数组，为units中每个单元生成局部流程草稿。draft.unitId必须等于对应unit的临时unitId；nodes的range与evidenceIds规则同索引，node.callSiteIds登记该节点包含的本单元callSiteId（须覆盖该单元全部调用点，不止预期会确认的）；edges的from/to引用本任务localId；entryLocalId指向第一个有语义的节点，不要提交start节点。保留关键执行路径，按职责组织节点。switch可用一个多出口判断，continue可用回边表达，异常可用边连接到处理动作。纯声明单元提交空nodes、entryLocalId=null并填写emptyReason。`
 const GENERATE_RULES = `本次使用v2局部流程协议，覆盖旧协议中的提交格式、源码编号及ID规则：只通过submit_unit_flow提交nodes、edges和entryLocalId，不返回Mermaid、mappings或语言。
 不要提交start节点，入口节点由程序自动合成，entryLocalId指向第一个有语义的节点。
-尽量覆盖unit.controlRanges，可合并表达紧密相关的操作；优先用至少两条出边的decision表达branch/loop，用return或end表达return。有校验反馈时一起核对列出的位置，保留已正确表达的流程。
+根据unit.controlRanges核对关键执行路径，按职责组织节点。switch可用一个多出口判断，continue可用回边表达，异常可用边连接到处理动作。若提供payload.previousDraft，基于首稿修补validationFeedback指出的路径，保留其余节点、边和ID，再提交完整局部流程。
 content中每行以"行号| "标注原始行号。节点range只提交fileId、lineStart、lineEnd，首尾行都包含，单行范围的起止行号相同。localId任务内唯一。节点range和evidenceIds须有证据，节点必须在目标单元所在文件及范围内。局部边只引用本任务节点。
 callSiteIds登记本节点包含的调用点；关键控制流不能省略。嵌套单元只描述定义/注册行为，不重复展开函数体。纯声明允许空nodes、空edges、null入口并填写emptyReason；执行单元不能用空结果掩盖失败。禁止返回代码以外的虚假节点。`
 
