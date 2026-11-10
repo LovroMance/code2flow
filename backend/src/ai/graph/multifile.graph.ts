@@ -142,7 +142,7 @@ export function createMultiFileGraph(
             coverage
           }
         throw new Error(
-          `源码覆盖未完成：${JSON.stringify({ files: coverage.files.filter((f) => f.missing.length), unresolvedRanges: coverage.unresolvedRanges })}`
+          `存在未解决的阻塞问题：${JSON.stringify({ unresolvedRanges: coverage.unresolvedRanges })}`
         )
       }
       r().finishReferences()

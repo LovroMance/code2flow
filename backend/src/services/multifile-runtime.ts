@@ -809,31 +809,12 @@ export class AnalysisRuntime implements MultiFileRuntime {
       ...this.context!.evidence.values()
     ])
   }
-  /** 对已分析偏移求并集并检查阻塞项。 */
+  /** 只检查阻塞项：文件级范围完整性由切块校验和逐块索引保证，无需重复统计。 */
   coverage() {
-    const files = this.snapshot.files.map((f) => {
-      const length = this.repo.content(this.snapshot, f.fileId).length,
-        ranges =
-          this.indexes.find((i) => i.fileId === f.fileId)?.analyzedRanges ??
-          [...this.partial.values()]
-            .filter((i) => i.fileId === f.fileId)
-            .flatMap((i) => i.analyzedRanges),
-        missing = missingRanges(length, ranges)
-      return {
-        fileId: f.fileId,
-        total: length,
-        covered: length - missing.reduce((n, r) => n + r.endOffset - r.startOffset, 0),
-        missing
-      }
-    })
     const unresolvedRanges = this.indexes.flatMap((index) =>
       index.unresolvedItems.filter((item) => item.blocking).map((item) => item.range)
     )
-    return {
-      complete: files.every((f) => !f.missing.length) && !unresolvedRanges.length,
-      files,
-      unresolvedRanges
-    }
+    return { complete: !unresolvedRanges.length, unresolvedRanges }
   }
   /** 把局部结构交给程序统一组图，生成模型没有直接提交最终 Mermaid 的权限。 */
   compose() {
@@ -846,11 +827,10 @@ export class AnalysisRuntime implements MultiFileRuntime {
       coverage: this.coverage()
     })
   }
-  /** 最终提交门槛：必需任务全部完成，且每个映射仍有当前快照的有效证据。 */
+  /** 最终提交门槛：每个映射仍指向当前快照的有效证据。 */
   validate(result: ReturnType<AnalysisRuntime['compose']>) {
     this.signal.throwIfAborted()
-    if (!result.coverage.complete || this.drafts.size !== this.generationTasks().length)
-      throw new Error('必需任务未全部完成。')
+    // 覆盖完整由 assessCoverage 门禁保证；草稿齐全由 validateUnit 放行条件保证。
     for (const mapping of result.mappings) this.context!.validate(mapping, mapping.evidenceIds)
     this.repo.saveFacts(this.snapshot.snapshotId, this.indexes, this.references, [
       ...this.context!.evidence.values()

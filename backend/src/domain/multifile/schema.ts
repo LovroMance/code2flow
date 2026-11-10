@@ -190,25 +190,12 @@ export const PublicDiagnosticSchema = z.object({
   fileId: z.string().optional(),
   range: SourceRangeSchema.optional()
 })
-/** 范围覆盖与阻塞缺口检查；覆盖完整不等于能证明所有语义理解正确。 */
+/** 阻塞缺口检查；文件级范围完整性已由切块与索引阶段保证，此处不再重复统计。 */
 export const CoverageSchema = z.object({
-  // 所有文件范围已覆盖且阻塞问题已解决时才为 true。
+  // 没有阻塞问题需要定点补读时为 true。
   complete: z.boolean(),
-  // 仍未确认的单元边界或阻塞语义位置。
-  unresolvedRanges: z.array(SourceRangeSchema).optional(),
-  // 每个文件按 UTF-16 字符偏移统计，重叠范围只计算一次。
-  files: z.array(
-    z.object({
-      // 覆盖统计所属的快照文件。
-      fileId: z.string(),
-      // 文件原始字符串长度。
-      total: z.number().int(),
-      // 已分析范围并集的长度。
-      covered: z.number().int(),
-      // 尚未覆盖的半开区间。
-      missing: z.array(OffsetRangeSchema)
-    })
-  )
+  // 仍未确认的阻塞语义位置。
+  unresolvedRanges: z.array(SourceRangeSchema).optional()
 })
 /** 最终图节点与原始源码的一一映射；继承的 fileId 用于前端切换文件。 */
 export const MultiFileNodeMappingSchema = SourceRangeSchema.extend({

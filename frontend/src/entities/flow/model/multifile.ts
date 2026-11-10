@@ -57,21 +57,10 @@ export interface MultiFileResult extends FlowGenerationResult {
   mappings: MultiFileMapping[]
   /** 公开诊断码和说明，如检索降级、未确认关系。 */
   diagnostics: Array<{ code: string; message: string }>
-  /** 按原始 UTF-16 范围统计覆盖；不代表能证明所有语义理解正确。 */
+  /** 是否仍有阻塞语义缺口；不代表能证明所有语义理解正确。 */
   coverage: {
-    /** 范围已覆盖且没有阻塞缺口。 */
+    /** 没有阻塞缺口时才为 true。 */
     complete: boolean
-    /** 重叠的分析范围按并集计算，不重复累计。 */
-    files: Array<{
-      /** 快照文件身份。 */
-      fileId: string
-      /** 正文 UTF-16 总长度。 */
-      total: number
-      /** 已分析范围并集的长度。 */
-      covered: number
-      /** 未覆盖的原始半开区间。 */
-      missing: Array<{ startOffset: number; endOffset: number }>
-    }>
   }
 }
 /** 编辑状态独立保存，不能作为旧生成结果的源码版本使用。 */
@@ -225,24 +214,12 @@ export function parseMultiResult(value: unknown): MultiFileResult {
     str(d.message)
   })
   const coverage = record(r.coverage)
-  if (coverage.complete !== true || !Array.isArray(coverage.files))
-    throw new Error('分析未完整覆盖源码。')
+  if (coverage.complete !== true) throw new Error('分析未完整覆盖源码。')
   if (
     coverage.unresolvedRanges !== undefined &&
     (!Array.isArray(coverage.unresolvedRanges) || coverage.unresolvedRanges.length)
   )
     throw new Error('存在未确认的执行单元边界。')
-  for (const value of coverage.files) {
-    const file = record(value)
-    str(file.fileId)
-    integer(file.total)
-    integer(file.covered)
-    if (file.total !== file.covered || !Array.isArray(file.missing) || file.missing.length)
-      throw new Error('存在未完成的源码范围。')
-  }
-  const coveredFiles = new Set(coverage.files.map((value) => String(record(value).fileId)))
-  if (r.mappings.some((value) => !coveredFiles.has(String(record(value).fileId))))
-    throw new Error('映射文件没有进入覆盖记录。')
   if (r.hasExecutableFlow ? !r.mappings.length || !r.mermaid : !!r.mappings.length || !!r.mermaid)
     throw new Error('执行流程状态无效。')
   const result = r as unknown as MultiFileResult

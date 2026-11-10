@@ -19,11 +19,13 @@ import type {
   SessionSummary
 } from '../../../entities/session/model/types'
 import {
-  SUPPORTED_FILE_EXTENSIONS,
-  inferLanguageFromExtension
+  LANGUAGE_OPTIONS,
+  SUPPORTED_FILE_EXTENSIONS
 } from '../../../entities/flow/model/languages'
 
+const MAX_UPLOAD_FILES = 20
 const MAX_UPLOAD_SIZE_BYTES = 200 * 1024
+const MAX_UPLOAD_TOTAL_BYTES = 2 * 1024 * 1024
 const ACTIVE_SESSION_KEY = 'code2flow.active-session'
 
 // 浏览器偏好不可用时仍允许使用工作区；源码和会话以服务端 SQLite 为准。
@@ -102,7 +104,9 @@ export function useWorkspacePage() {
   )
   const sourceChanged = computed(() =>
     files.value.length
-      ? snapshotFiles.value !== null && !equalSourceFiles(files.value, snapshotFiles.value)
+      ? snapshotFiles.value
+        ? !equalSourceFiles(files.value, snapshotFiles.value)
+        : sourceSnapshot.value !== null
       : sourceSnapshot.value !== null && code.value !== sourceSnapshot.value
   )
   const canAskFollowUp = computed(
@@ -169,7 +173,7 @@ export function useWorkspacePage() {
           const input = {
             title: sessionTitle.value,
             fileName: uploadFileName.value,
-            draftCode: files.value.length ? '' : code.value,
+            draftCode: files.value.length ? undefined : code.value,
             draftLanguage: detectedLanguage.value
           }
           const detail = persisted
@@ -272,10 +276,12 @@ export function useWorkspacePage() {
       setDetectedLanguage(detail.draftLanguage)
       sourceSnapshot.value = detail.result ? detail.sourceCode : null
       restoreOutput(detail.result, detail.failed)
-      if (restoredFiles.length) await restoreMultiOutput(multi.result, multi.failed)
-      followUpMessages.value = restoredFiles.length ? multi.messages : detail.messages
+      const useMultiHistory =
+        restoredFiles.length > 0 && (multi.snapshot !== null || multi.failed || !detail.result)
+      if (useMultiHistory) await restoreMultiOutput(multi.result, multi.failed)
+      followUpMessages.value = useMultiHistory ? multi.messages : detail.messages
       followUpQuestion.value = ''
-      followUpStatus.value = detail.messages.length ? 'done' : 'idle'
+      followUpStatus.value = followUpMessages.value.length ? 'done' : 'idle'
       draftRevision = 0
       savedRevision = 0
       persisted = true
@@ -304,21 +310,15 @@ export function useWorkspacePage() {
     }
   }
 
-  async function startSession(
-    content = '',
-    fileName = '',
-    language: SupportedLanguage = 'unknown'
-  ) {
+  async function startSession() {
     if (isWorkspaceBusy.value) return
     sessionLoading.value = true
     workspaceError.value = ''
     try {
       await saveDraft()
       const detail = await sessionApi.createSession(crypto.randomUUID(), {
-        title: fileName || '未命名分析',
-        fileName,
-        draftCode: content,
-        draftLanguage: language
+        title: '未命名分析',
+        draftCode: ''
       })
       await applySession(detail)
     } catch (error) {
@@ -445,44 +445,38 @@ export function useWorkspacePage() {
     }
   }
 
-  async function handleUploadFile(file: File | null | undefined) {
-    if (!file || isWorkspaceBusy.value) return
-    workspaceError.value = ''
-    const name = file.name.trim()
-    const extension = name.includes('.') ? name.slice(name.lastIndexOf('.')).toLowerCase() : ''
-    if (!SUPPORTED_FILE_EXTENSIONS.some((value) => value === extension)) {
-      workspaceError.value = `暂不支持 ${extension || '该类型'} 文件，请上传常见文本代码文件。`
-      return
-    }
-    if (file.size > MAX_UPLOAD_SIZE_BYTES) {
-      workspaceError.value = '文件过大，请上传小于 200KB 的代码文件。'
-      return
-    }
-    // 读取期间也锁定切换，避免慢文件覆盖用户刚切换的会话。
-    sessionLoading.value = true
-    try {
-      const content = await file.text()
-      if (!content.trim()) throw new Error('文件内容为空，未检测到可分析的代码。')
-      sessionLoading.value = false
-      await startSession(content, name, inferLanguageFromExtension(extension))
-    } catch (error) {
-      workspaceError.value = getErrorMessage(error, '读取文件失败。')
-    } finally {
-      sessionLoading.value = false
-    }
-  }
-
   async function handleUploadFiles(selected: FileList | null) {
     if (!selected?.length || isWorkspaceBusy.value) return
     workspaceError.value = ''
-    if (selected.length > 20) {
-      workspaceError.value = '最多上传20个文件。'
+    // 第一次上传时，把手写代码或旧版单文件草稿一起纳入当前文件列表。
+    const currentFiles = [...files.value]
+    if (
+      !currentFiles.length &&
+      singleCode.value.trim() &&
+      (singleCode.value !== SAMPLE_CODE || uploadFileName.value || sourceSnapshot.value !== null)
+    ) {
+      const extension = LANGUAGE_OPTIONS.find((option) => option.value === detectedLanguage.value)
+        ?.extensions[0] ?? '.txt'
+      const selectedPaths = new Set(Array.from(selected, (file) => file.name))
+      let draftPath = `draft${extension}`
+      for (let suffix = 2; selectedPaths.has(draftPath); suffix++)
+        draftPath = `draft-${suffix}${extension}`
+      currentFiles.push({ path: uploadFileName.value || draftPath, content: singleCode.value })
+    }
+    if (currentFiles.length + selected.length > MAX_UPLOAD_FILES) {
+      workspaceError.value = `当前会话最多可包含 ${MAX_UPLOAD_FILES} 个文件。`
       return
     }
+    // 读取和保存期间锁定切换，确保上传写入同一会话。
     sessionLoading.value = true
     try {
       const loaded: SourceFileInput[] = []
-      let total = 0
+      const encoder = new TextEncoder()
+      let total = currentFiles.reduce((size, file) => {
+        const bytes = encoder.encode(file.content).byteLength
+        if (bytes > MAX_UPLOAD_SIZE_BYTES) throw new Error(`现有文件 ${file.path} 超过 200 KiB。`)
+        return size + bytes
+      }, 0)
       const errors: string[] = []
       for (const file of Array.from(selected)) {
         try {
@@ -492,8 +486,8 @@ export function useWorkspacePage() {
           if (!SUPPORTED_FILE_EXTENSIONS.includes(extension))
             throw new Error('不支持的文本代码扩展名')
           total += file.size
-          if (file.size > MAX_UPLOAD_SIZE_BYTES || total > 2097152)
-            throw new Error('超过单文件200 KiB或总计2 MiB限制')
+          if (file.size > MAX_UPLOAD_SIZE_BYTES || total > MAX_UPLOAD_TOTAL_BYTES)
+            throw new Error('超过单文件 200 KiB 或当前会话总计 2 MiB 的限制')
           // fatal拒绝无效UTF-8，ignoreBOM保留原文BOM，禁止静默替换或跳过。
           const content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
             await file.arrayBuffer()
@@ -509,27 +503,28 @@ export function useWorkspacePage() {
         }
       }
       if (errors.length) throw new Error(errors.join('\n'))
-      for (const file of loaded) file.path = file.path.replace(/\\/g, '/')
-      if (
-        new Set(loaded.map((f) => f.path)).size !== loaded.length ||
-        loaded.some(
-          (f) => !f.path || /^(?:\/|[a-z]:)/i.test(f.path) || f.path.split('/').includes('..')
+      const paths = new Set(currentFiles.map((file) => file.path))
+      for (const file of loaded) {
+        const path = file.path.replace(/\\/g, '/')
+        const parts = path.split('/')
+        file.path = parts.filter((part) => part && part !== '.').join('/')
+        if (
+          !file.path ||
+          path.length > 500 ||
+          /^(?:\/|[a-z]:)|[\x00-\x1f]/i.test(path) ||
+          parts.includes('..') ||
+          path.endsWith('/')
         )
-      )
-        throw new Error('请为每个文件填写不重复的项目内相对路径，不能使用绝对路径或上级目录。')
-      await saveDraft()
-      const detail = await sessionApi.createSession(crypto.randomUUID(), {
-        title: loaded[0]!.path,
-        fileName: `${loaded.length}个文件`,
-        draftCode: ''
-      })
-      await applySession(detail)
-      files.value = loaded
+          throw new Error(`文件路径无效：${path}。请使用项目内相对路径。`)
+        if (paths.has(file.path)) throw new Error(`文件路径已存在：${file.path}。`)
+        paths.add(file.path)
+      }
+      files.value = [...currentFiles, ...loaded]
       activePath.value = loaded[0]!.path
-      uploadFileName.value = `${loaded.length}个文件`
+      uploadFileName.value = `${files.value.length}个文件`
       await saveDraft()
     } catch (error) {
-      workspaceError.value = getErrorMessage(error, '读取文件失败。')
+      workspaceError.value = getErrorMessage(error, '添加文件失败。')
     } finally {
       sessionLoading.value = false
     }
@@ -692,14 +687,13 @@ export function useWorkspacePage() {
     saveStatusText,
     refreshSessions,
     selectSession,
-    resetSession: () => startSession(),
+    resetSession: startSession,
     loadSample,
     renameSession,
     removeSession,
     retrySave,
     handleGenerate,
     handleFollowUp,
-    handleUploadFile,
     clearWorkspace,
     handleLanguageChange,
     primeFollowUpQuestionFromNode,
