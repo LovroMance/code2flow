@@ -46,12 +46,18 @@ export class AnalysisBudget {
       throw new ContextLimitError('任务超过配置的模型上下文窗口，需要缩小源码范围。')
     const inputLimit =
       role === 'index' || role === 'verify' ? this.config.maxInput * 0.8 : this.config.maxInput
-    if (
-      this.calls + 1 > this.config.maxCalls ||
-      this.budgetInput + input > inputLimit ||
-      this.reservedOutput + output > this.config.maxOutput
-    )
-      throw new AnalysisLimitError('分析预算已达上限；未完成范围不会提交为完整结果。')
+    if (this.calls + 1 > this.config.maxCalls)
+      throw new AnalysisLimitError(
+        `累计模型调用次数达到上限。已计入 ${this.calls} 次，本次需要 1 次，上限为 ${this.config.maxCalls} 次。`
+      )
+    if (this.budgetInput + input > inputLimit)
+      throw new AnalysisLimitError(
+        `本次调用会超过累计输入 token 预算。已计入 ${this.budgetInput} token，本次预计需要 ${input} token，当前阶段上限为 ${inputLimit} token。`
+      )
+    if (this.reservedOutput + output > this.config.maxOutput)
+      throw new AnalysisLimitError(
+        `本次调用会超过累计输出 token 预算。已计入 ${this.reservedOutput} token，本次需要预留 ${output} token，上限为 ${this.config.maxOutput} token。`
+      )
     this.calls++
     this.budgetInput += input
     this.reservedOutput += output
