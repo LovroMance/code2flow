@@ -8,6 +8,11 @@ export const OffsetRangeSchema = z.object({
   // 不包含的结束字符偏移；不是 UTF-8 字节数。
   endOffset: z.number().int().nonnegative()
 })
+/** 模型提交的原始行范围，首尾行都包含。 */
+export const SourceLineRangeSchema = z.object({
+  lineStart: z.number().int().positive(),
+  lineEnd: z.number().int().positive()
+})
 /** 偏移和行列同时指向原始正文；行列从 1 开始，结束位置排他。 */
 export const SourceRangeSchema = OffsetRangeSchema.extend({
   // 当前快照中的文件身份，不能用路径或模型临时编号代替。
@@ -54,14 +59,16 @@ export const SourceSnapshotSchema = z.object({
   // null 表示尚未检测；检测得到 unknown 也是可复用的结果。
   languageDetection: LanguageDetectionSchema.nullable()
 })
-/** 保留原始位置的基础切片；相邻块可重叠，不代表完整语义单元。 */
+/** 保留原始位置的切片；新版本只按整行连续切分。 */
 export const CodeChunkSchema = SourceRangeSchema.extend({
   // 分块任务身份，用于调度与任务记录。
   chunkId: z.string(),
   // 所属文件正文的哈希，不是分块字符串的哈希。
   contentHash: z.string(),
   // 切片算法版本，避免算法变更后误用旧缓存。
-  chunkerVersion: z.string()
+  chunkerVersion: z.string(),
+  // 旧快照的分块没有此字段。
+  strategy: z.enum(['syntax', 'whole-file', 'line-fallback']).optional()
 })
 /** 程序实际读取过的源码凭证；模型输出的范围必须有相应证据覆盖。 */
 export const EvidenceSchema = SourceRangeSchema.extend({

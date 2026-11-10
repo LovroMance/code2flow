@@ -1,8 +1,9 @@
 import type { ExecutionUnit, FileSemanticIndex } from '../domain/multifile/schema'
-import { sourceRange } from './sourcePositions'
+import { coveredLines, sourceRange } from './sourcePositions'
 export class FragmentConflictError extends Error {
   constructor(readonly range: ExecutionUnit['range']) {
-    super(`单元边界冲突，未完成范围：${JSON.stringify(range)}`)
+    const { lineStart, lineEnd } = coveredLines(range)
+    super(`单元边界冲突，未完成第 ${lineStart}–${lineEnd} 行。`)
   }
 }
 
@@ -20,6 +21,10 @@ export function mergeFileFragments(
       (a.signature && a.signature === b.signature) ||
       (a.complete &&
         b.complete &&
+        !a.name &&
+        !b.name &&
+        !a.signature &&
+        !b.signature &&
         a.range.startOffset === b.range.startOffset &&
         a.range.endOffset === b.range.endOffset)) &&
     a.scope === b.scope &&
@@ -82,7 +87,7 @@ export function mergeFileFragments(
     old.callSites = [
       ...new Map(
         [...old.callSites, ...unit.callSites].map((call) => [
-          JSON.stringify([call.kind, call.range, call.targetHint]),
+          JSON.stringify([call.kind, call.range, call.targetHint, call.text]),
           call
         ])
       ).values()

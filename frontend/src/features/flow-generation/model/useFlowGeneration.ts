@@ -106,11 +106,11 @@ export function useFlowGeneration() {
                   !value ||
                   typeof value !== 'object' ||
                   !('path' in value) ||
-                  !('startOffset' in value) ||
-                  !('endOffset' in value)
+                  !('lineStart' in value) ||
+                  !('lineEnd' in value)
                 )
                   return ''
-                return `${String(value.path)} [${String(value.startOffset)}, ${String(value.endOffset)})`
+                return `${String(value.path)} 第 ${String(value.lineStart)}–${String(value.lineEnd)} 行`
               })
               .filter(Boolean)
               .join('；')
@@ -121,7 +121,7 @@ export function useFlowGeneration() {
       return result
     } catch (error) {
       failRendering(
-        `${chineseErrorMessage(error, '多文件生成失败。')}${incomplete ? ` 未完成的原始字符范围：${incomplete}` : ''}`
+        `${chineseErrorMessage(error, '多文件生成失败。')}${incomplete ? ` 未完成的源码行范围：${incomplete}` : ''}`
       )
       throw error
     } finally {

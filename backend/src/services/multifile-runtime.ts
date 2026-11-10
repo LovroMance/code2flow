@@ -4,6 +4,7 @@ import { z } from 'zod'
 import {
   AnalysisBudget,
   AnalysisLimitError,
+  ContextLimitError,
   ModelConfigurationError,
   runMultiFileChain,
   type AnalysisTaskContext
@@ -20,13 +21,14 @@ import {
   type CrossFileReference,
   type PublicDiagnostic
 } from '../domain/multifile/schema'
-import type { CodeChunk, SourceSnapshot } from '../domain/source/schema'
+import type { CodeChunk, SourceRange, SourceSnapshot } from '../domain/source/schema'
 import { EvidenceSchema } from '../domain/source/schema'
 import { SourceContext } from './source-context.service'
 import { RetrievalService } from './retrieval.service'
 import { referenceCandidates, validateResolvedReference } from './reference-resolution.service'
 import type { SourceRepository } from '../repositories/source.repository'
 import {
+  coveredLines,
   languageSample,
   missingRanges,
   sha256,
@@ -118,8 +120,17 @@ export class AnalysisRuntime implements MultiFileRuntime {
   async basic() {
     this.signal.throwIfAborted()
     this.progress('basic', 0, this.snapshot.files.length)
-    const { chunkChars, chunkLines } = this.budgetTracker.config
-    this.chunks = this.repo.basicChunks(this.snapshot, chunkChars, chunkLines)
+    this.chunks = await this.repo.basicChunks(this.snapshot, this.budgetTracker.config)
+    this.signal.throwIfAborted()
+    for (const chunk of this.chunks) {
+      if (chunk.startOffset !== 0 || chunk.strategy !== 'line-fallback') continue
+      const file = this.snapshot.files.find((file) => file.fileId === chunk.fileId)!
+      this.diagnostics.push({
+        code: 'chunk_line_fallback',
+        fileId: file.fileId,
+        message: `${file.path} 的语法边界无法确认，已按配置使用整行切块。`
+      })
+    }
     this.repo.saveChunks(this.snapshot, this.chunks)
     this.retrieval = new RetrievalService(
       this.repo,
@@ -175,7 +186,8 @@ export class AnalysisRuntime implements MultiFileRuntime {
         model: process.env.DEEPSEEK_MODEL,
         base: process.env.DEEPSEEK_BASE_URL,
         temperature: process.env.DEEPSEEK_TEMPERATURE,
-        version: 'index-v2.6'
+        chunker: chunk.chunkerVersion,
+        version: 'index-lines-v3'
       })
     )
   }
@@ -234,34 +246,12 @@ export class AnalysisRuntime implements MultiFileRuntime {
       }
       for (const [callIndex, call] of unit.callSites.entries()) {
         context.validate(call.range, call.evidenceIds)
-        const source = this.repo
-          .content(this.snapshot, call.range.fileId)
-          .slice(call.range.startOffset, call.range.endOffset)
+        const fileContent = this.repo.content(this.snapshot, call.range.fileId)
+        const source = fileContent.slice(call.range.startOffset, call.range.endOffset)
         if (!source.includes(call.text) || !source.includes(call.targetHint)) {
-          // 反馈必须携带双方原文；text 能在原文唯一定位时给出建议范围，
-          // 模型按建议重报但仍须重新通过全部校验，程序不自动改写。
-          let suggestion = ''
-          try {
-            const content = this.repo.content(this.snapshot, call.range.fileId)
-            const anchor = content.indexOf(call.text, Math.max(0, call.range.startOffset - 400))
-            if (
-              anchor !== -1 &&
-              anchor < call.range.endOffset + 400 &&
-              content.indexOf(call.text, anchor + 1) === -1
-            ) {
-              const fixed = sourceRange(
-                call.range.fileId,
-                content,
-                anchor,
-                anchor + call.text.length
-              )
-              suggestion = `text在原文中唯一出现于偏移[${fixed.startOffset},${fixed.endOffset})，行${fixed.lineStart}:${fixed.columnStart}-${fixed.lineEnd}:${fixed.columnEnd}（终点列排他）；请以该范围重新提交。`
-            }
-          } catch {
-            // 无法定位或范围无效时保持通用指引。
-          }
+          const { lineStart, lineEnd } = coveredLines(call.range)
           throw new ModelOutputValidationError(
-            `调用点units[${index.units.indexOf(unit)}].callSites[${callIndex}]无效：您声明的range原文为"${source}"（偏移[${call.range.startOffset},${call.range.endOffset})，行${call.range.lineStart}:${call.range.columnStart}-${call.range.lineEnd}:${call.range.columnEnd}），提交的text为"${call.text}"，targetHint为"${call.targetHint}"。text必须逐字出现在range原文内，不能添加分号、空格或改写。${suggestion}`
+            `调用点units[${index.units.indexOf(unit)}].callSites[${callIndex}]无效：第 ${lineStart}–${lineEnd} 行原文为"${source}"，提交的text为"${call.text}"、targetHint为"${call.targetHint}"。两者都须逐字出现在原文内。`
           )
         }
         if (calls.has(call.callSiteId)) throw new ModelOutputValidationError('调用点ID重复。')
@@ -271,6 +261,11 @@ export class AnalysisRuntime implements MultiFileRuntime {
           call.range.endOffset > unit.range.endOffset
         )
           throw new ModelOutputValidationError('调用点超出单元。')
+        const match = source.indexOf(call.text)
+        if (call.text && call.text.includes(call.targetHint) && source.indexOf(call.text, match + 1) === -1) {
+          const start = call.range.startOffset + match
+          call.range = sourceRange(call.range.fileId, fileContent, start, start + call.text.length)
+        }
       }
     }
     for (const ref of index.references) context.validate(ref.range, ref.evidenceIds)
@@ -335,11 +330,15 @@ export class AnalysisRuntime implements MultiFileRuntime {
     feedback: string | null
   ): Promise<TaskOutcome> {
     let cacheKey: string | undefined
+    let taskRange: SourceRange | undefined
+    let wholeFile = false
     const taskContext = { analysisId: this.analysisId, taskId: id, attempt: attempts }
     try {
       this.signal.throwIfAborted()
       if (id.startsWith('index:')) {
         const chunk = this.chunks.find((c) => `index:${c.chunkId}` === id)!
+        taskRange = chunk
+        wholeFile = chunk.strategy === 'whole-file'
         const context = new SourceContext(
           this.repo,
           this.snapshot,
@@ -349,9 +348,11 @@ export class AnalysisRuntime implements MultiFileRuntime {
           this.retrieval
         )
         context.allowedFileId = chunk.fileId
-        // 单块文件（无跨块边界）在索引同轮产出局部草稿，省掉独立生成调用；带反馈重试只修索引。
+        // 仅为小文件合并索引和草稿，避免较大的单块同时输出两份结构而截断。
         const withDrafts =
-          feedback === null && this.chunks.filter((c) => c.fileId === chunk.fileId).length === 1
+          feedback === null &&
+          chunk.endOffset - chunk.startOffset <= 2000 &&
+          this.chunks.filter((c) => c.fileId === chunk.fileId).length === 1
         cacheKey = this.key(chunk)
         const cachedValue = feedback
           ? undefined
@@ -412,6 +413,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
         const unit = this.indexes
           .flatMap((i) => i.units)
           .find((u) => `generate:${u.unitId}` === id)!
+        taskRange = unit.range
         const context = this.context!
         const code = context.read(unit.range.fileId, unit.range.startOffset, unit.range.endOffset)
         const payload = {
@@ -438,7 +440,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
             model: process.env.DEEPSEEK_MODEL,
             base: process.env.DEEPSEEK_BASE_URL,
             temperature: process.env.DEEPSEEK_TEMPERATURE,
-            version: 'flow-v2.5'
+            version: 'flow-lines-v3'
           })
         )
         cacheKey = key
@@ -509,6 +511,19 @@ export class AnalysisRuntime implements MultiFileRuntime {
           error: safeErrorDetails(error)
         })
       if (cacheKey) this.repo.cacheDelete(cacheKey)
+      if (taskRange && (reason instanceof ContextLimitError || reason instanceof ModelOutputTruncatedError)) {
+        const { fileId } = taskRange
+        const file = this.snapshot.files.find((file) => file.fileId === fileId)!
+        const { lineStart, lineEnd } = coveredLines(taskRange)
+        const location = `${file.path} 第 ${lineStart}–${lineEnd} 行`
+        if (reason instanceof ModelOutputTruncatedError)
+          throw new ModelOutputTruncatedError(`${location}：${reason.message}`)
+        throw new ContextLimitError(
+          wholeFile
+            ? `${location} 的整文件任务超过模型上下文，且无法确认语法边界。如接受按整行切块，可设置 CODE2FLOW_MULTI_ALLOW_LINE_FALLBACK=true。`
+            : `${location} 的任务超过模型上下文。请减小切块目标或使用上下文更大的模型，完整语法单元会保留。`
+        )
+      }
       // 只向 graph 传递已知业务错误或固定说明，不传递供应商原始异常。
       const safe =
         reason instanceof ModelOutputValidationError ||
@@ -567,7 +582,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
             old.controlRanges = [
               ...new Map(
                 [...old.controlRanges, ...unit.controlRanges].map((c) => [
-                  JSON.stringify(c.range),
+                  JSON.stringify([c.kind, c.range]),
                   c
                 ])
               ).values()
@@ -575,7 +590,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
             old.callSites = [
               ...new Map(
                 [...old.callSites, ...unit.callSites].map((c) => [
-                  `${c.range.startOffset}:${c.range.endOffset}:${c.targetHint}`,
+                  JSON.stringify([c.range.startOffset, c.range.endOffset, c.kind, c.targetHint, c.text]),
                   c
                 ])
               ).values()
@@ -591,8 +606,8 @@ export class AnalysisRuntime implements MultiFileRuntime {
       const fileUnits = [...units.values()].filter((u) => u.range.fileId === file.fileId)
       for (const unit of fileUnits) {
         const calls = new Map<string, string>()
-        unit.callSites = unit.callSites.map((c) => {
-          const formal = `call_${sha256(`${unit.unitId}:${c.range.startOffset}:${c.range.endOffset}`).slice(0, 10)}`
+        unit.callSites = unit.callSites.map((c, index) => {
+          const formal = `call_${sha256(JSON.stringify([unit.unitId, c.range.startOffset, c.range.endOffset, index])).slice(0, 10)}`
           calls.set(c.callSiteId, formal)
           return { ...c, callSiteId: formal }
         })
@@ -779,7 +794,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
         model: process.env.DEEPSEEK_MODEL,
         base: process.env.DEEPSEEK_BASE_URL,
         temperature: process.env.DEEPSEEK_TEMPERATURE,
-        version: 'verify-v1'
+        version: 'verify-lines-v3'
       })
     )
   }
@@ -959,8 +974,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
           phase: 'index',
           fileId: c.fileId,
           path: this.snapshot.files.find((f) => f.fileId === c.fileId)!.path,
-          startOffset: c.startOffset,
-          endOffset: c.endOffset
+          ...coveredLines(c)
         })),
       ...this.indexes
         .flatMap((i) => i.units)
@@ -969,8 +983,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
           phase: u.complete ? 'generate' : 'index',
           fileId: u.range.fileId,
           path: this.snapshot.files.find((f) => f.fileId === u.range.fileId)!.path,
-          startOffset: u.range.startOffset,
-          endOffset: u.range.endOffset
+          ...coveredLines(u.range)
         }))
     ]
   }

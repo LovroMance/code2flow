@@ -1,5 +1,5 @@
 import { ModelOutputValidationError } from '../domain/multifile/errors'
-import { lineOffsets } from './sourcePositions'
+import { coveredLines, sourceLineRange } from './sourcePositions'
 import {
   MultiFileFlowResultSchema,
   type CrossFileReference,
@@ -56,8 +56,9 @@ export function validateUnitDraft(draft: UnitFlowDraft, context: SourceContext) 
       const text = context.repository
         .content(context.snapshot, unit.range.fileId)
         .slice(control.range.startOffset, control.range.endOffset)
+      const { lineStart, lineEnd } = coveredLines(control.range)
       throw new ModelOutputValidationError(
-        `局部流程遗漏索引中的关键控制位置：${control.kind}（行${control.range.lineStart}:${control.range.columnStart}-${control.range.lineEnd}:${control.range.columnEnd}）原文"${text}"；请为该语句补充节点，range覆盖它。`
+        `局部流程遗漏关键控制位置：${control.kind}（第 ${lineStart}–${lineEnd} 行）原文"${text}"；请补充节点并覆盖该行范围。`
       )
     }
     if (
@@ -122,23 +123,13 @@ export function composeMultiFileFlow(
       `subgraph g_${u}["${escapeMermaidLabel(`${file.path} · ${unit.name || unit.kind}`)}"]`
     )
     // 入口节点由程序合成，映射到单元声明行，模型只提交有语义含量的节点。
-    const content = context.repository.content(context.snapshot, file.fileId),
-      offsets = lineOffsets(content),
-      declStart = offsets[unit.range.lineStart - 1] ?? unit.range.startOffset,
-      declEndRaw = offsets[unit.range.lineStart] ?? content.length
-    let declEnd = declEndRaw
-    while (declEnd > declStart && /[\r\n]/.test(content[declEnd - 1]!)) declEnd--
+    const content = context.repository.content(context.snapshot, file.fileId)
+    const declaration = sourceLineRange(file.fileId, content, unit.range.lineStart, unit.range.lineStart)
     const startId = `n_start_${unit.range.lineStart}_f${f + 1}_u${u + 1}_0`,
       startLabel = escapeMermaidLabel(`开始 ${unit.name || unit.kind}`)
     lines.push(`${startId}(["${startLabel}"])`)
     mappings.push({
-      fileId: file.fileId,
-      startOffset: declStart,
-      endOffset: declEnd,
-      lineStart: unit.range.lineStart,
-      lineEnd: unit.range.lineStart,
-      columnStart: 1,
-      columnEnd: declEnd - declStart + 1,
+      ...declaration,
       nodeId: startId,
       unitId: draft.unitId,
       kind: 'start',

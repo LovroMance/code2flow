@@ -12,11 +12,9 @@ import {
 import {
   lineOffsets,
   normalizeSourcePath,
-  sha256,
-  chunkSource,
-  chunkerVersion,
-  validateChunks
+  sha256
 } from '../utils/sourcePositions'
+import { chunkSource, chunkerVersion, validateChunks, type ChunkOptions } from '../utils/sourceChunks'
 import { SessionError } from '../services/session-lock'
 import { SOURCE_LIMITS, MultiConfigurationError } from '../services/multifile-config'
 import {
@@ -237,9 +235,9 @@ export class SourceRepository {
     return rows.map((row) => CodeChunkSchema.parse(JSON.parse(JsonRow.parse(row).data)))
   }
   /** 复用正文与切片版本匹配的基础块，并重新绑定当前快照的文件身份。 */
-  basicChunks(snapshot: SourceSnapshot, maxChars = 8000, maxLines = 120) {
-    return snapshot.files.flatMap((file) => {
-      const version = chunkerVersion(maxChars, maxLines),
+  async basicChunks(snapshot: SourceSnapshot, options: ChunkOptions) {
+    const files = await Promise.all(snapshot.files.map(async (file) => {
+      const version = chunkerVersion(file.path, options),
         content = this.content(snapshot, file.fileId)
       this.db
         .prepare('INSERT OR IGNORE INTO code_flow_source_positions VALUES(?,?)')
@@ -263,12 +261,13 @@ export class SourceRepository {
         validateChunks(file.fileId, content, chunks)
         return chunks
       }
-      const chunks = chunkSource(file.fileId, content, maxChars, maxLines)
+      const chunks = await chunkSource(file.fileId, file.path, content, options)
       this.db
         .prepare('INSERT OR REPLACE INTO code_flow_chunk_templates VALUES(?,?,?)')
         .run(file.contentHash, version, JSON.stringify(chunks))
       return chunks
-    })
+    }))
+    return files.flat()
   }
   /** 内容寻址的全局缓存：键由内容哈希、模型与协议版本构成，可跨会话复用。 */
   cacheGet(key: string): unknown {

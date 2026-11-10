@@ -25,42 +25,21 @@ const stale = computed(() => !!run.value && !equalSourceFiles(props.files, run.v
 const totalChunks = computed(() => result.value?.files.reduce((sum, file) => sum + file.chunks.length, 0))
 const file = computed(() => result.value?.files[fileIndex.value])
 const chunk = computed(() => file.value?.chunks[chunkIndex.value])
-const previousChunk = computed(() => file.value?.chunks[chunkIndex.value - 1])
 const content = computed(() =>
   chunk.value && file.value
     ? file.value.content.slice(chunk.value.startOffset, chunk.value.endOffset)
     : ''
 )
-const lines = computed(() => {
-  const selected = chunk.value
-  if (!selected) return []
-  const parts = content.value.match(/[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+$/g) ?? []
-  const overlapEnd = previousChunk.value?.endOffset ?? selected.startOffset
-  let offset = selected.startOffset
-  return parts.map((part, index) => {
-    const text = part.replace(/(?:\r\n|\r|\n)$/, '')
-    const overlapLength = Math.max(0, overlapEnd - offset)
-    offset += part.length
-    return {
-      number: selected.lineStart + index,
-      fullOverlap: overlapLength >= part.length,
-      overlap: text.slice(0, overlapLength),
-      rest: text.slice(overlapLength)
-    }
-  })
-})
-
-function lastCoveredLine(item: Chunk) {
-  return item.lineEnd - (item.columnEnd === 1 ? 1 : 0)
-}
+const lines = computed(() => content.value.replace(/(?:\r\n|\r|\n)$/, '').split(/\r\n|\r|\n/))
 
 function lineRange(item: Chunk) {
-  const lastLine = lastCoveredLine(item)
-  return lastLine === item.lineStart ? `第 ${lastLine} 行` : `第 ${item.lineStart}–${lastLine} 行`
+  return item.lineEnd === item.lineStart
+    ? `第 ${item.lineStart} 行`
+    : `第 ${item.lineStart}–${item.lineEnd} 行`
 }
 
 function chunkSize(item: Chunk) {
-  const lineCount = lastCoveredLine(item) - item.lineStart + 1
+  const lineCount = item.lineEnd - item.lineStart + 1
   const charCount = item.endOffset - item.startOffset
   return `${lineCount} 行 · ${charCount} 字符`
 }
@@ -136,8 +115,8 @@ onBeforeUnmount(() => request?.abort())
 
     <div class="debug-toolbar">
       <span>当前会话 · {{ files.length }} 个文件</span>
-      <span v-if="result" class="debug-config" title="每块行数与 UTF-16 字符数上限">
-        {{ result.chunkLines }} 行 / {{ result.chunkChars }} 字符
+      <span v-if="result" class="debug-config" title="完整语法单元可超过该目标，字符数按 UTF-16 计算">
+        每块目标 {{ result.chunkTargetChars }} 字符
       </span>
       <button type="button" class="primary-button" :disabled="loading || busy || files.length < 2"
         @click="runPreview">
@@ -162,6 +141,9 @@ onBeforeUnmount(() => request?.abort())
             <span>{{ item.chunks.length }} 块</span>
           </button>
           <template v-if="expandedFile === index">
+            <p v-if="item.strategy !== 'syntax'" class="debug-file-strategy">
+              {{ item.strategy === 'whole-file' ? '语法边界未确认，保留整文件' : '语法边界未确认，按整行切块' }}
+            </p>
             <button v-for="(range, position) in item.chunks" :key="range.chunkId" type="button"
               class="debug-row debug-chunk-button" :aria-pressed="fileIndex === index && chunkIndex === position"
               @click="chunkIndex = position">
@@ -181,9 +163,6 @@ onBeforeUnmount(() => request?.abort())
             <h2>{{ file.path }} · 第 {{ chunkIndex + 1 }} 块</h2>
             <p>
               {{ lineRange(chunk) }} · {{ chunkSize(chunk) }}
-              <span v-if="previousChunk && previousChunk.endOffset > chunk.startOffset" class="debug-legend">
-                与上一块重叠
-              </span>
             </p>
           </div>
           <div class="debug-copy">
@@ -192,17 +171,14 @@ onBeforeUnmount(() => request?.abort())
           </div>
         </header>
         <pre class="debug-code" tabindex="0" aria-label="带原始行号的分块源码"><code><span
-          v-for="line in lines" :key="line.number" class="debug-line" :class="{ 'debug-overlap': line.fullOverlap }"
-        ><span class="debug-line-number" aria-hidden="true">{{ line.number }}</span><span><mark
-          v-if="line.overlap" class="debug-overlap"
-        >{{ line.overlap }}</mark>{{ line.rest }}</span></span></code></pre>
+          v-for="(line, index) in lines" :key="index" class="debug-line"
+        ><span class="debug-line-number" aria-hidden="true">{{ chunk.lineStart + index }}</span><span>{{ line }}</span></span></code></pre>
         <details class="debug-details">
           <summary>块详情</summary>
           <div>
             <span>预览块 ID {{ chunk.chunkId }}</span>
             <span>切块版本 {{ chunk.chunkerVersion }}</span>
-            <span>行列 {{ chunk.lineStart }}:{{ chunk.columnStart }} – {{ chunk.lineEnd }}:{{ chunk.columnEnd }}（结束位置不含）</span>
-            <span>UTF-16 偏移 [{{ chunk.startOffset }}, {{ chunk.endOffset }})</span>
+            <span>原始源码 {{ lineRange(chunk) }}</span>
           </div>
         </details>
       </section>
@@ -305,6 +281,11 @@ onBeforeUnmount(() => request?.abort())
   color: var(--text-muted);
   font-size: 11px;
 }
+.debug-file-strategy {
+  margin: 4px 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
 .debug-row[aria-pressed='true'] {
   border-inline-start-color: var(--accent);
   background: var(--debug-highlight);
@@ -331,17 +312,6 @@ onBeforeUnmount(() => request?.abort())
   flex-shrink: 0;
   align-items: center;
   gap: 8px;
-}
-.debug-legend {
-  margin-left: 10px;
-}
-.debug-legend::before {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  margin-right: 4px;
-  background: var(--debug-highlight);
-  content: '';
 }
 .debug-code {
   flex: 1;
@@ -370,10 +340,6 @@ onBeforeUnmount(() => request?.abort())
   color: var(--text-muted);
   text-align: right;
   user-select: none;
-}
-.debug-overlap {
-  background: var(--debug-highlight);
-  color: inherit;
 }
 .debug-details {
   padding: 10px 16px;

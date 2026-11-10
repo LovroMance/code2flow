@@ -6,18 +6,19 @@ import { AnalysisBudget, runMultiFollowUp } from '../ai/chains/multifile.chain'
 import { SourceRepository } from '../repositories/source.repository'
 import { SessionRepository } from '../repositories/session.repository'
 import { DraftSchema, type SourceFileInput } from '../domain/source/schema'
-import { MultiFileFlowResultSchema } from '../domain/multifile/schema'
+import { MultiFileFlowResultSchema, type MultiFileFlowResult } from '../domain/multifile/schema'
 import { SourceContext } from './source-context.service'
 import { RetrievalService } from './retrieval.service'
 import { AnalysisRuntime } from './multifile-runtime'
 import { withSessionLock, SessionError, isSessionBusy } from './session-lock'
-import { chunkSource, normalizeSourcePath } from '../utils/sourcePositions'
+import { coveredLines, normalizeSourcePath } from '../utils/sourcePositions'
+import { chunkSource } from '../utils/sourceChunks'
 import { chunkConfig, SOURCE_LIMITS } from './multifile-config'
 import { z } from 'zod'
 import { analysisTraceConfig, inheritTraceConfig, traceStep } from '../ai/observability/langsmith'
 
 /** 用本次提交的草稿预览分块，按输入顺序返回文件和范围。 */
-export function previewChunks(input: SourceFileInput[]) {
+export async function previewChunks(input: SourceFileInput[]) {
   const config = chunkConfig()
   const files = SourceRepository.validateFiles(
     input,
@@ -26,11 +27,25 @@ export function previewChunks(input: SourceFileInput[]) {
   )
   return {
     ...config,
-    files: files.map(({ path, content }, index) => ({
-      path,
-      chunks: chunkSource(`preview_${index + 1}`, content, config.chunkChars, config.chunkLines)
+    files: await Promise.all(files.map(async ({ path, content }, index) => {
+      const chunks = await chunkSource(`preview_${index + 1}`, path, content, config)
+      return {
+        path,
+        strategy: chunks[0]!.strategy,
+        chunks: chunks.map((chunk) => ({
+          ...coveredLines(chunk),
+          chunkId: chunk.chunkId,
+          chunkerVersion: chunk.chunkerVersion
+        }))
+      }
     }))
   }
+}
+
+/** 历史与新图的前端定位都使用包含首尾的原始行号。 */
+function publicMapping(value: MultiFileFlowResult['mappings'][number]) {
+  const { columnStart, columnEnd, startOffset, endOffset, ...mapping } = value
+  return { ...mapping, ...coveredLines(value) }
 }
 
 export class MultiFileService {
@@ -93,12 +108,13 @@ export class MultiFileService {
     this.ensure(id)
     const state = await createMultiFileGraph(undefined, this.saver).getState(this.config(id))
     const snapshot = state.values.snapshotId ? this.repo.get(id, state.values.snapshotId) : null
+    const result = state.values.result
     return {
       version: 2 as const,
       draft: this.repo.draft(id),
       sourceSnapshotId: snapshot?.snapshotId ?? null,
       snapshot,
-      result: state.values.result ?? null,
+      result: result ? { ...result, mappings: result.mappings.map(publicMapping) } : null,
       messages: state.values.messages ?? [],
       failed: !!state.values.error || (!!state.values.snapshotId && !state.values.result),
       busy: isSessionBusy(id)
@@ -178,7 +194,7 @@ export class MultiFileService {
               stage: 'complete'
             })
             emit('mermaid', result.mermaid)
-            emit('mappings', result.mappings)
+            emit('mappings', result.mappings.map(publicMapping))
             emit('done')
             return result
           } catch (error) {

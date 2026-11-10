@@ -4,10 +4,12 @@ import { tool } from '@langchain/core/tools'
 import type { SourceRepository } from '../repositories/source.repository'
 import type { SourceSnapshot, Evidence, SourceRange, CodeChunk } from '../domain/source/schema'
 import type { FileSemanticIndex } from '../domain/multifile/schema'
+import { SourceLineRangeSchema } from '../domain/source/schema'
+import { slimModelInput } from '../ai/chains/multifile-output'
 import {
-  lineOffsets,
-  safeBoundary,
+  coveredLines,
   sha256,
+  sourceLineRange,
   sourceRange,
   validateSourceRange
 } from '../utils/sourcePositions'
@@ -20,9 +22,8 @@ const PageSchema = z.object({
   cursor: z.number().int().nonnegative().optional(),
   limit: z.number().int().min(1).max(20).optional()
 })
-/** 按块、执行单元或原始行列选取源码；一次读取还受总行数和字符预算限制。 */
+/** 按块、执行单元或原始行号选取源码。 */
 const ReadSchema = z.object({
-  // 最多 8 个选择器，range 的结束列排他，chunk/unit 必须属于当前快照。
   selectors: z
     .array(
       z.discriminatedUnion('type', [
@@ -31,12 +32,7 @@ const ReadSchema = z.object({
         z.object({
           type: z.literal('range'),
           fileId: z.string(),
-          range: z.object({
-            lineStart: z.number().int().positive(),
-            lineEnd: z.number().int().positive(),
-            columnStart: z.number().int().positive(),
-            columnEnd: z.number().int().positive()
-          })
+          range: SourceLineRangeSchema
         })
       ])
     )
@@ -63,13 +59,9 @@ export class SourceContext {
     if (this.allowedFileId && fileId !== this.allowedFileId)
       throw new Error('文件分析任务只能读取本文件。')
     const content = this.repository.content(this.snapshot, fileId),
-      range = sourceRange(
-        fileId,
-        content,
-        start,
-        end,
-        this.repository.offsets(this.snapshot, fileId)
-      )
+      offsets = this.repository.offsets(this.snapshot, fileId),
+      range = sourceRange(fileId, content, start, end, offsets),
+      { lineStart, lineEnd } = coveredLines(range)
     // 证据ID由快照与范围决定：同范围重复读取收敛到同一凭证，跨任务合并天然去重。
     const evidence: Evidence = {
       ...range,
@@ -80,13 +72,11 @@ export class SourceContext {
     this.evidence.set(evidence.evidenceId, evidence)
     this.accessible.add(evidence.evidenceId)
     // 展示正文带原始行号前缀，模型直接引用行号，避免自行计数导致行列与偏移冲突。
-    const offsets = this.repository.offsets(this.snapshot, fileId)
     const lines: string[] = []
-    for (let index = 0; index < offsets.length; index++) {
-      const lineStart = offsets[index]!
-      const lineEnd = offsets[index + 1] ?? content.length
-      if (lineStart >= end || lineEnd <= start) continue
-      lines.push(`${index + 1}| ${content.slice(lineStart, lineEnd).replace(/[\r\n]+$/, '')}`)
+    for (let line = lineStart; line <= lineEnd; line++) {
+      const startOfLine = offsets[line - 1]!
+      const endOfLine = offsets[line] ?? content.length
+      lines.push(`${line}| ${content.slice(startOfLine, endOfLine).replace(/[\r\n]+$/, '')}`)
     }
     return {
       content: lines.join('\n'),
@@ -94,11 +84,7 @@ export class SourceContext {
       truncated: false,
       metering: {
         chars: end - start,
-        lines:
-          range.lineEnd -
-          range.lineStart +
-          1 -
-          (range.columnEnd === 1 && range.lineEnd > range.lineStart ? 1 : 0)
+        lines: lineEnd - lineStart + 1
       }
     }
   }
@@ -109,18 +95,7 @@ export class SourceContext {
       validateSourceRange(range, range.fileId, content)
     } catch (error) {
       if (!(error instanceof Error) || error.constructor !== Error) throw error
-      // 不自动改写模型范围；给重试提供由原始偏移计算的正确行列，仍须重新通过校验。
-      if (
-        range.startOffset >= 0 &&
-        range.endOffset > range.startOffset &&
-        range.endOffset <= content.length
-      ) {
-        const expected = sourceRange(range.fileId, content, range.startOffset, range.endOffset)
-        throw new ModelOutputValidationError(
-          `源码范围校验失败：提交行列${range.lineStart}:${range.columnStart}-${range.lineEnd}:${range.columnEnd}与偏移[${range.startOffset},${range.endOffset})不一致，偏移实际对应${expected.lineStart}:${expected.columnStart}-${expected.lineEnd}:${expected.columnEnd}；请对照content中的"行号| "前缀与上述行列重新提交，终点列排他。`
-        )
-      }
-      throw new ModelOutputValidationError(error.message)
+      throw new ModelOutputValidationError('源码范围校验失败，请对照源码前缀提交起止行号。')
     }
     if (!evidenceIds.length || evidenceIds.some((id) => !this.accessible.has(id)))
       throw new ModelOutputValidationError('引用了任务不可访问的证据。')
@@ -159,16 +134,18 @@ export class SourceContext {
               end = unit.range.endOffset
             } else {
               fileId = selector.fileId
-              const content = this.repository.content(this.snapshot, fileId),
-                offsets = lineOffsets(content)
-              start = (offsets[selector.range.lineStart - 1] ?? -1) + selector.range.columnStart - 1
-              end = (offsets[selector.range.lineEnd - 1] ?? -1) + selector.range.columnEnd - 1
-              validateSourceRange(
-                { ...selector.range, fileId, startOffset: start, endOffset: end },
+              const range = sourceLineRange(
                 fileId,
-                content
+                this.repository.content(this.snapshot, fileId),
+                selector.range.lineStart,
+                selector.range.lineEnd,
+                this.repository.offsets(this.snapshot, fileId)
               )
+              start = range.startOffset
+              end = range.endOffset
             }
+            if (this.allowedFileId && this.allowedFileId !== fileId)
+              throw new Error('文件分析任务只能读取本文件。')
           } catch (error) {
             // 模型给出的范围参数无效时作为工具反馈返回，允许其在剩余轮次内自行纠正；
             // 取消信号不属于参数错误，仍然向上抛出。
@@ -180,38 +157,44 @@ export class SourceContext {
                   : '读取参数无效，请检查选择器。'
             }
           }
-          if (chars <= 0 || lines <= 0)
+          const content = this.repository.content(this.snapshot, fileId),
+            offsets = this.repository.offsets(this.snapshot, fileId),
+            original = coveredLines(sourceRange(fileId, content, start, end, offsets))
+          const fullStart = offsets[original.lineStart - 1]!
+          const endLine = Math.min(original.lineEnd, original.lineStart + lines - 1)
+          let lastReadLine = original.lineStart - 1
+          let actualEnd = fullStart
+          for (let line = original.lineStart; line <= endLine; line++) {
+            const next = offsets[line] ?? content.length
+            if (next - fullStart > chars) break
+            lastReadLine = line
+            actualEnd = next
+          }
+          const truncated = lastReadLine < original.lineEnd
+          const continuation = truncated
+            ? { nextRange: { fileId, lineStart: lastReadLine + 1, lineEnd: original.lineEnd } }
+            : {}
+          if (actualEnd === fullStart)
             return {
               fileId,
-              truncated: true,
-              nextRange: sourceRange(
-                fileId,
-                this.repository.content(this.snapshot, fileId),
-                start,
-                end
-              ),
-              metering: { chars: 0, lines: 0 }
+              error: `剩余读取预算不足以读取第 ${original.lineStart} 行的完整内容。`,
+              truncated,
+              ...continuation
             }
-          const content = this.repository.content(this.snapshot, fileId),
-            offsets = lineOffsets(content),
-            original = sourceRange(fileId, content, start, end)
-          const actualEnd = safeBoundary(
-            content,
-            Math.min(end, start + chars, offsets[original.lineStart - 1 + lines] ?? content.length)
-          )
-          if (actualEnd <= start) throw new Error('读取预算不足。')
-          const result = this.read(fileId, start, actualEnd)
+          const result = this.read(fileId, fullStart, actualEnd)
           chars -= result.metering.chars
           lines -= result.metering.lines
           return {
-            ...result,
-            truncated: actualEnd < end,
-            ...(actualEnd < end ? { nextRange: sourceRange(fileId, content, actualEnd, end) } : {})
+            content: result.content,
+            evidence: slimModelInput(result.evidence),
+            metering: result.metering,
+            truncated,
+            ...continuation
           }
         })
         return {
           data,
-          truncated: data.some((item) => item.truncated),
+          truncated: data.some((item) => 'truncated' in item && item.truncated),
           metering: {
             chars: SOURCE_LIMITS.readChars - chars,
             lines: SOURCE_LIMITS.readLines - lines
@@ -221,7 +204,7 @@ export class SourceContext {
       {
         name: 'read_code',
         description:
-          '只读当前快照。每次最多8个块/单元/原始行列范围，共200行、12000个UTF-16字符。终点列排他。截断返回实际证据和nextRange，须继续读；零读取不产生证据。',
+          '只读当前快照。每次最多8个块/单元/原始行范围，共200行、12000个UTF-16字符。首尾行都包含。只返回完整行。截断时返回实际证据和nextRange；零读取不产生证据。',
         schema: ReadSchema
       }
     )
@@ -282,7 +265,7 @@ export class SourceContext {
           if (cursor > all.length) throw new Error('索引游标无效。')
           const data = all.slice(cursor, cursor + 20)
           return {
-            data,
+            data: slimModelInput(data),
             truncated: cursor + data.length < all.length,
             nextCursor: cursor + data.length,
             evidence: [],
@@ -304,7 +287,9 @@ export class SourceContext {
       tool(
         async (input) => {
           if (!this.retrieval) throw new Error('检索尚未准备。')
-          return this.retrieval.search(input.query, input.mode, input.fileIds, input.limit)
+          return slimModelInput(
+            await this.retrieval.search(input.query, input.mode, input.fileIds, input.limit)
+          )
         },
         {
           name: 'search_code',

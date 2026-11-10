@@ -34,15 +34,12 @@ export interface SourceSnapshot {
   /** null 表示尚未检测，unknown 表示已检测但不能确定。 */
   languageDetection: { language: FlowGenerationResult['detectedLanguage'] } | null
 }
-/** 继承单文件行列映射，增加跨文件身份与原始 UTF-16 半开区间。 */
-export interface MultiFileMapping extends NodeMapping {
+/** 多文件图按文件和原始行范围定位，首尾行都包含。 */
+export interface MultiFileMapping extends Omit<NodeMapping, 'columnStart' | 'columnEnd'> {
   /** 定位前先用此身份切换到快照对应文件。 */
   fileId: string
   /** 节点所属的执行单元。 */
   unitId: string
-  /** 包含起点、不包含终点，与原始字符串 slice 的偏移规则一致。 */
-  startOffset: number
-  endOffset: number
   /** 支撑节点位置的实际源码读取凭证。 */
   evidenceIds: string[]
 }
@@ -118,41 +115,44 @@ function integer(value: unknown, min = 0): asserts value is number {
     throw new Error('多文件响应数值无效。')
 }
 export function parseChunkPreview(value: unknown, input: SourceFileInput[]) {
-  const { chunkLines, chunkChars, files } = record(value)
-  integer(chunkLines, 2)
-  integer(chunkChars, 2)
+  const { chunkTargetChars, files } = record(value)
+  integer(chunkTargetChars, 2)
   if (!Array.isArray(files) || files.length !== input.length)
     throw new Error('切块响应中的文件数量不匹配。')
   return {
-    chunkLines,
-    chunkChars,
+    chunkTargetChars,
     files: files.map((item, index) => {
-      const { path, chunks } = record(item)
+      const { path, strategy, chunks } = record(item)
       const content = input[index]!.content
+      const offsets = [0, ...Array.from(content.matchAll(/\r\n|\r|\n/g), (match) =>
+        match.index! + match[0].length
+      )]
       str(path)
+      if (strategy !== 'syntax' && strategy !== 'whole-file' && strategy !== 'line-fallback')
+        throw new Error('切块响应中的策略无效。')
       if (!Array.isArray(chunks) || !chunks.length) throw new Error('切块响应缺少分块。')
       let covered = 0
       const ranges = chunks.map((chunk) => {
         const {
-          chunkId, chunkerVersion, startOffset, endOffset, lineStart, lineEnd, columnStart, columnEnd
+          chunkId, chunkerVersion, lineStart, lineEnd
         } = record(chunk)
         str(chunkId)
         str(chunkerVersion)
-        integer(startOffset)
-        integer(endOffset, 1)
         integer(lineStart, 1)
         integer(lineEnd, lineStart)
-        integer(columnStart, 1)
-        integer(columnEnd, 1)
-        if (startOffset > covered || endOffset <= covered || endOffset > content.length)
+        const startOffset = offsets[lineStart - 1]
+        const lastLineStart = offsets[lineEnd - 1]
+        const endOffset = offsets[lineEnd] ?? content.length
+        if (startOffset !== covered || lastLineStart === undefined ||
+            lastLineStart === content.length || endOffset <= covered)
           throw new Error('切块响应中的源码范围无效。')
         covered = endOffset
         return {
-          chunkId, chunkerVersion, startOffset, endOffset, lineStart, lineEnd, columnStart, columnEnd
+          chunkId, chunkerVersion, startOffset, endOffset, lineStart, lineEnd
         }
       })
       if (covered !== content.length) throw new Error('切块结果没有覆盖全部源码。')
-      return { path, content, chunks: ranges }
+      return { path, content, strategy, chunks: ranges }
     })
   }
 }
@@ -203,16 +203,9 @@ export function parseMultiResult(value: unknown): MultiFileResult {
     )
       throw new Error('多文件节点身份无效。')
     ids.add(String(m.nodeId))
-    integer(m.startOffset)
-    integer(m.endOffset, 1)
     integer(m.lineStart, 1)
-    integer(m.lineEnd, 1)
-    integer(m.columnStart, 1)
-    integer(m.columnEnd, 1)
+    integer(m.lineEnd, m.lineStart)
     if (
-      Number(m.endOffset) <= Number(m.startOffset) ||
-      Number(m.lineEnd) < Number(m.lineStart) ||
-      (Number(m.lineEnd) === Number(m.lineStart) && Number(m.columnEnd) < Number(m.columnStart)) ||
       !Array.isArray(m.evidenceIds) ||
       !m.evidenceIds.length ||
       !m.evidenceIds.every((e) => typeof e === 'string')
