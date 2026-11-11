@@ -4,7 +4,7 @@ import { SessionMetadataSchema, type SessionMetadata } from '../domain/session/s
 
 const RowSchema = z.object({ data: z.string() })
 
-// 只保存会话目录与编辑草稿；图、映射和消息仍由官方 saver 管理。
+// 会话目录与工作区草稿分别存储。
 export class SessionRepository {
   constructor(private readonly saver: SqliteSaver) {
     saver.db.exec(`CREATE TABLE IF NOT EXISTS code_flow_sessions (
@@ -37,7 +37,7 @@ export class SessionRepository {
   }
 
   delete(id: string) {
-    // 保留删除标记，防止旧 JSON 兼容导入让已删除会话重新出现。
+    // 防止延迟或重试的创建请求恢复已删除的会话。
     this.saver.db
       .prepare('INSERT OR IGNORE INTO code_flow_deleted_sessions (id) VALUES (?)')
       .run(id)

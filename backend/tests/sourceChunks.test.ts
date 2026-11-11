@@ -49,3 +49,15 @@ it.each(['broken.ts', 'unsupported.txt'])('文件 %s 无法按语法切分时保
     { strategy: 'whole-file', startOffset: 0, endOffset: source.length }
   ])
 })
+
+it('密集的执行单元和调用在字符目标以内也按语法边界切分', async () => {
+  const source = Array.from({ length: 24 }, (_, index) => `function f${index}() { return load() }\n`).join('')
+  const chunks = await chunkSource('f', 'dense.js', source, { chunkTargetChars: 6000 })
+  const bodies = chunks.map(({ startOffset, endOffset }) => source.slice(startOffset, endOffset))
+  expect(bodies.length).toBeGreaterThan(1)
+  expect(bodies.join('')).toBe(source)
+  for (const body of bodies) {
+    expect(body).toMatch(/^function /)
+    expect(body).toMatch(/\}\n$/)
+  }
+})

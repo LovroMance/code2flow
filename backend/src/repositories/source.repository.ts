@@ -80,7 +80,12 @@ export class SourceRepository {
     }
   }
   /** 校验路径唯一性、内容及上传体积，返回归一化文件集合。 */
-  static validateFiles(files: SourceFileInput[], maxFiles = 20, maxBytes = 2097152) {
+  static validateFiles(
+    files: SourceFileInput[],
+    maxFiles = 20,
+    maxBytes = 2097152,
+    { allowBlank = false } = {}
+  ) {
     if (
       !Number.isInteger(maxFiles) ||
       maxFiles < 1 ||
@@ -98,7 +103,7 @@ export class SourceRepository {
         bytes = Buffer.byteLength(file.content, 'utf8')
       if (seen.has(path)) throw new SessionError(`路径重复：${path}`, 400)
       if (
-        !file.content.replace(/^\uFEFF/, '').trim() ||
+        (!allowBlank && !file.content.trim()) ||
         [...file.content].some((c) => c.charCodeAt(0) < 32 && !'\t\r\n'.includes(c)) ||
         /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(file.content)
       )
@@ -123,7 +128,6 @@ export class SourceRepository {
     const snapshot: SourceSnapshot = {
       snapshotId: randomUUID(),
       sessionId,
-      manifestHash,
       languageDetection: null,
       files: sorted.map((file) => ({
         fileId: randomUUID(),
@@ -284,7 +288,7 @@ export class SourceRepository {
   cacheDelete(key: string) {
     this.db.prepare('DELETE FROM code_flow_content_cache WHERE cache_key=?').run(key)
   }
-  /** 将用户会话映射到内部 v2 checkpoint 线程，避免覆盖旧单文件图状态。 */
+  /** 将用户会话映射到分析 checkpoint 线程。 */
   analysisThread(sessionId: string, create = true) {
     const row: unknown = this.db
       .prepare('SELECT thread_id FROM code_flow_multifile_threads WHERE session_id=?')
@@ -294,11 +298,6 @@ export class SourceRepository {
     const threadId = `v2:${randomUUID()}`
     this.db.prepare('INSERT INTO code_flow_multifile_threads VALUES(?,?)').run(sessionId, threadId)
     return threadId
-  }
-  isAnalysisThread(threadId: string) {
-    return !!this.db
-      .prepare('SELECT session_id FROM code_flow_multifile_threads WHERE thread_id=?')
-      .get(threadId)
   }
   /** 保存已核验的文件索引、单元、关系及证据，供读取工具和会话恢复使用。 */
   saveFacts(

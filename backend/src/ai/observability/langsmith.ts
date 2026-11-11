@@ -56,7 +56,7 @@ export function inheritTraceConfig(config: RunnableConfig): RunnableConfig {
 }
 
 export function analysisTraceConfig(
-  operation: 'generate' | 'followup' | 'multifile' | 'multifile-followup',
+  operation: 'multifile' | 'multifile-followup',
   sessionId?: string,
   details: Record<string, unknown> = {}
 ): RunnableConfig {

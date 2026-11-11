@@ -1,5 +1,5 @@
 import { isSupportedLanguage } from './languages'
-import type { FlowGenerationResult, NodeMapping } from './types'
+import type { NodeMapping, SupportedLanguage } from './types'
 
 /** 可编辑文件；提交后由后端为不可变快照分配文件身份。 */
 export interface SourceFileInput {
@@ -28,14 +28,13 @@ export interface SourceSnapshot {
   /** 所属用户会话。 */
   sessionId: string
   /** 路径与正文哈希清单摘要，文件顺序和当前选中文件不影响它。 */
-  manifestHash: string
   /** 全部成员文件的元数据。 */
   files: SnapshotFile[]
   /** null 表示尚未检测，unknown 表示已检测但不能确定。 */
-  languageDetection: { language: FlowGenerationResult['detectedLanguage'] } | null
+  languageDetection: { language: SupportedLanguage } | null
 }
 /** 多文件图按文件和原始行范围定位，首尾行都包含。 */
-export interface MultiFileMapping extends Omit<NodeMapping, 'columnStart' | 'columnEnd'> {
+export interface MultiFileMapping extends NodeMapping {
   /** 定位前先用此身份切换到快照对应文件。 */
   fileId: string
   /** 节点所属的执行单元。 */
@@ -44,13 +43,14 @@ export interface MultiFileMapping extends Omit<NodeMapping, 'columnStart' | 'col
   evidenceIds: string[]
 }
 /** SSE 各事件组装后的 v2 结果，完成运行时校验后才能用于渲染和点击定位。 */
-export interface MultiFileResult extends FlowGenerationResult {
-  /** 结果协议版本，区别于原有单文件接口。 */
+export interface MultiFileResult {
   version: 2
   /** 生成时固定的源码身份。 */
   snapshotId: string
   /** 本次任务身份，同一快照重新生成也有新的 analysisId。 */
   analysisId: string
+  detectedLanguage: SupportedLanguage
+  mermaid: string
   /** 纯声明集合可为 false，此时图文本与映射为空。 */
   hasExecutableFlow: boolean
   /** 与最终图节点一一对应的源码位置。 */
@@ -163,7 +163,8 @@ export function parseSourceFiles(value: unknown): SourceFileInput[] {
 }
 export function parseSnapshot(value: unknown): SourceSnapshot {
   const r = record(value)
-  for (const field of ['snapshotId', 'sessionId', 'manifestHash']) str(r[field])
+  str(r.snapshotId)
+  str(r.sessionId)
   if (!Array.isArray(r.files)) throw new Error('快照文件无效。')
   for (const f of r.files) {
     const file = record(f)

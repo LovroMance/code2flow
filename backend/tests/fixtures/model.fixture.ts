@@ -1,24 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
-import { ChatOpenAI } from '@langchain/openai'
-import type { FlowGenerationResult } from '../../src/domain/flow/types'
-
 export const code = 'const answer = 42'
-export const result: FlowGenerationResult = {
-  detectedLanguage: 'javascript',
-  mermaid: 'flowchart TD\nn_start_1[开始] --> n_action_1[赋值]\nn_action_1 --> n_end_1[结束]\n',
-  mappings: ['start', 'action', 'end'].map((kind) => ({
-    nodeId: `n_${kind}_1`,
-    kind: kind as 'start' | 'action' | 'end',
-    label: kind,
-    description: '当前代码逻辑',
-    lineStart: 1,
-    lineEnd: 1
-  }))
-}
-
-type Reply = { args?: unknown; text?: string; status?: number; toolName?: string }
+type Reply = { toolName: string; args: unknown } | { text: string } | { status: number }
 export interface ModelRequest {
-  messages: Array<{ role: string; content: string }>
+  messages: Array<{ role: string; content: string | Array<{ type: 'text'; text: string }> }>
   tools?: unknown[]
 }
 
@@ -30,7 +14,7 @@ export async function createModelServer(replies: Reply[]) {
     for await (const part of req) body += part
     requests.push(JSON.parse(body))
     const reply = replies.shift() ?? { status: 500 }
-    if (reply.status) {
+    if ('status' in reply) {
       res.writeHead(reply.status, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: { message: 'fixture model failure', type: 'test_error' } }))
       return
@@ -47,10 +31,10 @@ export async function createModelServer(replies: Reply[]) {
           usage
         })}\n\n`
       )
-    if (reply.text !== undefined) {
+    if ('text' in reply) {
       send({ role: 'assistant', content: reply.text })
     } else {
-      const args = JSON.stringify(reply.args ?? result)
+      const args = JSON.stringify(reply.args)
       send({
         role: 'assistant',
         tool_calls: [
@@ -58,7 +42,7 @@ export async function createModelServer(replies: Reply[]) {
             index: 0,
             id: `call-${requests.length}`,
             type: 'function',
-            function: { name: reply.toolName ?? 'submit_code_flow_result', arguments: '' }
+            function: { name: reply.toolName, arguments: '' }
           }
         ]
       })
@@ -67,7 +51,7 @@ export async function createModelServer(replies: Reply[]) {
         await new Promise((resolve) => setImmediate(resolve))
       }
     }
-    send({}, reply.text !== undefined ? 'stop' : 'tool_calls', {
+    send({}, 'text' in reply ? 'stop' : 'tool_calls', {
       prompt_tokens: 10,
       completion_tokens: 20,
       total_tokens: 30
@@ -81,13 +65,6 @@ export async function createModelServer(replies: Reply[]) {
   return {
     requests,
     baseURL,
-    model: new ChatOpenAI({
-      apiKey: 'test-only',
-      model: 'deepseek-chat',
-      configuration: { baseURL },
-      streaming: true,
-      maxRetries: 0
-    }),
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()))

@@ -6,6 +6,11 @@ import { lineOffsets, sha256, sourceLineRange, sourceRange, validateSourceRange 
 export type ChunkOptions = { chunkTargetChars: number }
 type ChunkStrategy = 'syntax' | 'whole-file'
 
+// 同轮返回索引与流程图时，一个单元或控制点会产生多条记录。此估算只用于选切点。
+const targetFlowItems = 64
+const flowUnit = /(?:^|_)(?:function|method|constructor|lambda)(?:_|$)/
+const flowItem = /(?:^|_)(?:declaration|if|else|switch|case|match|for|while|loop|try|catch|except|throw|return|call|invocation|command)(?:_|$)/
+
 const grammars = new Map(Object.entries({
   '.js': 'javascript', '.jsx': 'javascript', '.mjs': 'javascript', '.cjs': 'javascript',
   '.ts': 'typescript', '.mts': 'typescript', '.cts': 'typescript', '.tsx': 'tsx',
@@ -30,8 +35,7 @@ function loadGrammar(grammar: string) {
 
 export function chunkerVersion(path: string, options: ChunkOptions) {
   const grammar = grammarFor(path)
-  const version = grammar === 'java' ? 'v5' : 'v3'
-  return `syntax-${version}-${grammar ?? 'none'}-${options.chunkTargetChars}-whole`
+  return `syntax-v6-${grammar ?? 'none'}-${options.chunkTargetChars}-whole`
 }
 
 async function inspectSyntax<T>(grammar: string, text: string, inspect: (root: Node) => T) {
@@ -52,10 +56,30 @@ async function inspectSyntax<T>(grammar: string, text: string, inspect: (root: N
   }
 }
 
+function flowItemsBefore(root: Node, offsets: number[], end: number) {
+  const itemsByLine = offsets.map(() => 0)
+  const pending = [root]
+  while (pending.length) {
+    const node = pending.pop()!
+    const row = node.startPosition.row
+    itemsByLine[row] += flowUnit.test(node.type) ? 3 : Number(flowItem.test(node.type))
+    for (const child of node.namedChildren) if (child) pending.push(child)
+  }
+  const itemsByOffset = new Map<number, number>()
+  let count = 0
+  offsets.forEach((offset, row) => {
+    itemsByOffset.set(offset, count)
+    count += itemsByLine[row]!
+  })
+  itemsByOffset.set(end, count)
+  return (start: number, end: number) => itemsByOffset.get(end)! - itemsByOffset.get(start)!
+}
+
 /** 优先使用顶层边界。过大的 Java 类还可沿成员边界切分，保留同一行的节点和前置注释。 */
 function syntaxCuts(grammar: string, text: string, offsets: number[], targetChars: number) {
   return inspectSyntax(grammar, text, (root) => {
     const cuts: number[] = []
+    const flowItems = flowItemsBefore(root, offsets, text.length)
     const enclosingClasses = new Map<number, string>()
     const packageDeclaration = grammar === 'java'
       ? root.namedChildren.find((node) => node?.type === 'package_declaration')
@@ -84,7 +108,8 @@ function syntaxCuts(grammar: string, text: string, offsets: number[], targetChar
         if (
           grammar === 'java' &&
           node.type === 'class_declaration' &&
-          (offsets[end + 1] ?? text.length) - offset > targetChars
+          ((offsets[end + 1] ?? text.length) - offset > targetChars ||
+            flowItems(offset, offsets[end + 1] ?? text.length) > targetFlowItems)
         ) {
           const body = node.childForFieldName('body')
           const name = node.childForFieldName('name')?.text
@@ -95,7 +120,7 @@ function syntaxCuts(grammar: string, text: string, offsets: number[], targetChar
       }
     }
     collectCuts(root)
-    return { cuts, enclosingClasses, packageName, packageEnd }
+    return { cuts, enclosingClasses, packageName, packageEnd, flowItems }
   })
 }
 
@@ -134,7 +159,14 @@ export async function importDeclarationRanges(path: string, text: string) {
 export type SourceSwitch = {
   line: number
   endLine: number
-  arms: Array<{ line: number; bodyLine: number; endLine: number; range: SourceRange; isDefault: boolean }>
+  arms: Array<{
+    line: number
+    bodyLine: number
+    endLine: number
+    range: SourceRange
+    sourceRange: SourceRange
+    isDefault: boolean
+  }>
   separateArms: boolean
 }
 
@@ -154,11 +186,13 @@ export async function sourceSwitches(fileId: string, path: string, text: string)
       const arms = cases.map((item, index) => {
         const first = bodies[index]!.find((child) => child.type !== 'break_statement' && child.type !== 'comment')
         const line = startLine(item!)
+        const lastLine = endLine(item!)
         return {
           line,
-          bodyLine: first ? startLine(first) : endLine(item!) + 1,
-          endLine: endLine(item!),
+          bodyLine: first ? startLine(first) : lastLine + 1,
+          endLine: lastLine,
           range: sourceLineRange(fileId, text, line, line, offsets),
+          sourceRange: sourceLineRange(fileId, text, line, lastLine, offsets),
           isDefault: item!.type === 'switch_default'
         }
       })
@@ -218,7 +252,10 @@ export async function chunkSource(fileId: string, path: string, text: string, op
     start = end
   }
   for (const next of [...(syntax?.cuts ?? []), text.length]) {
-    if (next - start > options.chunkTargetChars && end > start) pushChunk()
+    if (
+      end > start &&
+      (next - start > options.chunkTargetChars || (syntax?.flowItems(start, next) ?? 0) > targetFlowItems)
+    ) pushChunk()
     end = next
   }
   if (end > start) pushChunk()

@@ -95,7 +95,7 @@ async function loadChunks(
 }
 
 function runPreview() {
-  if (props.busy || props.files.length < 2) return
+  if (props.busy || !props.files.length) return
   const input = props.files.map(({ path, content }) => ({ path, content }))
   return loadChunks((signal) => previewChunks(input, signal), input)
 }
@@ -154,7 +154,7 @@ onBeforeUnmount(() => request?.abort())
         每块目标 {{ result.chunkTargetChars }} 字符
       </span>
       <button v-if="!fromSnapshot || stale" type="button" class="primary-button"
-        :disabled="loading || busy || files.length < 2" @click="runPreview">
+        :disabled="loading || busy || !files.length" @click="runPreview">
         {{ loading ? '处理中…' : '运行切块' }}
       </button>
     </div>
@@ -223,8 +223,8 @@ onBeforeUnmount(() => request?.abort())
     <p v-else class="session-message-empty debug-empty">
       {{ waitingForSnapshotChunks ? '正在等待生成流程完成源码切块…'
         : loading ? '正在加载切块…'
-        : busy ? '正在处理当前会话…' : files.length < 2
-        ? '请返回工作台，上传至少两个代码文件。'
+        : busy ? '正在处理当前会话…' : !files.length
+        ? '请返回工作台输入代码或上传文件。'
         : '点击「运行切块」查看当前文件的分块结果。' }}
     </p>
   </section>

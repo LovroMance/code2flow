@@ -1,6 +1,9 @@
 /** 只有明确来自模型提交的格式、范围或证据错误，才允许 graph 重试。 */
 export class ModelOutputValidationError extends Error {}
 
+/** 已有节点的数据足以修复入口、节点 ID 或边引用。 */
+export class DraftTopologyError extends ModelOutputValidationError {}
+
 /** 输出截断不是可原样重试的字段错误。 */
 export class ModelOutputTruncatedError extends Error {}
 

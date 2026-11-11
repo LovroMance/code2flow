@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { NodeKindSchema } from '../flow/schema'
 import { SupportedLanguageSchema } from '../flow/language'
-import { SourceRangeSchema } from '../source/schema'
+import { SourceLineRangeSchema, SourceRangeSchema } from '../source/schema'
 
 const text = z.string().max(1000)
 const ids = z.array(z.string().min(1)).max(100)
@@ -108,18 +108,34 @@ export const FileSemanticIndexSchema = z.object({
   schemaVersion: z.literal('2')
 })
 
-export const IndexSubmissionSchema = FileSemanticIndexSchema.omit({
+const IndexSubmissionSchema = FileSemanticIndexSchema.omit({
+  fileId: true,
   status: true,
   schemaVersion: true
 }).extend({
   units: z
-    .array(ExecutionUnitSchema.omit({ complete: true }).partial({ scope: true, signature: true }))
+    .array(ExecutionUnitSchema.omit({ complete: true, evidenceIds: true })
+      .partial({ scope: true, signature: true })
+      .extend({
+        range: SourceLineRangeSchema,
+        controlRanges: z.array(ExecutionUnitSchema.shape.controlRanges.element.extend({
+          range: SourceLineRangeSchema
+        })).max(500),
+        callSites: z.array(CallSiteSchema.omit({ evidenceIds: true }).extend({
+          range: SourceLineRangeSchema,
+          text: text.describe('range 内逐字截取的单行调用片段，跨行时取含调用名的一行'),
+          targetHint: text.describe('range 内逐字出现的目标名或路径线索')
+        })).max(500)
+      }))
     .max(1000),
-  references: z.array(ReferenceIndexSchema.partial({ alias: true, targetPath: true })).max(1000),
+  references: z.array(ReferenceIndexSchema.omit({ evidenceIds: true })
+    .partial({ alias: true, targetPath: true })
+    .extend({ range: SourceLineRangeSchema })).max(1000),
   unresolvedItems: z
     .array(
       FileSemanticIndexSchema.shape.unresolvedItems.element.omit({ unitId: true }).extend({
-        kind: z.enum(['semantic', 'dependency'])
+        kind: z.enum(['semantic', 'dependency']),
+        range: SourceLineRangeSchema
       })
     )
     .max(100)
@@ -178,13 +194,20 @@ export const UnitFlowDraftSchema = z.object({
   // 无节点时必须解释原因，不能用空流程掩盖可执行单元生成失败。
   emptyReason: text.optional()
 })
-/** 节点提交可省略证据，内部草稿仍须携带已绑定的证据 ID。 */
-export const UnitFlowSubmissionSchema = UnitFlowDraftSchema.extend({
-  nodes: z.array(UnitFlowDraftSchema.shape.nodes.element.partial({ evidenceIds: true })).max(500)
+/** 独立生成的目标单元、文件和证据由任务绑定。 */
+export const UnitFlowSubmissionSchema = UnitFlowDraftSchema.omit({ unitId: true }).extend({
+  nodes: z.array(UnitFlowDraftSchema.shape.nodes.element.omit({ evidenceIds: true }).extend({
+    localId: UnitFlowDraftSchema.shape.nodes.element.shape.localId.describe('单元内唯一'),
+    kind: NodeKindSchema.exclude(['start']),
+    range: SourceLineRangeSchema.describe('职责覆盖的实际语句，须在单元内'),
+    callSiteIds: ids.describe('该节点范围内的调用点 ID')
+  })).max(500),
+  edges: UnitFlowDraftSchema.shape.edges.describe('from/to 引用单元内的 localId，label 写分支条件'),
+  entryLocalId: UnitFlowDraftSchema.shape.entryLocalId.describe('首个语义节点的 localId，纯声明用 null')
 })
-/** 单块文件的一次性提交：语义索引与各单元局部流程草稿同轮产出，省去独立生成调用。 */
+/** 分块索引和局部草稿同轮产出。草稿缺失时仍可复用有效索引。 */
 export const CombinedIndexSchema = IndexSubmissionSchema.extend({
-  drafts: z.array(UnitFlowSubmissionSchema).max(500)
+  drafts: z.array(UnitFlowSubmissionSchema.extend({ unitId: ExecutionUnitSchema.shape.unitId })).max(500).optional()
 })
 /** 用户可见的降级或分析提示，避免暴露供应商原始异常及源码正文。 */
 export const PublicDiagnosticSchema = z.object({
@@ -217,7 +240,7 @@ export const MultiFileNodeMappingSchema = SourceRangeSchema.extend({
 })
 /** v2 生成的完整对外结果；SSE 分事件传输后，前端重新组装为此结构。 */
 export const MultiFileFlowResultSchema = z.object({
-  // 区分原有单文件结果协议。
+  // 流式传输的结果协议版本。
   version: z.literal(2),
   // 固定源码版本与本次分析身份，前端据此拒绝串流结果混用。
   snapshotId: z.string(),
@@ -240,5 +263,6 @@ export type FileSemanticIndex = z.infer<typeof FileSemanticIndexSchema>
 export type CrossFileReference = z.infer<typeof CrossFileReferenceSchema>
 export type UnitFlowDraft = z.infer<typeof UnitFlowDraftSchema>
 export type UnitFlowSubmission = z.infer<typeof UnitFlowSubmissionSchema>
+export type CombinedIndexSubmission = z.infer<typeof CombinedIndexSchema>
 export type MultiFileFlowResult = z.infer<typeof MultiFileFlowResultSchema>
 export type PublicDiagnostic = z.infer<typeof PublicDiagnosticSchema>

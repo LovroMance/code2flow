@@ -1,5 +1,5 @@
 import { LANGUAGE_OPTIONS } from '../../flow/model/languages'
-import type { FlowGenerationResult, NodeMapping, SupportedLanguage } from '../../flow/model/types'
+import type { SupportedLanguage } from '../../flow/model/types'
 
 export interface SessionSummary {
   id: string
@@ -16,18 +16,9 @@ export interface SessionMessage {
   role: 'user' | 'assistant'
   content: string
 }
-export interface SessionDetail extends SessionSummary {
-  draftCode: string
-  draftLanguage: SupportedLanguage
-  sourceCode: string
-  result: FlowGenerationResult | null
-  messages: SessionMessage[]
-  failed: boolean
-}
 export interface SessionWrite {
   title?: string
   fileName?: string
-  draftCode?: string
   draftLanguage?: SupportedLanguage
 }
 
@@ -36,32 +27,6 @@ function object(value: unknown): value is Record<string, unknown> {
 }
 function language(value: unknown): value is SupportedLanguage {
   return LANGUAGE_OPTIONS.some((option) => option.value === value)
-}
-function positive(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
-}
-function mapping(value: unknown): value is NodeMapping {
-  if (!object(value)) return false
-  return (
-    typeof value.nodeId === 'string' &&
-    typeof value.label === 'string' &&
-    typeof value.description === 'string' &&
-    ['start', 'action', 'decision', 'return', 'end'].includes(String(value.kind)) &&
-    positive(value.lineStart) &&
-    positive(value.lineEnd) &&
-    value.lineEnd >= value.lineStart &&
-    (value.columnStart === undefined || positive(value.columnStart)) &&
-    (value.columnEnd === undefined || positive(value.columnEnd))
-  )
-}
-function result(value: unknown): value is FlowGenerationResult {
-  return (
-    object(value) &&
-    language(value.detectedLanguage) &&
-    typeof value.mermaid === 'string' &&
-    Array.isArray(value.mappings) &&
-    value.mappings.every(mapping)
-  )
 }
 function summary(value: unknown): value is SessionSummary {
   return (
@@ -86,25 +51,7 @@ export function parseSessionList(value: unknown): SessionSummary[] {
   }
   return value.sessions
 }
-export function parseSessionDetail(value: unknown): SessionDetail {
-  if (
-    !summary(value) ||
-    !object(value) ||
-    typeof value.draftCode !== 'string' ||
-    !language(value.draftLanguage) ||
-    typeof value.sourceCode !== 'string' ||
-    (value.result !== null && !result(value.result)) ||
-    typeof value.failed !== 'boolean' ||
-    !Array.isArray(value.messages) ||
-    !value.messages.every(
-      (message: unknown) =>
-        object(message) &&
-        (message.role === 'user' || message.role === 'assistant') &&
-        typeof message.content === 'string'
-    )
-  ) {
-    throw new Error('会话内容格式异常，请重试。')
-  }
-  // 所有跨边界字段校验通过后，才允许恢复工作区。
-  return value as unknown as SessionDetail
+export function parseSessionSummary(value: unknown): SessionSummary {
+  if (!summary(value)) throw new Error('会话信息格式异常，请重试。')
+  return value
 }

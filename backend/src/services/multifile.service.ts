@@ -119,7 +119,8 @@ export class MultiFileService {
         ? SourceRepository.validateFiles(
             input.files,
             Number(process.env.CODE2FLOW_MULTI_MAX_FILES),
-            Number(process.env.CODE2FLOW_MULTI_MAX_TOTAL_BYTES)
+            Number(process.env.CODE2FLOW_MULTI_MAX_TOTAL_BYTES),
+            { allowBlank: true }
           )
         : []
       const activePath = files.length ? normalizeSourcePath(input.activePath) : input.activePath
@@ -133,17 +134,23 @@ export class MultiFileService {
   /** 组合业务草稿/快照与官方图状态，恢复页面所需的数据。 */
   async detail(id: string) {
     this.ensure(id)
-    const state = await createMultiFileGraph(undefined, this.saver).getState(this.config(id))
-    const snapshot = state.values.snapshotId ? this.repo.get(id, state.values.snapshotId) : null
-    const result = state.values.result
+    const draft = this.repo.draft(id)
+    const threadId = draft?.files.length === 0 ? null : this.repo.analysisThread(id, false)
+    const analysis = threadId
+      ? (await createMultiFileGraph(undefined, this.saver).getState({
+          configurable: { thread_id: threadId }
+        })).values
+      : null
+    const snapshot = analysis?.snapshotId ? this.repo.get(id, analysis.snapshotId) : null
+    const result = analysis?.result
     return {
       version: 2 as const,
-      draft: this.repo.draft(id),
+      draft,
       sourceSnapshotId: snapshot?.snapshotId ?? null,
       snapshot,
       result: result ? { ...result, mappings: result.mappings.map(publicMapping) } : null,
-      messages: state.values.messages ?? [],
-      failed: !!state.values.error || (!!state.values.snapshotId && !state.values.result),
+      messages: analysis?.messages ?? [],
+      failed: !!analysis?.error || (!!snapshot && !result),
       busy: isSessionBusy(id)
     }
   }
@@ -271,7 +278,7 @@ export class MultiFileService {
           const draft = this.repo.draft(id)
           if (draft) {
             if (!draft.files.length) throw new SessionError('草稿已清空，请重新生成后追问。', 409)
-            const files = SourceRepository.validateFiles(draft.files)
+            const files = draft.files
             if (
               files.length !== snapshot.files.length ||
               files.some((f) => {

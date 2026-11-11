@@ -1,4 +1,4 @@
-import { ModelOutputValidationError } from '../domain/multifile/errors'
+import { DraftTopologyError, ModelOutputValidationError } from '../domain/multifile/errors'
 import { coveredLines, sourceLineRange } from './sourcePositions'
 import {
   MultiFileFlowResultSchema,
@@ -18,8 +18,8 @@ export function validateUnitDraft(draft: UnitFlowDraft, context: SourceContext) 
   const ids = new Set<string>()
   for (const node of draft.nodes) {
     if (node.kind === 'start')
-      throw new ModelOutputValidationError('start节点由程序合成，不需要提交。')
-    if (ids.has(node.localId)) throw new ModelOutputValidationError('局部节点ID重复。')
+      throw new DraftTopologyError('start节点由程序合成，不需要提交。')
+    if (ids.has(node.localId)) throw new DraftTopologyError('局部节点ID重复。')
     ids.add(node.localId)
     context.validate(node.range, node.evidenceIds)
     if (
@@ -38,15 +38,13 @@ export function validateUnitDraft(draft: UnitFlowDraft, context: SourceContext) 
         throw new ModelOutputValidationError('调用点没有落在对应节点内。')
     }
   }
-  if (
-    draft.nodes.length
-      ? !draft.entryLocalId || !ids.has(draft.entryLocalId)
-      : draft.entryLocalId !== null || !draft.emptyReason || unit.kind !== 'declaration'
-  )
+  if (draft.nodes.length && (!draft.entryLocalId || !ids.has(draft.entryLocalId)))
+    throw new DraftTopologyError('局部入口必须引用已有节点。')
+  if (!draft.nodes.length && (draft.entryLocalId !== null || !draft.emptyReason || unit.kind !== 'declaration'))
     throw new ModelOutputValidationError('局部入口或空流程说明无效。')
   for (const edge of draft.edges)
     if (!ids.has(edge.from) || !ids.has(edge.to))
-      throw new ModelOutputValidationError('局部边引用未知节点。')
+      throw new DraftTopologyError('局部边引用未知节点。')
 }
 
 /** 只在能识别分流点和各分支体时，判定从 switch 到分支体的路径是否缺失。 */
@@ -61,6 +59,10 @@ function missingSwitchArms(draft: UnitFlowDraft, source: SourceSwitch) {
     node.kind === 'decision' && node.lineStart >= source.line && node.lineStart <= firstArm.line
   )
   if (entry.length !== 1) return []
+  const armByNode = new Map([...nodes].map(([id, node]) => [id, source.arms.find((arm) =>
+    node.lineStart >= arm.line && node.lineStart <= arm.endLine &&
+    node.lineEnd >= arm.bodyLine && node.lineEnd <= arm.endLine
+  )]))
   const outgoing = new Map<string, string[]>()
   for (const edge of draft.edges) {
     const targets = outgoing.get(edge.from) ?? []
@@ -76,15 +78,17 @@ function missingSwitchArms(draft: UnitFlowDraft, source: SourceSwitch) {
     if (!node || seen.has(id) || node.lineStart < source.line || node.lineStart > source.endLine)
       continue
     seen.add(id)
-    const arm = source.arms.find((item) =>
-      node.lineStart >= item.line && node.lineStart <= item.endLine &&
-      node.lineEnd >= item.bodyLine && node.lineEnd <= item.endLine
-    )
+    const arm = armByNode.get(id)
     if (arm) reached.add(arm.line)
     pending.push(...(outgoing.get(id) ?? []))
   }
   // 至少有一个分支体被单独映射，才用该粒度判断其余路径。
-  return reached.size ? source.arms.filter((arm) => !reached.has(arm.line)) : []
+  if (!reached.size) return []
+  const mapped = new Set(armByNode.values())
+  return source.arms.filter((arm) => !reached.has(arm.line)).map((arm) => ({
+    ...arm,
+    needsSource: !mapped.has(arm)
+  }))
 }
 
 /** 行覆盖及节点类型只作提示。可定位到具体缺失路径时才建议重新调用模型。 */
@@ -93,7 +97,12 @@ export function collectUnitControlIssues(
   unit: Pick<ExecutionUnit, 'controlRanges'>,
   switches: SourceSwitch[] = []
 ) {
-  const issues: Array<{ range: ExecutionUnit['range']; message: string; repair?: true }> = []
+  const issues: Array<{
+    range: ExecutionUnit['range']
+    message: string
+    repair?: true
+    sourceRange?: ExecutionUnit['range']
+  }> = []
   const indexedBranches = new Set(unit.controlRanges.filter((control) => control.kind === 'branch')
     .map((control) => coveredLines(control.range).lineStart))
   const switchCases = new Set<number>()
@@ -104,7 +113,8 @@ export function collectUnitControlIssues(
       issues.push({
         range: arm.range,
         message: `第 ${source.line} 行的 switch 无法到达第 ${arm.line} 行的${arm.isDefault ? '默认分支' : '分支'}动作`,
-        repair: true
+        repair: true,
+        ...(arm.needsSource ? { sourceRange: arm.sourceRange } : {})
       })
     }
   }

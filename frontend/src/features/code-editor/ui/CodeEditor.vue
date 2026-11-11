@@ -4,7 +4,6 @@ import type { editor } from 'monaco-editor'
 import { computed, shallowRef, onBeforeUnmount, watch, nextTick } from 'vue'
 import type { NodeMapping, SupportedLanguage } from '../../../entities/flow/model/types'
 import type { CodeEditorExpose } from '../model/types'
-import { mappingSelection } from '../model/mappingSelection'
 import { LANGUAGE_OPTIONS } from '../../../entities/flow/model/languages'
 import { languages, editor as monacoEditor, Uri } from 'monaco-editor'
 
@@ -100,11 +99,12 @@ function focusMapping(mapping: NodeMapping) {
     return
   }
 
-  const selection = mappingSelection(mapping, props.modelValue, (line) =>
-    model.getLineMaxColumn(line)
-  )
-  const startColumn = selection.startColumn
-  const endColumn = selection.endColumn
+  const selection = {
+    startLineNumber: mapping.lineStart,
+    startColumn: 1,
+    endLineNumber: mapping.lineEnd,
+    endColumn: model.getLineMaxColumn(mapping.lineEnd)
+  }
 
   editorInstance.focus()
   editorInstance.revealLinesInCenter(mapping.lineStart, mapping.lineEnd)
@@ -112,12 +112,7 @@ function focusMapping(mapping: NodeMapping) {
 
   decorationIds = editorInstance.deltaDecorations(decorationIds, [
     {
-      range: {
-        startLineNumber: mapping.lineStart,
-        startColumn,
-        endLineNumber: mapping.lineEnd,
-        endColumn
-      },
+      range: selection,
       options: {
         isWholeLine: true,
         className: 'code2flow-line-highlight',

@@ -17,6 +17,7 @@ const debugOpen = ref(false)
 const byteSize = (content: string) => new TextEncoder().encode(content).byteLength
 const {
   code,
+  hasCode,
   files,
   activePath,
   multiResult,
@@ -272,7 +273,7 @@ async function confirmDelete() {
             </div>
           </div>
           <button
-            v-if="isLoading && files.length"
+            v-if="isLoading"
             type="button"
             class="ghost-button"
             @click="cancelGeneration"
@@ -333,7 +334,7 @@ async function confirmDelete() {
                 <button
                   type="button"
                   class="ghost-button editor-clear-button"
-                  :disabled="isWorkspaceBusy || (!code && !files.length)"
+                :disabled="isWorkspaceBusy || !files.length"
                   @click="clearWorkspace"
                 >
                   <svg
@@ -356,7 +357,7 @@ async function confirmDelete() {
               <button
                 type="button"
                 class="hero-run-button"
-                :disabled="isWorkspaceBusy || !code.trim()"
+                :disabled="isWorkspaceBusy || !hasCode"
                 @click="handleGenerate"
               >
                 <svg

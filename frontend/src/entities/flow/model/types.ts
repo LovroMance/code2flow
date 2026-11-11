@@ -1,4 +1,3 @@
-import type { SupportedLanguage } from './languages'
 export type { SupportedLanguage } from './languages'
 
 export type NodeKind = 'start' | 'action' | 'decision' | 'return' | 'end'
@@ -10,33 +9,9 @@ export interface NodeMapping {
   lineStart: number
   lineEnd: number
   description: string
-  columnStart?: number
-  columnEnd?: number
-}
-
-export interface FlowGenerationResult {
-  detectedLanguage: SupportedLanguage
-  mermaid: string
-  mappings: NodeMapping[]
 }
 
 export interface HealthResponse {
   ok: boolean
   service: string
-}
-
-export interface FlowMetadataEvent {
-  detectedLanguage: SupportedLanguage
-  confidence?: number
-}
-
-export interface FollowUpResponse {
-  thread_id: string
-  question: string
-  explanation: string
-}
-
-export interface FlowStreamEvent {
-  type: 'metadata' | 'mermaid' | 'mappings' | 'done' | 'error'
-  content?: string | NodeMapping[] | FlowMetadataEvent
 }

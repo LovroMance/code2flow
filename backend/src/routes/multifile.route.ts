@@ -29,7 +29,7 @@ export function createMultiFileRouter(service: () => MultiFileService = getMulti
   router.post(
     '/debug/chunks',
     handle(async (req, res) => {
-      const files = SourceFilesSchema.min(2).parse(req.body?.files)
+      const files = SourceFilesSchema.parse(req.body?.files)
       res.json(await previewChunks(files))
     })
   )

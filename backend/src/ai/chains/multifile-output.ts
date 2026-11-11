@@ -1,12 +1,18 @@
-import { z } from 'zod'
-import { SourceLineRangeSchema } from '../../domain/source/schema'
-import { coveredLines, lineOffsets, sourceLineRange } from '../../utils/sourcePositions'
+import type { Evidence, SourceRange } from '../../domain/source/schema'
+import type {
+  CombinedIndexSubmission,
+  FileSemanticIndex,
+  UnitFlowDraft,
+  UnitFlowSubmission
+} from '../../domain/multifile/schema'
+import { coveredLines, sourceLineRange } from '../../utils/sourcePositions'
 import { ModelOutputValidationError } from '../../domain/multifile/errors'
 
 const internalRangeFields = ['columnStart', 'columnEnd', 'startOffset', 'endOffset']
 const internalPayloadFields = new Set([
   ...internalRangeFields,
   'contentHash',
+  'evidenceIds',
   'metering',
   'linePositions',
   'byteSize',
@@ -36,50 +42,66 @@ export function slimModelInput(value: unknown): unknown {
   return out
 }
 
-/** 结构化提交只要求行号，落库前恢复内部范围。 */
-export function modelResponseSchema(schema: z.ZodType) {
-  const visit = (value: unknown): unknown => {
-    if (Array.isArray(value)) return value.map(visit)
-    if (!value || typeof value !== 'object') return value
-    const node = Object.fromEntries(Object.entries(value).map(([key, item]) => [key, visit(item)]))
-    const properties = node.properties as Record<string, unknown> | undefined
-    if (properties?.fileId && properties.lineStart && properties.lineEnd && properties.columnEnd) {
-      for (const field of internalRangeFields) delete properties[field]
-      if (Array.isArray(node.required))
-        node.required = node.required.filter((key) => !internalRangeFields.includes(key))
-    }
-    return node
-  }
-  const converted = visit(z.toJSONSchema(schema)) as Record<string, unknown>
-  if (converted.type !== 'object') throw new Error('结构化提交必须是对象。')
-  return { ...converted, type: 'object' as const }
-}
-
-export function completeModelRanges(input: unknown, contentFor: (fileId: string) => string): unknown {
-  const files = new Map<string, { content: string; offsets: number[] }>()
-  const resolve = (fileId: string, value: unknown) => {
-    const { lineStart, lineEnd } = SourceLineRangeSchema.parse(value)
-    let file = files.get(fileId)
-    if (!file) {
-      const content = contentFor(fileId)
-      file = { content, offsets: lineOffsets(content) }
-      files.set(fileId, file)
-    }
+/** 按任务文件恢复内部坐标，模型只提交原始行号。 */
+export function modelRangeResolver(fileId: string, content: string, offsets: number[]) {
+  return ({ lineStart, lineEnd }: Pick<SourceRange, 'lineStart' | 'lineEnd'>) => {
     try {
-      return sourceLineRange(fileId, file.content, lineStart, lineEnd, file.offsets)
+      return sourceLineRange(fileId, content, lineStart, lineEnd, offsets)
     } catch {
       throw new ModelOutputValidationError(`源码行范围无效：第 ${lineStart}–${lineEnd} 行，首尾均包含。`)
     }
   }
-  const visit = (value: unknown): unknown => {
-    if (Array.isArray(value)) return value.map(visit)
-    if (!value || typeof value !== 'object') return value
-    const node = Object.fromEntries(Object.entries(value).map(([key, item]) => [key, visit(item)]))
-    const fileId = node.fileId
-    if (typeof fileId !== 'string') return node
-    if ('lineStart' in node && 'lineEnd' in node)
-      return { ...node, ...resolve(fileId, node) }
-    return node
+}
+
+export function restoreModelDraft(
+  draft: UnitFlowSubmission,
+  unitId: string,
+  evidenceIds: string[],
+  resolve: ReturnType<typeof modelRangeResolver>
+): UnitFlowDraft {
+  return {
+    ...draft,
+    unitId,
+    nodes: draft.nodes.map((node) => ({ ...node, range: resolve(node.range), evidenceIds }))
   }
-  return visit(input)
+}
+
+export function restoreModelIndex(
+  submission: CombinedIndexSubmission,
+  evidence: Evidence,
+  resolve: ReturnType<typeof modelRangeResolver>
+) {
+  const { drafts = [], ...fields } = submission
+  const evidenceIds = [evidence.evidenceId]
+  const index: FileSemanticIndex = {
+    ...fields,
+    fileId: evidence.fileId,
+    units: fields.units.map((unit) => ({
+      ...unit,
+      scope: unit.scope ?? '',
+      signature: unit.signature ?? '',
+      range: resolve(unit.range),
+      controlRanges: unit.controlRanges.map((item) => ({ ...item, range: resolve(item.range) })),
+      callSites: unit.callSites.map((call) => ({ ...call, range: resolve(call.range), evidenceIds })),
+      evidenceIds,
+      complete: true
+    })),
+    references: fields.references.map((ref) => ({
+      ...ref,
+      alias: ref.alias ?? ref.name,
+      targetPath: ref.targetPath ?? '',
+      range: resolve(ref.range),
+      evidenceIds
+    })),
+    unresolvedItems: fields.unresolvedItems.map((item) => ({ ...item, range: resolve(item.range) })),
+    status: fields.unresolvedItems.some((item) => item.blocking) ? 'partial' : 'complete',
+    schemaVersion: '2'
+  }
+  const unitIds = new Set(index.units.map(({ unitId }) => unitId))
+  return {
+    index,
+    drafts: drafts
+      .filter(({ unitId }) => unitIds.has(unitId))
+      .map((draft) => restoreModelDraft(draft, draft.unitId, evidenceIds, resolve))
+  }
 }

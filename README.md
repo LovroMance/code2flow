@@ -19,7 +19,9 @@ npm install
 
 后端从 `backend/.env` 读取本地配置，已有文件保留。首次配置时填写 `DEEPSEEK_API_KEY` 与 `TYPESAFE_API_KEY`；多文件分析还需设置 `CODE2FLOW_MODEL_CONTEXT_TOKENS` 为供应商实际上下文窗口。Jev Choice 由程序直接调用，用于语言识别；DeepSeek 用于生成流程图。检测默认模型 `jev-1.14.0`、超时 5000ms、置信度阈值 0.6，分别通过 `TYPESAFE_DEFAULT_MODEL`、`CODE2FLOW_LANGUAGE_TIMEOUT_MS`、`CODE2FLOW_LANGUAGE_MIN_CONFIDENCE` 调整。提交的代码会发送至 TypeSafe 和生成模型服务。本地环境文件不提交到 Git。
 
-后端统一使用 LangChain `createAgent` 和 LangGraph `StateGraph`；无需再设置 provider。有会话 ID 的分析默认保存在本地 SQLite，无需 Docker，业务表按需创建。旧 JSON 会话可在追问恢复时按需只读导入。
+后端使用 LangChain `createAgent` 和 LangGraph `StateGraph`。工作区草稿和分析结果保存在本地 SQLite，业务表按需创建。
+
+工作区支持直接输入代码、上传一个或多个文件。直接输入时，编辑器会创建一项有路径的草稿文件，路径扩展名沿用编辑器所选语言，未选择时使用 `draft.txt`。所有文件通过 `/api/v2` 保存草稿、创建快照、生成流程图和追问。生成与追问使用同一份源码快照。
 
 ## 多文件切块
 

@@ -29,7 +29,7 @@ export const SourceFileInputSchema = z.object({
   // 工作区内的相对路径，用于文件展示和导入关系解析。
   path: z.string().min(1).max(500),
   // 未经行号标注、裁剪或换行转换的原始正文。
-  content: z.string().min(1)
+  content: z.string()
 })
 // 此处是协议上限；实际文件数量和总字节数还受运行配置限制。
 export const SourceFilesSchema = z.array(SourceFileInputSchema).min(1).max(1000)
@@ -52,8 +52,6 @@ export const SourceSnapshotSchema = z.object({
   snapshotId: z.string(),
   // 所属用户会话，用于隔离读取、缓存和删除范围。
   sessionId: z.string(),
-  // 路径与正文哈希清单的摘要；重命名也会影响它。
-  manifestHash: z.string(),
   // 本快照全部文件的元数据，不携带正文。
   files: z.array(SnapshotFileSchema),
   // null 表示尚未检测；检测得到 unknown 也是可复用的结果。

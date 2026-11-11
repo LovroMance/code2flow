@@ -1,4 +1,3 @@
-import { ModelOutputValidationError } from '../domain/multifile/errors'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import {
@@ -9,15 +8,16 @@ import {
   runMultiFileChain,
   type AnalysisTaskContext
 } from '../ai/chains/multifile.chain'
+import { modelRangeResolver, restoreModelDraft, restoreModelIndex } from '../ai/chains/multifile-output'
 import type { MultiFileRuntime, TaskOutcome } from '../ai/graph/multifile.graph'
 import { runDetectLanguage } from '../ai/tools/detect-language.tool'
 import {
+  ExecutionUnitSchema,
   FileSemanticIndexSchema,
   UnitFlowDraftSchema,
   type FileSemanticIndex,
   type ExecutionUnit,
   type UnitFlowDraft,
-  type UnitFlowSubmission,
   type CrossFileReference,
   type PublicDiagnostic
 } from '../domain/multifile/schema'
@@ -42,24 +42,21 @@ import {
   validateUnitDraft
 } from '../utils/composeMultiFileFlow'
 import { safeErrorDetails } from '../ai/observability/safe-error'
-import { ModelOutputTruncatedError, errorCauses } from '../domain/multifile/errors'
+import {
+  DraftTopologyError,
+  ModelOutputTruncatedError,
+  ModelOutputValidationError,
+  errorCauses
+} from '../domain/multifile/errors'
 import { traceStep } from '../ai/observability/langsmith'
 import { sourceSwitches } from '../utils/sourceChunks'
 
 const CachedIndexSchema = z.object({
   index: FileSemanticIndexSchema,
   evidence: z.array(EvidenceSchema),
-  // 单块文件合并模式随索引一同缓存的局部草稿；旧缓存条目没有该字段。
-  drafts: z.array(UnitFlowDraftSchema).optional()
+  drafts: z.array(UnitFlowDraftSchema).default([])
 })
 type ControlIssues = ReturnType<typeof collectUnitControlIssues>
-
-function bindDraftEvidence(draft: UnitFlowSubmission, evidenceIds: string[]): UnitFlowDraft {
-  return {
-    ...draft,
-    nodes: draft.nodes.map((node) => ({ ...node, evidenceIds: node.evidenceIds ?? evidenceIds }))
-  }
-}
 
 function controlFeedback(issues: ControlIssues) {
   const listed = issues.slice(0, 20).map((issue) => issue.message).join('；')
@@ -75,8 +72,8 @@ export class AnalysisRuntime implements MultiFileRuntime {
   readonly retries: number
   chunks: CodeChunk[] = []
   indexes: FileSemanticIndex[] = []
-  readonly partial = new Map<string, FileSemanticIndex>()
-  readonly contexts = new Map<string, SourceContext>()
+  private readonly partial = new Map<string, z.infer<typeof CachedIndexSchema>>()
+  private readonly preparedDrafts = new Map<string, UnitFlowDraft>()
   readonly drafts = new Map<string, UnitFlowDraft>()
   // 保留结构合格的草稿，避免重试退步时丢弃可用结果。
   private readonly draftCandidates = new Map<
@@ -84,10 +81,6 @@ export class AnalysisRuntime implements MultiFileRuntime {
     { draft: UnitFlowDraft; issues: ControlIssues; repairs: ControlIssues }
   >()
   private readonly switchesByFile = new Map<string, ReturnType<typeof sourceSwitches>>()
-  // 合并模式的临时草稿按分块暂存，merge 建立正式身份后重映射进 drafts。
-  private readonly partialDrafts = new Map<string, UnitFlowDraft[]>()
-  private readonly unitAliases = new Map<string, string>()
-  private readonly callAliases = new Map<string, Map<string, string>>()
   readonly references: CrossFileReference[] = []
   readonly diagnostics: PublicDiagnostic[] = []
   context?: SourceContext
@@ -186,8 +179,15 @@ export class AnalysisRuntime implements MultiFileRuntime {
         base: process.env.DEEPSEEK_BASE_URL,
         temperature: process.env.DEEPSEEK_TEMPERATURE,
         chunker: chunk.chunkerVersion,
-        version: 'index-lines-v4'
+        version: 'index-with-drafts-v5'
       })
+    )
+  }
+  private modelRanges(fileId: string) {
+    return modelRangeResolver(
+      fileId,
+      this.repo.content(this.snapshot, fileId),
+      this.repo.offsets(this.snapshot, fileId)
     )
   }
   /** 检查任务归属、范围和证据；schema 合法并不代表模型真的读过对应源码。 */
@@ -289,7 +289,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
     }
     const index = FileSemanticIndexSchema.parse(rewrite(cached.index))
     for (const item of index.unresolvedItems) context.validateRange(item.range)
-    return { index, drafts: cached.drafts ? (rewrite(cached.drafts) as UnitFlowDraft[]) : [] }
+    return { index, drafts: z.array(UnitFlowDraftSchema).parse(rewrite(cached.drafts)) }
   }
   /** 按任务前缀执行索引、核对或生成；返回安全的失败反馈，由 graph 决定是否重试。 */
   async task(id: string, attempts: number, feedback: string | null): Promise<TaskOutcome> {
@@ -351,11 +351,6 @@ export class AnalysisRuntime implements MultiFileRuntime {
           this.signal
         )
         context.allowedFileId = chunk.fileId
-        // 仅为小文件合并索引和草稿，避免较大的单块同时输出两份结构而截断。
-        const withDrafts =
-          feedback === null &&
-          chunk.endOffset - chunk.startOffset <= 2000 &&
-          this.chunks.filter((c) => c.fileId === chunk.fileId).length === 1
         cacheKey = this.key(chunk)
         const cachedValue = feedback
           ? undefined
@@ -366,68 +361,37 @@ export class AnalysisRuntime implements MultiFileRuntime {
               })
             ).value
         const cached = cachedValue === undefined ? undefined : CachedIndexSchema.parse(cachedValue)
-        let index: FileSemanticIndex
-        let drafts: UnitFlowSubmission[] = []
+        let restored: ReturnType<typeof restoreModelIndex>
         if (cached) {
-          const rebound = this.rebind(cached, chunk, context)
-          index = rebound.index
-          drafts = withDrafts ? rebound.drafts : []
+          restored = this.rebind(cached, chunk, context)
         } else {
-          const code = context.read(chunk.fileId, chunk.startOffset, chunk.endOffset)
+          const { content, evidence } = context.read(chunk.fileId, chunk.startOffset, chunk.endOffset)
           const submission = await runMultiFileChain(
             'index',
             {
-              file: this.snapshot.files.find((f) => f.fileId === chunk.fileId),
-              taskRange: chunk,
-              code,
-              ...(withDrafts ? { withDrafts: true } : {})
+              file: { path: this.snapshot.files.find((f) => f.fileId === chunk.fileId)!.path },
+              taskRange: { ...coveredLines(chunk), javaScope: chunk.javaScope },
+              code: { content }
             },
             context,
             this.snapshot.languageDetection!.language,
             this.budgetTracker,
             feedback ?? undefined,
-            taskContext,
-            withDrafts ? { withDrafts: true } : undefined
+            taskContext
           )
-          const { drafts: submittedDrafts, ...fields } =
-            'drafts' in submission ? submission : { ...submission, drafts: [] }
-          drafts = submittedDrafts
-          index = {
-            ...fields,
-            units: fields.units.map((unit) => ({
-              ...unit,
-              scope: unit.scope ?? '',
-              signature: unit.signature ?? '',
-              complete: true
-            })),
-            references: fields.references.map((ref) => ({
-              ...ref,
-              alias: ref.alias ?? ref.name,
-              targetPath: ref.targetPath ?? ''
-            })),
-            status: fields.unresolvedItems.some((item) => item.blocking) ? 'partial' : 'complete',
-            schemaVersion: '2'
-          }
+          restored = restoreModelIndex(submission, evidence, this.modelRanges(chunk.fileId))
         }
-        await this.checkIndex(index, chunk, context)
+        await this.checkIndex(restored.index, chunk, context)
         // 缓存只允许本文件的源码凭证。
         if ([...context.evidence.values()].some((e) => e.fileId !== chunk.fileId))
           throw new ModelOutputValidationError('文件分析任务只能读取本文件上下文。')
         this.signal.throwIfAborted()
-        // 草稿的单元身份必须能对应到索引单元，否则丢弃并回退到生成角色。
-        const indexedUnits = new Map(index.units.map((unit) => [unit.unitId, unit]))
-        const validDrafts = drafts.flatMap((draft) => {
-          const unit = indexedUnits.get(draft.unitId)
-          return unit ? [bindDraftEvidence(draft, unit.evidenceIds)] : []
-        })
-        if (withDrafts) this.partialDrafts.set(chunk.chunkId, validDrafts)
-        this.repo.cachePut(this.key(chunk), {
-          index,
-          evidence: [...context.evidence.values()],
-          ...(withDrafts && validDrafts.length ? { drafts: validDrafts } : {})
-        })
-        this.partial.set(id, index)
-        this.contexts.set(id, context)
+        const part = {
+          ...restored,
+          evidence: [...context.evidence.values()]
+        }
+        if (!cached) this.repo.cachePut(cacheKey, part)
+        this.partial.set(chunk.chunkId, part)
       } else {
         const unit = this.indexes
           .flatMap((i) => i.units)
@@ -436,75 +400,79 @@ export class AnalysisRuntime implements MultiFileRuntime {
         taskRange = unit.range
         const { fileId, startOffset, endOffset } = unit.range
         const context = this.context!
-        const code = context.read(fileId, startOffset, endOffset)
         const file = this.snapshot.files.find((f) => f.fileId === fileId)!
-        const index = this.indexes.find((i) => i.fileId === fileId)!
         const candidate = this.draftCandidates.get(unit.unitId)
-        const payload = {
-          unit,
-          code,
-          relatedReferences: this.references.filter((r) => r.sourceUnitId === unit.unitId),
-          unresolved: index.unresolvedItems.filter(
-            ({ range }) => range.startOffset < endOffset && range.endOffset > startOffset
-          ),
-          ...(feedback && candidate ? { previousDraft: candidate.draft } : {})
-        }
-        const stable = (value: unknown): unknown =>
-          Array.isArray(value)
-            ? value.map(stable)
-            : value && typeof value === 'object'
-              ? Object.fromEntries(
-                  Object.entries(value)
-                    .filter(([key]) => key !== 'evidenceIds')
-                    .map(([key, item]) => [key, stable(item)])
-                )
-              : value
-        const key = sha256(
-          JSON.stringify({
-            manifest: this.snapshot.manifestHash,
-            unit: stable(unit),
-            language: this.snapshot.languageDetection?.language,
-            model: process.env.DEEPSEEK_MODEL,
-            base: process.env.DEEPSEEK_BASE_URL,
-            temperature: process.env.DEEPSEEK_TEMPERATURE,
-            version: 'flow-lines-v3'
-          })
-        )
-        cacheKey = key
         let draft: UnitFlowDraft | undefined
+        let previousDraft = feedback ? candidate?.draft : undefined
         let modelFeedback = feedback ?? undefined
-        // 预生成草稿与模型新提交使用同一套验收规则。
-        const prepared = this.drafts.get(unit.unitId)
+        let generated = false
+        const prepared = this.preparedDrafts.get(unit.unitId)
         if (prepared) {
-          this.drafts.delete(unit.unitId)
+          this.preparedDrafts.delete(unit.unitId)
           try {
-            this.acceptDraft(prepared, unit, context, code)
+            this.acceptDraft(prepared, unit, context)
             draft = prepared
           } catch (error) {
             if (!(error instanceof ModelOutputValidationError)) throw error
             modelFeedback = error.message
+            if (error instanceof DraftTopologyError && prepared.nodes.some(({ kind }) => kind !== 'start'))
+              previousDraft = prepared
           }
         }
         if (!draft) {
-          // 带反馈时直接重生成，避免再次命中同一份草稿。缓存证据绑定到当前快照。
-          const cached = feedback
-            ? undefined
-            : (
-                await traceStep('code2flow.generation-cache', { cacheKey: key }, async () => {
-                  const value = this.repo.cacheGet(key)
-                  return { hit: value !== undefined, value }
-                })
-              ).value
+          const key = sha256(JSON.stringify(
+            {
+              unit: ExecutionUnitSchema.parse(unit),
+              language: this.snapshot.languageDetection?.language,
+              model: process.env.DEEPSEEK_MODEL,
+              base: process.env.DEEPSEEK_BASE_URL,
+              temperature: process.env.DEEPSEEK_TEMPERATURE,
+              version: 'flow-lines-v4'
+            },
+            (key, value) => key === 'evidenceIds' ? undefined : value
+          ))
+          cacheKey = key
+          const { value: cached } = await traceStep('code2flow.generation-cache', { cacheKey: key }, async () => {
+            const value = this.repo.cacheGet(key)
+            return { hit: value !== undefined, value }
+          })
           if (cached) {
             const old = UnitFlowDraftSchema.parse(cached)
             draft = {
               ...old,
               nodes: old.nodes.map((node) => ({
                 ...node,
-                evidenceIds: [code.evidence.evidenceId]
+                evidenceIds: unit.evidenceIds
               }))
             }
+            this.acceptDraft(draft, unit, context)
           } else {
+            let payload: unknown
+            let evidenceIds = unit.evidenceIds
+            if (previousDraft) {
+              const fragments = (candidate?.repairs ?? []).flatMap(({ sourceRange }) => {
+                if (!sourceRange) return []
+                const start = Math.max(startOffset, sourceRange.startOffset)
+                const end = Math.min(endOffset, sourceRange.endOffset)
+                return start < end ? [{ content: context.read(fileId, start, end).content }] : []
+              })
+              payload = {
+                unit: { ...unit, callSites: unit.callSites.map(({ text, ...site }) => site) },
+                previousDraft,
+                ...(fragments.length ? { codeFragments: fragments } : {})
+              }
+            } else {
+              const { content, evidence } = context.read(fileId, startOffset, endOffset)
+              evidenceIds = [evidence.evidenceId]
+              payload = {
+                unit,
+                code: { content },
+                relatedReferences: this.references.filter((r) => r.sourceUnitId === unit.unitId),
+                unresolved: this.indexes.find((i) => i.fileId === fileId)!.unresolvedItems.filter(
+                  ({ range }) => range.startOffset < endOffset && range.endOffset > startOffset
+                )
+              }
+            }
             const submission = await runMultiFileChain(
               'generate',
               payload,
@@ -514,9 +482,10 @@ export class AnalysisRuntime implements MultiFileRuntime {
               modelFeedback,
               taskContext
             )
-            draft = bindDraftEvidence(submission, [code.evidence.evidenceId])
+            draft = restoreModelDraft(submission, unit.unitId, evidenceIds, this.modelRanges(fileId))
+            this.acceptDraft(draft, unit, context, evidenceIds)
+            generated = true
           }
-          this.acceptDraft(draft, unit, context, code)
         }
         let switches = this.switchesByFile.get(file.fileId)
         if (!switches) {
@@ -527,6 +496,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
         const repairs = issues.filter((issue) => issue.repair)
         this.signal.throwIfAborted()
         if (repairs.length) {
+          if (cacheKey && !generated) this.repo.cacheDelete(cacheKey)
           const retained =
             candidate && candidate.repairs.length < repairs.length
               ? candidate
@@ -539,7 +509,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
           this.draftCandidates.delete(unit.unitId)
           this.drafts.set(unit.unitId, draft)
           this.reportControlIssues(unit, issues)
-          this.repo.cachePut(key, draft)
+          if (generated && cacheKey) this.repo.cachePut(cacheKey, draft)
         }
       }
       return { taskId: id, attempts, error: null }
@@ -571,13 +541,15 @@ export class AnalysisRuntime implements MultiFileRuntime {
   }
   /** 汇总分块索引、证据并建立正式单元和调用点身份。 */
   merge() {
+    const unitAliases = new Map<string, string>()
+    const callAliases = new Map<string, Map<string, string>>()
     this.indexes = this.snapshot.files.map((file): FileSemanticIndex => {
       const parts = this.chunks
         .filter((chunk) => chunk.fileId === file.fileId)
-        .map((chunk) => this.partial.get(`index:${chunk.chunkId}`)!)
+        .map(({ chunkId }) => [chunkId, this.partial.get(chunkId)!.index] as const)
       const units = new Map<string, ExecutionUnit>()
       const references: FileSemanticIndex['references'] = []
-      for (const part of parts) {
+      for (const [chunkId, part] of parts) {
         for (const unit of part.units) {
           const key = JSON.stringify([
             file.fileId,
@@ -589,8 +561,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
           ])
           const old = units.get(key)
           if (old) {
-            // 重复 sightings 的临时ID同样要能映射到正式身份；别名按文件隔离，避免不同文件的临时ID互撞。
-            this.unitAliases.set(`${file.fileId}|${unit.unitId}`, old.unitId)
+            unitAliases.set(`${chunkId}|${unit.unitId}`, old.unitId)
             old.evidenceIds = [...new Set([...old.evidenceIds, ...unit.evidenceIds])]
             old.controlRanges = [
               ...new Map(
@@ -610,7 +581,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
             ]
           } else {
             const formal = `u_${sha256(key).slice(0, 10)}`
-            this.unitAliases.set(`${file.fileId}|${unit.unitId}`, formal)
+            unitAliases.set(`${chunkId}|${unit.unitId}`, formal)
             units.set(key, { ...unit, unitId: formal })
           }
         }
@@ -626,13 +597,13 @@ export class AnalysisRuntime implements MultiFileRuntime {
           calls.set(c.callSiteId, formal)
           return { ...c, callSiteId: formal }
         })
-        this.callAliases.set(unit.unitId, calls)
+        callAliases.set(unit.unitId, calls)
       }
-      const unresolvedItems = parts.flatMap((i) => i.unresolvedItems)
+      const unresolvedItems = parts.flatMap(([, index]) => index.unresolvedItems)
       return {
         fileId: file.fileId,
         summary: parts
-          .map((i) => i.summary)
+          .map(([, index]) => index.summary)
           .join('；')
           .slice(0, 1000),
         units: fileUnits,
@@ -653,31 +624,24 @@ export class AnalysisRuntime implements MultiFileRuntime {
       this.indexes,
       this.signal
     )
-    for (const context of this.contexts.values())
-      for (const [id, e] of context.evidence) {
-        this.context.evidence.set(id, e)
-        this.context.accessible.add(id)
+    for (const { evidence } of this.partial.values())
+      for (const item of evidence) {
+        this.context.evidence.set(item.evidenceId, item)
+        this.context.accessible.add(item.evidenceId)
       }
-    this.remapDrafts()
-  }
-  /** 把合并模式暂存的临时草稿重映射到正式单元/调用点身份，供生成阶段直接复用。 */
-  private remapDrafts() {
-    for (const [chunkId, drafts] of this.partialDrafts) {
-      this.partialDrafts.delete(chunkId)
-      const fileId = this.chunks.find((c) => c.chunkId === chunkId)?.fileId
-      if (!fileId) continue
+    // 临时 ID 只在同一个分块的提交内有效。索引返修后按最新分块结果重新建立草稿。
+    this.preparedDrafts.clear()
+    for (const [chunkId, { drafts }] of this.partial) {
       for (const draft of drafts) {
-        const formalUnit = this.unitAliases.get(`${fileId}|${draft.unitId}`)
-        if (!formalUnit || this.drafts.has(formalUnit)) continue
-        const calls = this.callAliases.get(formalUnit)
-        this.drafts.set(formalUnit, {
+        const formalUnit = unitAliases.get(`${chunkId}|${draft.unitId}`)
+        if (!formalUnit || this.preparedDrafts.has(formalUnit)) continue
+        const calls = callAliases.get(formalUnit)!
+        this.preparedDrafts.set(formalUnit, {
           ...draft,
           unitId: formalUnit,
           nodes: draft.nodes.map((node) => ({
             ...node,
-            callSiteIds: calls
-              ? node.callSiteIds.map((id) => calls.get(id)).filter((id): id is string => !!id)
-              : []
+            callSiteIds: node.callSiteIds.map((id) => calls.get(id) ?? id)
           }))
         })
       }
@@ -688,17 +652,13 @@ export class AnalysisRuntime implements MultiFileRuntime {
     draft: UnitFlowDraft,
     unit: ExecutionUnit,
     context: SourceContext,
-    code: { evidence: { evidenceId: string } }
+    additionalEvidenceIds: string[] = []
   ) {
     if (draft.unitId !== unit.unitId) throw new ModelOutputValidationError('返回了其他执行单元。')
     validateUnitDraft(draft, context)
-    // 生成 chain 仅能引用实际进入本次证据包的源码。
+    const permitted = new Set([...unit.evidenceIds, ...additionalEvidenceIds])
     for (const node of draft.nodes)
-      if (
-        node.evidenceIds.some(
-          (e) => e !== code.evidence.evidenceId && !unit.evidenceIds.includes(e)
-        )
-      )
+      if (node.evidenceIds.some((id) => !permitted.has(id)))
         throw new ModelOutputValidationError('生成引用了未提供的证据。')
     const expected = unit.callSites.filter((call) =>
       this.references.some((r) => r.callSiteId === call.callSiteId && r.status === 'resolved')
@@ -825,7 +785,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
   incompleteRanges() {
     return [
       ...this.chunks
-        .filter((c) => !this.partial.has(`index:${c.chunkId}`))
+        .filter((c) => !this.partial.has(c.chunkId))
         .map((c) => ({
           phase: 'index',
           fileId: c.fileId,
