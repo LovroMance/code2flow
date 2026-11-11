@@ -194,7 +194,6 @@ export class AnalysisRuntime implements MultiFileRuntime {
   private async checkIndex(index: FileSemanticIndex, chunk: CodeChunk, context: SourceContext) {
     if (index.fileId !== chunk.fileId) throw new ModelOutputValidationError('分块文件身份错误。')
     const ids = new Set<string>(),
-      calls = new Set<string>(),
       unitEnds = new Map<string, number>()
     for (const unit of index.units) {
       if (ids.has(unit.unitId)) throw new ModelOutputValidationError('临时单元ID重复。')
@@ -231,6 +230,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
         )
           throw new ModelOutputValidationError('控制位置超出单元。')
       }
+      const calls = new Set<string>()
       for (const [callIndex, call] of unit.callSites.entries()) {
         context.validate(call.range, call.evidenceIds)
         const fileContent = this.repo.content(this.snapshot, call.range.fileId)
@@ -241,7 +241,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
             `调用点units[${index.units.indexOf(unit)}].callSites[${callIndex}]无效：第 ${lineStart}–${lineEnd} 行原文为"${source}"，提交的text为"${call.text}"、targetHint为"${call.targetHint}"。两者都须逐字出现在原文内。`
           )
         }
-        if (calls.has(call.callSiteId)) throw new ModelOutputValidationError('调用点ID重复。')
+        if (calls.has(call.callSiteId)) throw new ModelOutputValidationError('同一执行单元内调用点 ID 重复。')
         calls.add(call.callSiteId)
         if (
           call.range.startOffset < unit.range.startOffset ||
@@ -629,7 +629,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
         this.context.evidence.set(item.evidenceId, item)
         this.context.accessible.add(item.evidenceId)
       }
-    // 临时 ID 只在同一个分块的提交内有效。索引返修后按最新分块结果重新建立草稿。
+    // 单元临时 ID 属于分块，调用点临时 ID 属于单元。返修后从最新索引重建草稿。
     this.preparedDrafts.clear()
     for (const [chunkId, { drafts }] of this.partial) {
       for (const draft of drafts) {

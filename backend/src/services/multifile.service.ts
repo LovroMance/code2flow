@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { SqliteSaver } from '@langchain/langgraph-checkpoint-sqlite'
 import { getCodeFlowCheckpointer } from '../ai/graph/checkpointer'
 import { createMultiFileGraph } from '../ai/graph/multifile.graph'
-import { AnalysisBudget, runMultiFollowUp } from '../ai/chains/multifile.chain'
+import { AnalysisBudget, AnalysisLimitError, runMultiFollowUp } from '../ai/chains/multifile.chain'
 import { SourceRepository } from '../repositories/source.repository'
 import { SessionRepository } from '../repositories/session.repository'
 import { DraftSchema, type SourceFileInput } from '../domain/source/schema'
@@ -255,6 +255,8 @@ export class MultiFileService {
               coverage: runtime.coverage(),
               missingRanges: runtime.incompleteRanges().slice(0, 200)
             })
+            if (wasAborted && timeout.aborted)
+              throw new AnalysisLimitError('分析已达到配置的总时限。')
             throw failure
           }
         },

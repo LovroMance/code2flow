@@ -31,6 +31,8 @@ npm install
 
 文件没有可用的语法切点时，整份作为一块送入索引，并受模型上下文限制。
 
+`CODE2FLOW_MULTI_TIMEOUT_MS` 设置整次分析或追问的总时限，单位为毫秒。DeepSeek 客户端使用同一配置，进行中的请求受该次分析或追问的取消信号约束。
+
 多文件分析不限制整次任务的累计输入、输出 Token，模型请求也不再发送单次输出 Token 上限。旧的 `CODE2FLOW_MULTI_MAX_INPUT_TOKENS`、`CODE2FLOW_MULTI_MAX_OUTPUT_TOKENS`、`CODE2FLOW_MODEL_MAX_OUTPUT_TOKENS` 配置不再生效；实际输出长度由模型服务决定，服务返回长度截断时仍终止任务并报错。本地上下文窗口通过 `CODE2FLOW_MODEL_CONTEXT_TOKENS` 设置，当前本机配置为 500000 Token；调整该配置不会改变供应商实际支持的上下文窗口。调用总次数、并发、超时及文件限制继续保留。
 
 ## 常用命令

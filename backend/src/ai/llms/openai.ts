@@ -1,6 +1,6 @@
 import { ChatOpenAI } from '@langchain/openai'
 
-export function createOpenAIModel(purpose?: 'index') {
+export function createOpenAIModel(timeout: number, purpose?: 'index') {
   const model = process.env.DEEPSEEK_MODEL?.trim()
   const baseURL = process.env.DEEPSEEK_BASE_URL?.trim()
   if (!model || !baseURL) throw new Error('请配置 DEEPSEEK_MODEL 和 DEEPSEEK_BASE_URL。')
@@ -25,7 +25,7 @@ export function createOpenAIModel(purpose?: 'index') {
     },
     // 重试由外层 StateGraph 统一计数，避免 SDK 与业务层叠加放大请求次数。
     maxRetries: 0,
-    timeout: 60000,
+    timeout,
     // 通过环境变量调整生成结果的稳定性。
     temperature: Number(process.env.DEEPSEEK_TEMPERATURE ?? 0)
   })

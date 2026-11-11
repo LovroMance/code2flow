@@ -7,7 +7,7 @@ const text = z.string().max(1000)
 const ids = z.array(z.string().min(1)).max(100)
 /** 单元内的调用或注册位置；先登记线索，再核对目标，不凭同名直接连边。 */
 export const CallSiteSchema = z.object({
-  // 索引阶段为临时身份，合并后由程序重建正式身份。
+  // 索引阶段在所属单元内唯一，合并后由程序重建正式身份。
   callSiteId: z.string(),
   // 普通调用、事件等注册、跨服务请求需要分别解释。
   kind: z.enum(['call', 'registration', 'request']),
@@ -124,7 +124,10 @@ const IndexSubmissionSchema = FileSemanticIndexSchema.omit({
         callSites: z.array(CallSiteSchema.omit({ evidenceIds: true }).extend({
           range: SourceLineRangeSchema,
           text: text.describe('range 内逐字截取的单行调用片段，跨行时取含调用名的一行'),
-          targetHint: text.describe('range 内逐字出现的目标名或路径线索')
+          targetHint: text.describe('range 内逐字出现的目标名或路径线索'),
+          receiver: text.nullish().describe(
+            '成员调用的原文接收对象，例如 service.save() 的 service；直接调用 f() 时省略或填 null'
+          )
         })).max(500)
       }))
     .max(1000),
@@ -203,7 +206,8 @@ export const UnitFlowSubmissionSchema = UnitFlowDraftSchema.omit({ unitId: true 
     callSiteIds: ids.describe('该节点范围内的调用点 ID')
   })).max(500),
   edges: UnitFlowDraftSchema.shape.edges.describe('from/to 引用单元内的 localId，label 写分支条件'),
-  entryLocalId: UnitFlowDraftSchema.shape.entryLocalId.describe('首个语义节点的 localId，纯声明用 null')
+  entryLocalId: UnitFlowDraftSchema.shape.entryLocalId.describe('首个语义节点的 localId，纯声明用 null'),
+  emptyReason: text.nullish().describe('无节点的纯声明须填写原因。有节点时省略或填 null')
 })
 /** 分块索引和局部草稿同轮产出。草稿缺失时仍可复用有效索引。 */
 export const CombinedIndexSchema = IndexSubmissionSchema.extend({

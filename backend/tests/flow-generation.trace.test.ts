@@ -177,9 +177,12 @@ it('模型提交越界行号时索引仍会返修', async () => {
   }
 })
 
-it('同文件多块复用临时 ID，各块源码只提交一次且调用边连到对应单元', async () => {
+it.each([
+  { targetChars: '256', split: true },
+  { targetChars: '6000', split: false }
+])('同文件单元可复用调用点临时 ID（切块目标 $targetChars）', async ({ targetChars, split }) => {
   stubMultiConfig()
-  vi.stubEnv('CODE2FLOW_MULTI_CHUNK_TARGET_CHARS', '256')
+  vi.stubEnv('CODE2FLOW_MULTI_CHUNK_TARGET_CHARS', targetChars)
   const saver = SqliteSaver.fromConnString(':memory:')
   try {
     const sessionId = 'multifile-chunks'
@@ -194,33 +197,46 @@ it('同文件多块复用临时 ID，各块源码只提交一次且调用边连�
       { name: 'first', target: 'second', start: 0, end: first.length, lineStart: 1, lineEnd: 4, callLine: 3 },
       { name: 'second', target: 'first', start: first.length, end: source.length, lineStart: 5, lineEnd: 7, callLine: 6 }
     ]
-    const model = await useModel(parts.map(({ name, target, lineStart, lineEnd, callLine }) => {
-      const callRange = { lineStart: callLine, lineEnd: callLine }
-      return {
-        toolName: 'submit_file_index',
-        args: {
-          summary: name, references: [], unresolvedItems: [],
-          units: [{
-            unitId: 'u1', name, kind: 'function', range: { lineStart, lineEnd },
-            summary: name, controlRanges: [],
-            callSites: [{ callSiteId: 'c1', kind: 'call', text: `${target}()`, targetHint: target, range: callRange }]
-          }],
-          drafts: [{
-            unitId: 'u1', entryLocalId: 'entry', edges: [],
-            nodes: [{ localId: 'entry', kind: 'action', label: name, description: name, range: callRange, callSiteIds: ['c1'] }]
+    const groups = split ? parts.map((part) => [part]) : [parts]
+    const model = await useModel(groups.map((group) => ({
+      toolName: 'submit_file_index',
+      args: {
+        summary: '互相调用', references: [], unresolvedItems: [],
+        units: group.map(({ name, target, lineStart, lineEnd, callLine }, index) => ({
+          unitId: `u${index + 1}`, name, kind: 'function', range: { lineStart, lineEnd },
+          summary: name, controlRanges: [],
+          callSites: [{
+            callSiteId: 'c1', kind: 'call', text: `${target}()`, targetHint: target,
+            range: { lineStart: callLine, lineEnd: callLine },
+            ...(name === 'first' ? { receiver: null } : {})
           }]
-        }
+        })),
+        drafts: group.map(({ name, callLine }, index) => ({
+          unitId: `u${index + 1}`, entryLocalId: 'entry', edges: [], emptyReason: null,
+          nodes: [{
+            localId: 'entry', kind: 'action', label: name, description: name,
+            range: { lineStart: callLine, lineEnd: callLine }, callSiteIds: ['c1']
+          }]
+        }))
       }
-    }))
+    })))
     const read = vi.spyOn(SourceContext.prototype, 'read')
     const flow = await service.generate(sessionId, snapshot.snapshotId, new AbortController().signal, () => {})
 
-    expect(read.mock.calls).toEqual(parts.map(({ start, end }) => [fileId, start, end]))
-    expect(model.requests).toHaveLength(2)
+    expect(read.mock.calls).toEqual(
+      groups.map((group) => [fileId, group[0]!.start, group[group.length - 1]!.end])
+    )
+    const calls = service.repo.indexes(snapshot)
+      .flatMap(({ units }) => units.flatMap(({ callSites }) => callSites))
+    expect(new Set(calls.map(({ callSiteId }) => callSiteId)).size).toBe(2)
+    expect(calls.map(({ receiver }) => receiver)).toEqual([undefined, undefined])
+    expect(model.requests).toHaveLength(groups.length)
     for (const [index, request] of model.requests.entries()) {
       expect(request.tools).toMatchObject([{ function: { name: 'submit_file_index' } }])
       const { payload } = modelInput(request)
-      const { lineStart, lineEnd } = parts[index]!
+      const group = groups[index]!
+      const { lineStart } = group[0]!
+      const { lineEnd } = group[group.length - 1]!
       expect(payload.code.content).toBe(source.split('\n').slice(lineStart - 1, lineEnd)
         .map((line, offset) => `${lineStart + offset}| ${line}`).join('\n'))
       expect(payload).not.toHaveProperty('withDrafts')
@@ -232,7 +248,7 @@ it('同文件多块复用临时 ID，各块源码只提交一次且调用边连�
     expect(flow.mermaid).toContain(`${secondNode.nodeId} -.->|"调用"| ${firstNode.nodeId}`)
 
     await service.generate(sessionId, snapshot.snapshotId, new AbortController().signal, () => {})
-    expect(model.requests).toHaveLength(2)
+    expect(model.requests).toHaveLength(groups.length)
   } finally {
     saver.db.close()
   }

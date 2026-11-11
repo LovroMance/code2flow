@@ -62,6 +62,7 @@ export function restoreModelDraft(
   return {
     ...draft,
     unitId,
+    emptyReason: draft.emptyReason ?? undefined,
     nodes: draft.nodes.map((node) => ({ ...node, range: resolve(node.range), evidenceIds }))
   }
 }
@@ -82,7 +83,12 @@ export function restoreModelIndex(
       signature: unit.signature ?? '',
       range: resolve(unit.range),
       controlRanges: unit.controlRanges.map((item) => ({ ...item, range: resolve(item.range) })),
-      callSites: unit.callSites.map((call) => ({ ...call, range: resolve(call.range), evidenceIds })),
+      callSites: unit.callSites.map((call) => ({
+        ...call,
+        receiver: call.receiver ?? undefined,
+        range: resolve(call.range),
+        evidenceIds
+      })),
       evidenceIds,
       complete: true
     })),
