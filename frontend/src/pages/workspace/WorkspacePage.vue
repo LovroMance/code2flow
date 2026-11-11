@@ -8,6 +8,8 @@ import ChunkDebugPage from '../debug/ChunkDebugPage.vue'
 import { useWorkspacePage } from '../../features/workspace/model/useWorkspacePage'
 import { CODE_FILE_ACCEPT } from '../../entities/flow/model/languages'
 
+const emit = defineEmits<{ 'open-evaluation': [] }>()
+
 const editorRef = ref<CodeEditorExpose | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const renameDialog = ref<HTMLDialogElement | null>(null)
@@ -116,6 +118,7 @@ async function confirmDelete() {
       @select="debugOpen = false; selectSession($event)"
       @refresh="refreshSessions"
       @toggle-debug="debugOpen = !debugOpen"
+      @open-evaluation="emit('open-evaluation')"
       @update:search="sessionSearch = $event"
     />
 

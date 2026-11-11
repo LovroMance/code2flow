@@ -189,11 +189,20 @@
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
-.session-workbench .sidebar-debug-button {
+.sidebar-tools {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 2px;
+  margin-block: auto 10px;
+}
+.session-workbench .sidebar-debug-button,
+.sidebar-tool-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   justify-content: flex-start;
   flex: 0 0 auto;
   min-height: 36px;
-  margin-block: auto 10px;
   padding: 0 10px;
   border: 0;
   border-inline-start: 2px solid transparent;
@@ -201,12 +210,15 @@
   background: transparent;
   color: var(--text-main);
   font-size: 13px;
+  text-decoration: none;
 }
-.session-sidebar-collapsed .sidebar-debug-button {
+.session-sidebar-collapsed .sidebar-debug-button,
+.session-sidebar-collapsed .sidebar-tool-link {
   justify-content: center;
   padding: 0;
 }
-.sidebar-debug-button:hover {
+.sidebar-debug-button:hover,
+.sidebar-tool-link:hover {
   background: var(--accent-soft);
 }
 .sidebar-debug-button[aria-pressed='true'] {
