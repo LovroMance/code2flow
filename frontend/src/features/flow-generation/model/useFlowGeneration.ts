@@ -28,6 +28,13 @@ export function useFlowGeneration() {
     detectedLanguage.value = language
   }
 
+  async function acceptOutput(result: MultiFileResult) {
+    if (result.hasExecutableFlow && result.mermaid !== multiResult.value?.mermaid)
+      await ensureMermaid().parse(result.mermaid)
+    detectedLanguage.value = result.detectedLanguage
+    multiResult.value = result
+  }
+
   async function restoreMultiOutput(result: MultiFileResult | null, failed = false) {
     resetOutput()
     if (!result) {
@@ -35,9 +42,7 @@ export function useFlowGeneration() {
       return
     }
     try {
-      if (result.hasExecutableFlow) await ensureMermaid().parse(result.mermaid)
-      detectedLanguage.value = result.detectedLanguage
-      multiResult.value = result
+      await acceptOutput(result)
       status.value = 'done'
     } catch (error) {
       failRendering(getErrorMessage(error, '流程图解析失败。'))
@@ -68,7 +73,9 @@ export function useFlowGeneration() {
             'chunks-ready': '源码切块完成',
             index: '分析全部文件',
             generate: '生成局部流程',
-            complete: '校验流程图',
+            'detail-ready': '细分图已就绪',
+            overview: '汇总总体图',
+            complete: '流程图已就绪',
             resolve: '查找引用候选',
             incomplete: '分析未完成'
           }
@@ -88,10 +95,20 @@ export function useFlowGeneration() {
               })
               .filter(Boolean)
               .join('\n')
-        }
+        },
+        acceptOutput
       )
-      await restoreMultiOutput(result)
+      await acceptOutput(result)
+      status.value = 'done'
     } catch (error) {
+      if (multiResult.value) {
+        multiResult.value = {
+          ...multiResult.value,
+          overview: { status: 'unavailable', message: '总体图生成未完成，可以查看已生成的细分图。' }
+        }
+        status.value = 'done'
+        return
+      }
       failRendering(
         `${getErrorMessage(error, '生成失败。')}${incomplete ? `\n未完成的源码行范围：\n${incomplete}` : ''}`
       )

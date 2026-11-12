@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import type { CodeEditorExpose } from '../../features/code-editor/model/types'
 import CodeEditor from '../../features/code-editor/ui/CodeEditor.vue'
 import FlowDiagram from '../../features/flow-diagram/ui/FlowDiagram.vue'
@@ -7,10 +7,12 @@ import SessionSidebar from '../../features/workspace/ui/SessionSidebar.vue'
 import ChunkDebugPage from '../debug/ChunkDebugPage.vue'
 import { useWorkspacePage } from '../../features/workspace/model/useWorkspacePage'
 import { CODE_FILE_ACCEPT } from '../../entities/flow/model/languages'
+import { overviewMermaid } from '../../entities/flow/model/multifile'
 
 const emit = defineEmits<{ 'open-evaluation': [] }>()
 
 const editorRef = ref<CodeEditorExpose | null>(null)
+const diagramPanel = ref<HTMLElement | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const renameDialog = ref<HTMLDialogElement | null>(null)
 const deleteDialog = ref<HTMLDialogElement | null>(null)
@@ -72,6 +74,34 @@ const {
   toggleSidebar
 } = useWorkspacePage()
 
+type DiagramLayer = 'overview' | 'detail'
+const layerChoice = ref<DiagramLayer | null>(null)
+const selectedOverviewId = ref('')
+const focusedDetailId = ref('')
+const overview = computed(() => multiResult.value?.overview)
+const readyOverview = computed(() => overview.value?.status === 'ready' ? overview.value : null)
+const activeLayer = computed<DiagramLayer>(() =>
+  layerChoice.value ?? (readyOverview.value || !mermaid.value ? 'overview' : 'detail')
+)
+const overviewSource = computed(() => readyOverview.value ? overviewMermaid(readyOverview.value) : '')
+const overviewTargets = computed(() => readyOverview.value?.nodes.map(({ id }) => ({ nodeId: `overview_${id}` })) ?? [])
+const selectedOverview = computed(() => readyOverview.value?.nodes.find(({ id }) => id === selectedOverviewId.value))
+const activeMermaid = computed(() => activeLayer.value === 'overview' ? overviewSource.value : mermaid.value)
+const activeTargets = computed(() => sourceChanged.value ? [] : activeLayer.value === 'overview' ? overviewTargets.value : mappings.value)
+const emptyDiagramText = computed(() => {
+  if (isLoading.value) return activeLayer.value === 'overview' && multiResult.value?.hasExecutableFlow ? '正在汇总总体图…' : statusText.value
+  if (multiResult.value?.hasExecutableFlow === false) return '已完成分析，源码没有可展示的执行流程。'
+  if (activeLayer.value === 'overview' && overview.value?.status === 'unavailable') return overview.value.message
+  if (activeLayer.value === 'overview' && multiResult.value) return '重新生成流程图，即可查看总体图。'
+  return '生成流程图后，可在此查看总体与细分。'
+})
+
+watch([threadId, () => multiResult.value?.analysisId], () => {
+  layerChoice.value = null
+  selectedOverviewId.value = ''
+  focusedDetailId.value = ''
+})
+
 async function handleFileChange(event: Event) {
   if (!(event.target instanceof HTMLInputElement)) return
   const input = event.target
@@ -79,10 +109,35 @@ async function handleFileChange(event: Event) {
   input.value = ''
 }
 async function handleSelectNode(nodeId: string) {
+  if (activeLayer.value === 'overview') {
+    selectedOverviewId.value = nodeId.replace(/^overview_/, '')
+    return
+  }
   const mapping = primeFollowUpQuestionFromNode(nodeId)
   if (!mapping) return
   await nextTick()
   editorRef.value?.focusMapping(mapping)
+}
+async function openOverviewDetail() {
+  const selected = selectedOverview.value
+  if (!selected) return
+  const target = mappings.value.find(({ unitId, kind }) => unitId === selected.unitIds[0] && kind !== 'start')
+  if (!target) return
+  focusedDetailId.value = target.nodeId
+  await chooseDiagramLayer('detail')
+  await handleSelectNode(target.nodeId)
+}
+async function chooseDiagramLayer(layer: DiagramLayer) {
+  if (activeLayer.value === layer) {
+    layerChoice.value = layer
+    return
+  }
+  layerChoice.value = layer
+  await nextTick()
+  diagramPanel.value?.querySelector<HTMLButtonElement>('.diagram-layer-switch [aria-pressed=true]')?.focus()
+}
+function handleLayerRenderError(message: string) {
+  if (activeLayer.value === 'detail') handleRenderError(message)
 }
 function openRename() {
   renameTitle.value = sessionTitle.value
@@ -384,43 +439,57 @@ async function confirmDelete() {
         </section>
         <section class="analysis-panel">
           <section
+            ref="diagramPanel"
             class="panel diagram-panel workspace-shell-card"
             :class="{ 'diagram-source-stale': sourceChanged }"
           >
-            <p
-              v-if="multiResult && !multiResult.hasExecutableFlow"
-              class="session-message-empty"
-            >
-              已完成全部文件分析；没有可展示的执行流程。
-            </p>
             <FlowDiagram
-              v-else-if="mermaid"
-              :mermaid="mermaid"
-              :mappings="sourceChanged ? [] : mappings"
-              :is-streaming="isLoading"
+              :key="activeLayer"
+              :mermaid="activeMermaid"
+              :mappings="activeTargets"
+              :close-on-select="activeLayer === 'detail'"
+              :focus-node-id="activeLayer === 'detail' ? focusedDetailId : undefined"
               @select-node="handleSelectNode"
-              @render-error="handleRenderError"
-            />
-            <p
-              v-else
-              class="session-message-empty"
+              @render-error="handleLayerRenderError"
             >
-              {{ isLoading ? statusText : '等待分析结果' }}
-            </p>
-            <p v-if="multiResult" class="flow-result-counts">
-              诊断条数 {{ multiResult.diagnostics.length }} · 节点数 {{ multiResult.mappings.length }}
-            </p>
-            <ul
-              v-if="multiResult?.diagnostics.length"
-              class="multi-diagnostics"
-            >
-              <li
-                v-for="(diagnostic, index) in multiResult.diagnostics"
-                :key="index"
-              >
-                {{ diagnostic.message }}
-              </li>
-            </ul>
+              <template #toolbar>
+                <div class="diagram-heading">
+                  <h2 class="diagram-title">流程图</h2>
+                  <div class="diagram-layer-switch" role="group" aria-label="流程图层次">
+                    <button type="button" :aria-pressed="activeLayer === 'overview'" @click="chooseDiagramLayer('overview')">总体</button>
+                    <button type="button" :aria-pressed="activeLayer === 'detail'" @click="chooseDiagramLayer('detail')">细分</button>
+                  </div>
+                </div>
+              </template>
+              <template #empty>
+                <p class="diagram-empty-message" role="status">{{ emptyDiagramText }}</p>
+              </template>
+              <template #footer>
+                <div v-if="activeLayer === 'overview' && selectedOverview && !sourceChanged" class="overview-selection">
+                  <div>
+                    <strong>{{ selectedOverview.label }}</strong>
+                    <p>{{ selectedOverview.description }}</p>
+                  </div>
+                  <button type="button" class="ghost-button" @click="openOverviewDetail">查看细分 <span aria-hidden="true">→</span></button>
+                </div>
+                <div v-else-if="activeLayer === 'overview'" class="diagram-footer flow-layer-footer">
+                  <span>{{ readyOverview?.nodes.length }} 个功能</span>
+                  <span v-if="!sourceChanged">点击节点查看功能说明</span>
+                </div>
+                <div v-else class="flow-detail-footer">
+                  <div class="diagram-footer flow-layer-footer">
+                    <span>{{ mappings.length }} 个节点 <span v-if="isLoading" role="status">· 正在汇总总体图</span></span>
+                    <span v-if="!sourceChanged">点击节点定位源码</span>
+                  </div>
+                  <details v-if="multiResult?.diagnostics.length" class="flow-diagnostics">
+                    <summary>{{ multiResult.diagnostics.length }} 条诊断</summary>
+                    <ul class="multi-diagnostics">
+                      <li v-for="(diagnostic, index) in multiResult.diagnostics" :key="index">{{ diagnostic.message }}</li>
+                    </ul>
+                  </details>
+                </div>
+              </template>
+            </FlowDiagram>
           </section>
           <section class="panel session-followup-panel workspace-shell-card">
             <div class="panel-header">

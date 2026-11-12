@@ -55,7 +55,8 @@ export async function streamMultiFlow(
   id: string,
   snapshotId: string,
   signal: AbortSignal,
-  onMetadata: (metadata: Record<string, unknown>) => void
+  onMetadata: (metadata: Record<string, unknown>) => void,
+  onDetail: (result: MultiFileResult) => Promise<void>
 ): Promise<MultiFileResult> {
   const response = await fetch('/api/v2/generate-flow', {
     method: 'POST',
@@ -98,7 +99,11 @@ export async function streamMultiFlow(
           metadata = data
           onMetadata(data)
         } else if (event.type === 'mermaid') mermaid = event.content
-        else if (event.type === 'mappings') mappings = event.content
+        else if (event.type === 'mappings') {
+          mappings = event.content
+          if (metadata?.stage === 'detail-ready')
+            await onDetail(parseMultiResult({ ...metadata, mermaid, mappings }))
+        }
         else if (event.type === 'done') done = true
         else throw new Error('未知的流式事件。')
       }

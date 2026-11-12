@@ -60,7 +60,6 @@ export function schemaFieldPath(path: unknown) {
     kind: '类型',
     range: '源码范围',
     signature: '签名',
-    controlRanges: '控制语句范围',
     callSites: '调用点',
     text: '调用源码文本',
     receiver: '调用接收对象',

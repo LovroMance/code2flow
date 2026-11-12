@@ -27,13 +27,13 @@ npm install
 
 调试预览和正式分析共用 Tree-sitter 切块。支持 JavaScript、TypeScript、Python、Java、Go、C++、C#、Rust、Ruby、PHP 和 Bash 的语法边界。每块由连续整行组成，优先保留完整的顶层语法单元。Java 类超出目标时，可以沿类成员边界切分，保留完整方法。相邻块无重叠，源码定位使用首尾都包含的原始行号。
 
-`CODE2FLOW_MULTI_CHUNK_TARGET_CHARS` 默认是 6000，按 UTF-16 计数，是打包目标。完整语法单元可以超出目标单独成块。模型上下文和输出限制仍按实际请求校验。旧的 `CODE2FLOW_MULTI_CHUNK_LINES` 和 `CODE2FLOW_MULTI_CHUNK_CHARS` 已停用。
+`CODE2FLOW_MULTI_CHUNK_TARGET_CHARS` 默认是 6000，按 UTF-16 计数，是打包目标。完整语法单元可以超出目标单独成块。流程图节点按业务阶段生成，节点范围用于源码定位。
 
 文件没有可用的语法切点时，整份作为一块送入索引，并受模型上下文限制。
 
 `CODE2FLOW_MULTI_TIMEOUT_MS` 设置整次分析或追问的总时限，单位为毫秒。DeepSeek 客户端使用同一配置，进行中的请求受该次分析或追问的取消信号约束。
 
-多文件分析不限制整次任务的累计输入、输出 Token，模型请求也不再发送单次输出 Token 上限。旧的 `CODE2FLOW_MULTI_MAX_INPUT_TOKENS`、`CODE2FLOW_MULTI_MAX_OUTPUT_TOKENS`、`CODE2FLOW_MODEL_MAX_OUTPUT_TOKENS` 配置不再生效；实际输出长度由模型服务决定，服务返回长度截断时仍终止任务并报错。本地上下文窗口通过 `CODE2FLOW_MODEL_CONTEXT_TOKENS` 设置，当前本机配置为 500000 Token；调整该配置不会改变供应商实际支持的上下文窗口。调用总次数、并发、超时及文件限制继续保留。
+`CODE2FLOW_MODEL_CONTEXT_TOKENS` 用于本地估算单次请求能否放入模型的上下文，取值应对应供应商实际支持的窗口。输出长度由模型服务决定，服务返回长度截断时会终止任务并报错。整次分析的运行预算由调用总次数、并发、超时和文件限制控制。
 
 ## 常用命令
 

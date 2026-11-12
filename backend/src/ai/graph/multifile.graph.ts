@@ -179,7 +179,6 @@ export function createMultiFileGraph(
     .addNode('validateResult', () => {
       const result = r().compose()
       r().validate(result)
-      r().progress('complete', result.mappings.length, result.mappings.length)
       return { result }
     })
     .addEdge(START, 'prepareAnalysis')

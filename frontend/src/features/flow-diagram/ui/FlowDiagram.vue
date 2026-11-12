@@ -6,8 +6,10 @@ import type { NodeMapping } from '../../../entities/flow/model/types'
 
 const props = defineProps<{
   mermaid: string
-  mappings: NodeMapping[]
+  mappings: ReadonlyArray<Pick<NodeMapping, 'nodeId'>>
   isStreaming?: boolean
+  closeOnSelect?: boolean
+  focusNodeId?: string
 }>()
 
 const emit = defineEmits<{ 'select-node': [nodeId: string]; 'render-error': [message: string] }>()
@@ -15,7 +17,7 @@ const expanded = ref(false)
 
 async function selectNode(nodeId: string) {
   // 专注查看时点击节点，回到双栏后再定位源码，避免编辑器被遮住。
-  expanded.value = false
+  if (props.closeOnSelect !== false) expanded.value = false
   await nextTick()
   emit('select-node', nodeId)
 }
@@ -39,6 +41,7 @@ const {
   overviewViewBox,
   visibleRegion,
   fitView,
+  focusNode,
   readView,
   changeZoom,
   handleWheel,
@@ -50,6 +53,15 @@ const {
   handleOverviewPointerMove,
   stopOverviewDragging
 } = useDiagramViewport(renderedSvg, () => !!props.isStreaming)
+
+watch([renderedSvg, () => props.focusNodeId], ([svg, id]) => {
+  if (!svg) return
+  for (const node of svg.querySelectorAll<SVGGraphicsElement>('[data-flow-node-id]')) {
+    const selected = !!id && node.dataset.flowNodeId === id
+    node.classList.toggle('diagram-node-focused', selected)
+    if (selected) focusNode(node)
+  }
+}, { flush: 'post' })
 
 function handleEscape(event: KeyboardEvent) {
   if (event.key === 'Escape') expanded.value = false
@@ -65,9 +77,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
   >
     <div class="diagram-stage">
       <div class="diagram-toolbar">
-        <h2 class="diagram-title">
-          流程图
-        </h2>
+        <slot name="toolbar">
+          <h2 class="diagram-title">流程图</h2>
+        </slot>
         <span
           class="diagram-toolbar-status sr-only-input"
           role="status"
@@ -78,7 +90,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
           />
           {{ isStreaming ? '正在整理流程' : `${overviewNodes.length} 个节点` }}
         </span>
-        <div class="diagram-toolbar-actions">
+        <div v-if="mermaid" class="diagram-toolbar-actions">
           <button
             type="button"
             class="diagram-tool-button diagram-fit-button"
@@ -151,7 +163,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
           </button>
         </div>
       </div>
-      <div class="diagram-canvas">
+      <div v-show="mermaid" class="diagram-canvas">
         <div class="diagram-stage-grid" />
         <div
           ref="viewportElement"
@@ -226,9 +238,12 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEscape))
           {{ renderError }}
         </div>
       </div>
-      <div class="diagram-footer">
-        <span>滚轮以指针为中心缩放 · 拖动空白处平移</span><span>点击节点定位源码</span>
-      </div>
+      <div v-if="!mermaid" class="diagram-empty"><slot name="empty" /></div>
+      <slot v-if="mermaid" name="footer">
+        <div class="diagram-footer">
+          <span>滚轮以指针为中心缩放 · 拖动空白处平移</span><span>点击节点定位源码</span>
+        </div>
+      </slot>
     </div>
   </div>
 </template>

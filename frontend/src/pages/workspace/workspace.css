@@ -436,6 +436,60 @@
   font-size: 16px;
   font-weight: 600;
 }
+.diagram-heading {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.diagram-layer-switch {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid #e5e9ef;
+  border-radius: 7px;
+  background: #f4f6f9;
+}
+.diagram-layer-switch button {
+  min-width: 48px;
+  padding: 3px 10px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-soft);
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  cursor: pointer;
+}
+.diagram-layer-switch button:hover {
+  color: var(--text-main);
+}
+.diagram-layer-switch button[aria-pressed='true'] {
+  border-color: #dbe2eb;
+  background: #fff;
+  color: #243852;
+  box-shadow: 0 1px 2px #22334a0d;
+  font-weight: 600;
+}
+.diagram-layer-switch button:focus-visible,
+.flow-diagnostics summary:focus-visible {
+  outline: 2px solid #3f72ad;
+  outline-offset: 2px;
+}
+.diagram-empty {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  padding: 18px;
+  text-align: center;
+}
+.diagram-empty-message {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 13px;
+}
 .session-panels .diagram-toolbar-actions {
   gap: 0;
   flex-wrap: nowrap;
@@ -495,6 +549,17 @@
 #app .session-panels .diagram-render-content .node:hover rect {
   stroke: #2680eb;
   stroke-width: 2px;
+}
+#app .session-panels .diagram-render-content .node[id*='-flowchart-overview_'] rect {
+  fill: #f2f6fc;
+  stroke: #7895bb;
+  rx: 9px;
+  ry: 9px;
+}
+#app .session-panels .diagram-render-content .node.diagram-node-focused :is(rect, polygon, path),
+#app .session-panels .diagram-render-content .node:focus-visible :is(rect, polygon, path) {
+  stroke: #2769b3;
+  stroke-width: 2.5px;
 }
 /* 将已有小地图收在原生 disclosure 中，默认画布保持与设计图相同的留白。 */
 .session-panels .diagram-overview {
@@ -580,9 +645,6 @@
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.8;
-}
-.diagram-panel > .session-message-empty {
-  padding: 20px;
 }
 .session-question-form {
   display: flex;
@@ -704,12 +766,47 @@
 .multi-file-row input {
   flex: 1;
 }
-.flow-result-counts {
-  margin: 8px 16px;
+.session-panels .flow-layer-footer,
+.overview-selection {
+  padding: 9px 16px;
+  border-top: 1px solid #eef0f4;
   color: var(--text-soft);
   font-size: 12px;
 }
+.flow-detail-footer {
+  flex: 0 0 auto;
+}
+.overview-selection {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #f7f9fc;
+}
+.overview-selection strong {
+  color: var(--text-main);
+  font-size: 13px;
+}
+.overview-selection p {
+  margin: 3px 0 0;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.overview-selection button {
+  flex: 0 0 auto;
+}
+.flow-diagnostics {
+  margin: 0 16px 8px;
+  font-size: 12px;
+  color: var(--text-soft);
+}
+.flow-diagnostics summary {
+  width: fit-content;
+  cursor: pointer;
+}
 .multi-diagnostics {
+  margin: 6px 0 0;
+  padding-left: 20px;
   max-height: 110px;
   overflow: auto;
   font-size: 12px;

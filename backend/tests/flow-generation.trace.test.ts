@@ -62,7 +62,7 @@ it('多文件提交只返回行号，后端绑定文件、单元及证据', asyn
           unresolvedItems: [],
           units: [{
             unitId: 'unit', name: '入口', kind: 'top-level', range,
-            summary: '赋值', controlRanges: [], callSites: []
+            summary: '赋值', callSites: []
           }],
           ...(fileId === generationFileId ? {} : { drafts: [{ ...flowDraft, unitId: 'unit' }] })
         }
@@ -75,7 +75,13 @@ it('多文件提交只返回行号，后端绑定文件、单元及证据', asyn
 
     const saveFacts = vi.spyOn(service.repo, 'saveFacts')
     const saveCheckpoint = vi.spyOn(saver, 'put')
-    const flow = await service.generate(sessionId, snapshot.snapshotId, new AbortController().signal, () => {})
+    const events: string[] = []
+    const flow = await service.generate(sessionId, snapshot.snapshotId, new AbortController().signal, (type, data) => {
+      events.push(type === 'metadata' ? String((data as { stage: string }).stage) : type)
+    })
+    expect(events.indexOf('mappings')).toBeLessThan(events.indexOf('overview'))
+    expect(flow.overview?.status).toBe('ready')
+    expect((await service.detail(sessionId)).result?.overview).toEqual(flow.overview)
 
     expect(saveFacts).toHaveBeenCalledTimes(1)
     const indexes = service.repo.indexes(snapshot)
@@ -101,8 +107,10 @@ it('多文件提交只返回行号，后端绑定文件、单元及证据', asyn
       expect(mapping.evidenceIds).toEqual([evidenceId])
       expect(mapping.unitId).toBe(indexes.find(({ fileId }) => fileId === mapping.fileId)?.units[0]?.unitId)
     }
-    expect(model.requests).toHaveLength(3)
-    for (const request of model.requests) {
+    expect(model.requests).toHaveLength(4)
+    expect(modelInput(model.requests[3]!).payload.files).toHaveLength(2)
+    expect(modelInput(model.requests[3]!).payload).not.toHaveProperty('code')
+    for (const request of model.requests.slice(0, 3)) {
       const { payload } = modelInput(request)
       expect(JSON.stringify(payload)).not.toMatch(
         /"(?:complete|byteSize|lineCount|chunkerVersion|strategy|snapshotId|evidenceIds)":/
@@ -155,7 +163,7 @@ it('模型提交越界行号时索引仍会返修', async () => {
           summary: '赋值', references: [], unresolvedItems: [],
           units: [{
             unitId: 'u1', name: '入口', kind: 'top-level', range,
-            summary: '赋值', controlRanges: [], callSites: []
+            summary: '赋值', callSites: []
           }],
           drafts: [{
             unitId: 'u1', entryLocalId: 'entry', edges: [],
@@ -167,7 +175,7 @@ it('模型提交越界行号时索引仍会返修', async () => {
       }
     }))
     const flow = await service.generate(sessionId, snapshot.snapshotId, new AbortController().signal, () => {})
-    expect(model.requests).toHaveLength(2)
+    expect(model.requests).toHaveLength(3)
     expect(modelInput(model.requests[1]!).validationFeedback).toContain('源码行范围无效')
     expect(flow.mappings).toContainEqual(expect.objectContaining({
       fileId: snapshot.files[0]!.fileId, kind: 'action', startOffset: 0, endOffset: code.length
@@ -204,7 +212,7 @@ it.each([
         summary: '互相调用', references: [], unresolvedItems: [],
         units: group.map(({ name, target, lineStart, lineEnd, callLine }, index) => ({
           unitId: `u${index + 1}`, name, kind: 'function', range: { lineStart, lineEnd },
-          summary: name, controlRanges: [],
+          summary: name,
           callSites: [{
             callSiteId: 'c1', kind: 'call', text: `${target}()`, targetHint: target,
             range: { lineStart: callLine, lineEnd: callLine },
@@ -230,8 +238,8 @@ it.each([
       .flatMap(({ units }) => units.flatMap(({ callSites }) => callSites))
     expect(new Set(calls.map(({ callSiteId }) => callSiteId)).size).toBe(2)
     expect(calls.map(({ receiver }) => receiver)).toEqual([undefined, undefined])
-    expect(model.requests).toHaveLength(groups.length)
-    for (const [index, request] of model.requests.entries()) {
+    expect(model.requests).toHaveLength(groups.length + 1)
+    for (const [index, request] of model.requests.slice(0, groups.length).entries()) {
       expect(request.tools).toMatchObject([{ function: { name: 'submit_file_index' } }])
       const { payload } = modelInput(request)
       const group = groups[index]!
@@ -248,7 +256,7 @@ it.each([
     expect(flow.mermaid).toContain(`${secondNode.nodeId} -.->|"调用"| ${firstNode.nodeId}`)
 
     await service.generate(sessionId, snapshot.snapshotId, new AbortController().signal, () => {})
-    expect(model.requests).toHaveLength(groups.length)
+    expect(model.requests).toHaveLength(groups.length + 1)
   } finally {
     saver.db.close()
   }
@@ -294,7 +302,7 @@ it.each(['invalid-edge', 'missing-edge', 'missing-node'] as const)('草稿补救
           summary: '计算运费', references: [], unresolvedItems: [],
           units: [{
             unitId: 'u1', name: 'shipping', kind: 'function', range: range(1, 8),
-            summary: '计算运费', controlRanges: [{ kind: 'branch', range: range(2) }], callSites: []
+            summary: '计算运费', callSites: []
           }],
           drafts: [{ ...draft, unitId: 'u1', nodes: problem === 'missing-node' ? nodes.slice(0, 2) : nodes, edges: priorEdges }]
         }
@@ -303,21 +311,21 @@ it.each(['invalid-edge', 'missing-edge', 'missing-node'] as const)('草稿补救
     ])
     const flow = await service.generate(sessionId, snapshot.snapshotId, new AbortController().signal, () => {})
 
-    expect(model.requests).toHaveLength(2)
+    expect(model.requests).toHaveLength(3)
     const { payload, validationFeedback } = modelInput(model.requests[1]!)
     expect(payload.previousDraft.edges).toEqual(priorEdges)
-    expect(validationFeedback).toContain(problem === 'invalid-edge' ? '未知节点' : '默认分支')
+    expect(validationFeedback).toContain(problem === 'invalid-edge' ? '未知节点' : '缺少不同出口')
     expect(payload).not.toHaveProperty('code')
-    if (problem === 'missing-node') {
+    if (problem !== 'invalid-edge') {
       expect(payload.codeFragments.map(({ content }: { content: string }) => content)).toEqual([
-        '5|     default:\n6|       return 1000'
+        '2|   switch (region) {'
       ])
     } else expect(payload).not.toHaveProperty('codeFragments')
     expect(flow.mermaid).toContain('-->|"默认"|')
     expect(flow.diagnostics).toEqual([])
 
     await service.generate(sessionId, snapshot.snapshotId, new AbortController().signal, () => {})
-    expect(model.requests).toHaveLength(2)
+    expect(model.requests).toHaveLength(3)
   } finally {
     saver.db.close()
   }
@@ -336,8 +344,18 @@ afterEach(async () => {
   vi.restoreAllMocks()
 })
 
-async function useModel(replies: Parameters<typeof createModelServer>[0]) {
-  server = await createModelServer(replies)
+async function useModel(replies: Parameters<typeof createModelServer>[0], overviewStatus?: number) {
+  server = await createModelServer(replies, (request) => {
+    if (overviewStatus) return { status: overviewStatus }
+    const { files } = modelInput(request).payload as { files: Array<{ units: Array<{ id: string }> }> }
+    return {
+      toolName: 'submit_overview',
+      args: {
+        nodes: [{ id: 'summary', label: '汇总功能', description: '提供主要功能结果', unitIds: files.flatMap(({ units }) => units.map(({ id }) => id)) }],
+        edges: []
+      }
+    }
+  })
   vi.stubEnv('DEEPSEEK_API_KEY', 'test-only')
   vi.stubEnv('DEEPSEEK_MODEL', 'deepseek-chat')
   vi.stubEnv('DEEPSEEK_BASE_URL', server.baseURL)
@@ -353,7 +371,7 @@ describe('LangSmith 服务追踪', () => {
       summary: '赋值', references: [], unresolvedItems: [],
       units: [{
         unitId: 'unit', name: '入口', kind: 'top-level', range,
-        summary: '赋值', controlRanges: [], callSites: []
+        summary: '赋值', callSites: []
       }],
       drafts: [{
         unitId: 'unit', entryLocalId: 'set', edges: [],
@@ -417,7 +435,7 @@ describe('LangSmith 服务追踪', () => {
       session_id: sessionId,
       ls_model_name: 'deepseek-chat'
     })
-    expect(llmEnd).toHaveBeenCalledTimes(1)
+    expect(llmEnd).toHaveBeenCalledTimes(2)
     const message = llmEnd.mock.calls[0][0].generations[0][0].message
     expect(message.usage_metadata).toMatchObject({
       input_tokens: 10,
@@ -457,6 +475,13 @@ describe('LangSmith 服务追踪', () => {
     expect(errors).toHaveBeenCalled()
   })
 
+  it('总体汇总失败后可恢复已经验收的细分图', async () => {
+    await useModel([indexReply], 503)
+    const flow = await generate()
+    expect(flow.overview?.status).toBe('unavailable')
+    expect(flow.hasExecutableFlow).toBe(true)
+    expect(await service.detail(sessionId)).toMatchObject({ failed: false, result: { mermaid: flow.mermaid, overview: flow.overview } })
+  })
   it('accumulates provider usage across a real graph retry', async () => {
     vi.stubEnv('CODE2FLOW_MAX_RETRIES', '1')
     await useModel([{ ...indexReply, args: {} }, indexReply])
@@ -472,7 +497,7 @@ describe('LangSmith 服务追踪', () => {
         callbacks: [BaseCallbackHandler.fromMethods({ handleLLMEnd: usage })]
       }
     )
-    expect(usage).toHaveBeenCalledTimes(2)
-    expect(totalTokens).toBe(60)
+    expect(usage).toHaveBeenCalledTimes(3)
+    expect(totalTokens).toBe(90)
   })
 })

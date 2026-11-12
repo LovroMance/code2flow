@@ -14,12 +14,14 @@ import { runDetectLanguage } from '../ai/tools/detect-language.tool'
 import {
   ExecutionUnitSchema,
   FileSemanticIndexSchema,
+  OverviewSubmissionSchema,
   UnitFlowDraftSchema,
   type FileSemanticIndex,
   type ExecutionUnit,
   type UnitFlowDraft,
   type CrossFileReference,
-  type PublicDiagnostic
+  type PublicDiagnostic,
+  type MultiFileFlowResult
 } from '../domain/multifile/schema'
 import type { CodeChunk, SourceRange, SourceSnapshot } from '../domain/source/schema'
 import { EvidenceSchema } from '../domain/source/schema'
@@ -49,7 +51,6 @@ import {
   errorCauses
 } from '../domain/multifile/errors'
 import { traceStep } from '../ai/observability/langsmith'
-import { sourceSwitches } from '../utils/sourceChunks'
 
 const CachedIndexSchema = z.object({
   index: FileSemanticIndexSchema,
@@ -78,9 +79,8 @@ export class AnalysisRuntime implements MultiFileRuntime {
   // 保留结构合格的草稿，避免重试退步时丢弃可用结果。
   private readonly draftCandidates = new Map<
     string,
-    { draft: UnitFlowDraft; issues: ControlIssues; repairs: ControlIssues }
+    { draft: UnitFlowDraft; issues: ControlIssues }
   >()
-  private readonly switchesByFile = new Map<string, ReturnType<typeof sourceSwitches>>()
   readonly references: CrossFileReference[] = []
   readonly diagnostics: PublicDiagnostic[] = []
   context?: SourceContext
@@ -179,7 +179,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
         base: process.env.DEEPSEEK_BASE_URL,
         temperature: process.env.DEEPSEEK_TEMPERATURE,
         chunker: chunk.chunkerVersion,
-        version: 'index-with-overview-v6'
+        version: 'index-with-overview-v7'
       })
     )
   }
@@ -207,29 +207,6 @@ export class AnalysisRuntime implements MultiFileRuntime {
       if (previousEnd !== undefined && previousEnd !== unit.range.endOffset)
         throw new ModelOutputValidationError('同一作用域和起点的同名单元提交了不同结束行。')
       unitEnds.set(unitKey, unit.range.endOffset)
-      for (const control of unit.controlRanges) {
-        context.validate(control.range, unit.evidenceIds)
-        // 控制位置常带行首缩进或行尾换行等空白噪声，修剪到实际语句并重算行列，
-        // 生成节点只需覆盖语句本身即可通过覆盖检查，避免行列级偏差被拒。
-        const fileContent = this.repo.content(this.snapshot, unit.range.fileId)
-        let s = control.range.startOffset,
-          e = control.range.endOffset
-        while (s < e && /\s/.test(fileContent[s]!)) s++
-        while (e > s && /\s/.test(fileContent[e - 1]!)) e--
-        if (e > s) {
-          try {
-            const trimmed = sourceRange(unit.range.fileId, fileContent, s, e)
-            control.range = { ...control.range, ...trimmed }
-          } catch {
-            // 修剪后落在代理对或边界上时保持原范围，校验交给既有规则。
-          }
-        }
-        if (
-          control.range.startOffset < unit.range.startOffset ||
-          control.range.endOffset > unit.range.endOffset
-        )
-          throw new ModelOutputValidationError('控制位置超出单元。')
-      }
       const calls = new Set<string>()
       for (const [callIndex, call] of unit.callSites.entries()) {
         context.validate(call.range, call.evidenceIds)
@@ -400,7 +377,6 @@ export class AnalysisRuntime implements MultiFileRuntime {
         taskRange = unit.range
         const { fileId, startOffset, endOffset } = unit.range
         const context = this.context!
-        const file = this.snapshot.files.find((f) => f.fileId === fileId)!
         const candidate = this.draftCandidates.get(unit.unitId)
         let draft: UnitFlowDraft | undefined
         let previousDraft = feedback ? candidate?.draft : undefined
@@ -427,7 +403,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
               model: process.env.DEEPSEEK_MODEL,
               base: process.env.DEEPSEEK_BASE_URL,
               temperature: process.env.DEEPSEEK_TEMPERATURE,
-              version: 'flow-overview-v5'
+              version: 'flow-overview-v6'
             },
             (key, value) => key === 'evidenceIds' ? undefined : value
           ))
@@ -450,12 +426,9 @@ export class AnalysisRuntime implements MultiFileRuntime {
             let payload: unknown
             let evidenceIds = unit.evidenceIds
             if (previousDraft) {
-              const fragments = (candidate?.repairs ?? []).flatMap(({ sourceRange }) => {
-                if (!sourceRange) return []
-                const start = Math.max(startOffset, sourceRange.startOffset)
-                const end = Math.min(endOffset, sourceRange.endOffset)
-                return start < end ? [{ content: context.read(fileId, start, end).content }] : []
-              })
+              const fragments = (candidate?.issues ?? [])
+                .filter(({ needsSource }) => needsSource)
+                .map(({ range }) => ({ content: context.read(fileId, range.startOffset, range.endOffset).content }))
               payload = {
                 unit: { ...unit, callSites: unit.callSites.map(({ text, ...site }) => site) },
                 previousDraft,
@@ -487,28 +460,21 @@ export class AnalysisRuntime implements MultiFileRuntime {
             generated = true
           }
         }
-        let switches = this.switchesByFile.get(file.fileId)
-        if (!switches) {
-          switches = sourceSwitches(file.fileId, file.path, this.repo.content(this.snapshot, file.fileId))
-          this.switchesByFile.set(file.fileId, switches)
-        }
-        const issues = collectUnitControlIssues(draft, unit, await switches)
-        const repairs = issues.filter((issue) => issue.repair)
+        const issues = collectUnitControlIssues(draft)
         this.signal.throwIfAborted()
-        if (repairs.length) {
+        if (issues.length) {
           if (cacheKey && !generated) this.repo.cacheDelete(cacheKey)
           const retained =
-            candidate && candidate.repairs.length < repairs.length
+            candidate && candidate.issues.length < issues.length
               ? candidate
-              : { draft, issues, repairs }
+              : { draft, issues }
           this.draftCandidates.set(unit.unitId, retained)
           if (attempts <= this.retries)
-            return { taskId: id, attempts, error: controlFeedback(retained.repairs) }
+            return { taskId: id, attempts, error: controlFeedback(retained.issues) }
           this.finishDraftCandidate(unit)
         } else {
           this.draftCandidates.delete(unit.unitId)
           this.drafts.set(unit.unitId, draft)
-          this.reportControlIssues(unit, issues)
           if (generated && cacheKey) this.repo.cachePut(cacheKey, draft)
         }
       }
@@ -563,14 +529,6 @@ export class AnalysisRuntime implements MultiFileRuntime {
           if (old) {
             unitAliases.set(`${chunkId}|${unit.unitId}`, old.unitId)
             old.evidenceIds = [...new Set([...old.evidenceIds, ...unit.evidenceIds])]
-            old.controlRanges = [
-              ...new Map(
-                [...old.controlRanges, ...unit.controlRanges].map((c) => [
-                  JSON.stringify([c.kind, c.range]),
-                  c
-                ])
-              ).values()
-            ]
             old.callSites = [
               ...new Map(
                 [...old.callSites, ...unit.callSites].map((c) => [
@@ -771,6 +729,65 @@ export class AnalysisRuntime implements MultiFileRuntime {
       diagnostics: this.diagnostics,
       coverage: this.coverage()
     })
+  }
+
+  /** 总体图只读取已通过验收的阶段、索引职责及已确认的单元关系。 */
+  async generateOverview(detail: MultiFileFlowResult) {
+    const stagesByUnit = new Map<string, string[]>()
+    for (const node of detail.mappings) {
+      if (node.kind === 'start') continue
+      const stages = stagesByUnit.get(node.unitId) ?? []
+      if (stages.length < 6) stages.push(node.label.slice(0, 80))
+      stagesByUnit.set(node.unitId, stages)
+    }
+    const files = this.indexes.map((index) => {
+      const exports = new Set(index.references.filter(({ kind }) => kind === 'export').map(({ name }) => name))
+      return {
+        path: this.snapshot.files.find((file) => file.fileId === index.fileId)!.path,
+        summary: index.summary.slice(0, 240),
+        units: index.units.filter((unit) => stagesByUnit.has(unit.unitId)).map((unit) => ({
+          id: unit.unitId,
+          kind: unit.kind,
+          name: unit.name.slice(0, 100),
+          exported: exports.has(unit.name),
+          summary: unit.summary.slice(0, 160),
+          stages: stagesByUnit.get(unit.unitId)
+        }))
+      }
+    })
+    const callPairs = new Set<string>()
+    for (const ref of this.references) {
+      if (ref.status === 'resolved' && (ref.kind === 'call' || ref.kind === 'registration') && ref.targetUnitId)
+        callPairs.add(`${ref.sourceUnitId}:${ref.targetUnitId}`)
+    }
+    const payload = { files, calls: [...callPairs].map((pair) => pair.split(':')) }
+    const key = sha256(JSON.stringify({
+      version: 'overview-v3', payload, language: detail.detectedLanguage,
+      model: process.env.DEEPSEEK_MODEL, base: process.env.DEEPSEEK_BASE_URL,
+      temperature: process.env.DEEPSEEK_TEMPERATURE
+    }))
+    const cached = OverviewSubmissionSchema.safeParse(this.repo.cacheGet(key))
+    const submitted = cached.success ? cached.data : await runMultiFileChain(
+      'overview', payload, this.context!, detail.detectedLanguage, this.budgetTracker,
+      undefined, { analysisId: this.analysisId, taskId: 'overview', attempt: 1 }
+    )
+    this.signal.throwIfAborted()
+    const nodes = new Map(submitted.nodes.map((node) => [node.id, node]))
+    if (nodes.size !== submitted.nodes.length || submitted.nodes.some((node) =>
+      node.unitIds.some((unitId) => !stagesByUnit.has(unitId))
+    )) throw new ModelOutputValidationError('总体图引用了未知单元或重复节点。')
+    const seen = new Set<string>()
+    const edges = submitted.edges.filter(({ from, to }) => {
+      const source = nodes.get(from), target = nodes.get(to), pair = `${from}:${to}`
+      if (!source || !target || from === to || seen.has(pair)) return false
+      if (!source.unitIds.some((unitId) => callPairs.has(`${unitId}:${target.unitIds[0]}`)))
+        return false
+      seen.add(pair)
+      return true
+    })
+    const result = { nodes: submitted.nodes, edges }
+    if (!cached.success) this.repo.cachePut(key, result)
+    return { status: 'ready' as const, ...result }
   }
   /** 最终提交门槛：每个映射仍指向当前快照的有效证据。 */
   validate(result: ReturnType<AnalysisRuntime['compose']>) {

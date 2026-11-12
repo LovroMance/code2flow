@@ -55,6 +55,18 @@ export function useDiagramViewport(
     camera.value = zoomAt(camera.value, 1, viewport.value.width / 2, viewport.value.height / 2)
   }
 
+  function focusNode(node: SVGGraphicsElement) {
+    const element = svg.value
+    if (!element) return
+    const bounds = element.getBoundingClientRect(), target = node.getBoundingClientRect()
+    if (!bounds.width || !bounds.height) return
+    const centerX = ((target.left + target.width / 2 - bounds.left) / bounds.width) * size.value.width
+    const centerY = ((target.top + target.height / 2 - bounds.top) / bounds.height) * size.value.height
+    const scale = Math.max(0.9, camera.value.scale)
+    mode.value = 'manual'
+    camera.value = { scale, x: viewport.value.width / 2 - centerX * scale, y: viewport.value.height / 2 - centerY * scale }
+  }
+
   function changeZoom(scale: number, x = viewport.value.width / 2, y = viewport.value.height / 2) {
     mode.value = 'manual'
     camera.value = zoomAt(camera.value, Math.min(3, Math.max(0.05, scale)), x, y)
@@ -314,6 +326,7 @@ export function useDiagramViewport(
     overviewViewBox,
     visibleRegion,
     fitView,
+    focusNode,
     readView,
     changeZoom,
     handleWheel,

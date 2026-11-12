@@ -6,6 +6,7 @@ import { createOpenAIModel } from '../llms/openai'
 import { FOLLOW_UP_PROMPT } from '../../prompts/follow-up.prompt'
 import {
   CombinedIndexSchema,
+  OverviewSubmissionSchema,
   UnitFlowSubmissionSchema
 } from '../../domain/multifile/schema'
 import type { SourceContext } from '../../services/source-context.service'
@@ -125,12 +126,11 @@ const UNIT_FLOW_RULES = `- 生成业务流程概览。先按业务阶段划分�
 
 const INDEX_WITH_DRAFTS_RULES = `${SOURCE_RULES}
 读完分配的源码，通过 submit_file_index 提交索引和每个单元的局部草稿。draft.unitId 对应单元的临时 ID。
-- 登记本块内的完整单元，函数范围从声明行到闭括号行。scope、signature 有源码依据才填。嵌套单元分别记录作用域，外层不重复其控制位置和调用点。纯声明登记为 declaration。
-- controlRanges 按 branch、loop、exception、return 登记关键语句所在行，避免覆盖整个分支体。调用点在各自单元内编号，区分普通调用、注册和跨服务请求。
+- 登记本块内的完整单元，函数范围从声明行到闭括号行。scope、signature 有源码依据才填。嵌套单元分别记录作用域和调用点。纯声明登记为 declaration。
+- 调用点在各自单元内编号，区分普通调用、注册和跨服务请求。
 - 导入和导出覆盖完整声明。多行导入须覆盖名称、别名和模块路径。本地名称与原名不同时填 alias，有模块路径时填 targetPath。
 - references 记录原文的导入、导出、注册和作用域线索。显式包或命名空间用 scope 引用，单元使用同一限定名。不得仅凭同名推断绑定。taskRange.javaScope 提供块首的 Java 包和外层类。
 - 语义不明记 semantic，缺外部依赖记 dependency，影响生成时标记 blocking。摘要简短，引用位置须在本块内。
-索引中的 controlRanges 和 callSites 用于定位证据。同一个草稿节点可以覆盖多个控制位置和调用点。
 ${UNIT_FLOW_RULES}
 如有 validationFeedback，修正索引及受影响的草稿。`
 
@@ -139,13 +139,19 @@ const GENERATE_RULES = `${SOURCE_RULES}
 ${UNIT_FLOW_RULES}
 根据 validationFeedback 修正结果。若有 previousDraft，保留其余节点、边和 ID。若有 codeFragments，用它们补充对应位置的语义。`
 
+const OVERVIEW_RULES = `${SOURCE_RULES}
+根据全部文件的职责、细分阶段和已确认调用，提交一张总体功能图。按调用者可用的业务能力组织，通常三到六个节点，小项目可以更少。跨文件协作合成同一个能力。仅为其他能力服务的校验、归一化、分摊和日志归入所属能力。
+每个节点用简短中文写清功能，用一句话说明返回结果或状态变化。例如“创建订单并预留库存”说明返回待支付订单即可。unitIds 引用实现该功能的输入单元，第一项为最能代表该功能的入口，优先选有显式导出或独立触发的单元。节点 ID 用小写英文字母、数字和下划线。独立入口并列，只有调用指向目标功能的代表入口时才连边，方向沿调用方到被调用方。`
+
 export const FOLLOW_UP_RUN_LIMIT = 4
 
 /** 展示和模型执行共用提示词、提交工具与单任务调用上限。 */
-export function structuredAgentConfig(role: 'index' | 'generate') {
-  const schema = role === 'index' ? CombinedIndexSchema : UnitFlowSubmissionSchema
-  const submissionName = role === 'index' ? 'submit_file_index' : 'submit_unit_flow'
-  const system = role === 'index' ? INDEX_WITH_DRAFTS_RULES : GENERATE_RULES
+export function structuredAgentConfig(role: 'index' | 'generate' | 'overview') {
+  const [schema, submissionName, system] = ({
+    index: [CombinedIndexSchema, 'submit_file_index', INDEX_WITH_DRAFTS_RULES],
+    generate: [UnitFlowSubmissionSchema, 'submit_unit_flow', GENERATE_RULES],
+    overview: [OverviewSubmissionSchema, 'submit_overview', OVERVIEW_RULES]
+  } as const)[role]
   const responseSchema = {
     ...z.toJSONSchema(schema.meta({ title: submissionName })),
     type: 'object' as const
@@ -180,7 +186,16 @@ export async function runMultiFileChain(
   task?: AnalysisTaskContext
 ): Promise<z.infer<typeof UnitFlowSubmissionSchema>>
 export async function runMultiFileChain(
-  role: 'index' | 'generate',
+  role: 'overview',
+  payload: unknown,
+  context: SourceContext,
+  language: SupportedLanguage,
+  budget: AnalysisBudget,
+  feedback?: string,
+  task?: AnalysisTaskContext
+): Promise<z.infer<typeof OverviewSubmissionSchema>>
+export async function runMultiFileChain(
+  role: 'index' | 'generate' | 'overview',
   payload: unknown,
   context: SourceContext,
   language: SupportedLanguage,

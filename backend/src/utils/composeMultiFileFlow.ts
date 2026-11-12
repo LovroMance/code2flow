@@ -3,12 +3,11 @@ import { coveredLines, sourceLineRange } from './sourcePositions'
 import {
   MultiFileFlowResultSchema,
   type CrossFileReference,
-  type ExecutionUnit,
   type UnitFlowDraft,
   type MultiFileFlowResult
 } from '../domain/multifile/schema'
+import type { SourceRange } from '../domain/source/schema'
 import type { SourceContext } from '../services/source-context.service'
-import type { SourceSwitch } from './sourceChunks'
 
 /** 校验组图所需的单元身份、源码证据、入口和边端点。 */
 export function validateUnitDraft(draft: UnitFlowDraft, context: SourceContext) {
@@ -47,80 +46,13 @@ export function validateUnitDraft(draft: UnitFlowDraft, context: SourceContext) 
       throw new DraftTopologyError('局部边引用未知节点。')
 }
 
-/** 只在能识别分流点和各分支体时，判定从 switch 到分支体的路径是否缺失。 */
-function missingSwitchArms(draft: UnitFlowDraft, source: SourceSwitch) {
-  if (!source.separateArms) return []
-  const nodes = new Map(draft.nodes.map((node) => [
-    node.localId,
-    { ...coveredLines(node.range), kind: node.kind }
-  ]))
-  const firstArm = source.arms[0]!
-  const entry = [...nodes].filter(([, node]) =>
-    node.kind === 'decision' && node.lineStart >= source.line && node.lineStart <= firstArm.line
-  )
-  if (entry.length !== 1) return []
-  const [entryId] = entry[0]!
-  const armsByNode = new Map([...nodes].map(([id, node]) => [id, source.arms.filter((arm) =>
-    (node.lineStart >= arm.line && node.lineStart <= arm.endLine &&
-      node.lineEnd >= arm.bodyLine && node.lineEnd <= arm.endLine) ||
-    (id !== entryId && node.lineStart >= firstArm.line && node.lineStart <= arm.bodyLine &&
-      node.lineEnd >= arm.endLine && node.lineEnd <= source.endLine)
-  )]))
-  const outgoing = new Map<string, string[]>()
-  for (const edge of draft.edges) {
-    const targets = outgoing.get(edge.from) ?? []
-    targets.push(edge.to)
-    outgoing.set(edge.from, targets)
-  }
-  const seen = new Set<string>()
-  const pending = [entryId]
-  const reached = new Set<number>()
-  while (pending.length) {
-    const id = pending.pop()!
-    const node = nodes.get(id)
-    if (!node || seen.has(id) || node.lineStart < source.line || node.lineStart > source.endLine)
-      continue
-    seen.add(id)
-    for (const arm of armsByNode.get(id) ?? []) reached.add(arm.line)
-    pending.push(...(outgoing.get(id) ?? []))
-  }
-  // 至少有一个分支体被单独映射，才用该粒度判断其余路径。
-  if (!reached.size) return []
-  const mapped = new Set([...armsByNode.values()].flat())
-  return source.arms.filter((arm) => !reached.has(arm.line)).map((arm) => ({
-    ...arm,
-    entryId,
-    needsSource: !mapped.has(arm)
-  }))
-}
-
 /** 概览可合并源码控制点，验收图中明确表达的分流和结束路径。 */
-export function collectUnitControlIssues(
-  draft: UnitFlowDraft,
-  unit: Pick<ExecutionUnit, 'controlRanges'>,
-  switches: SourceSwitch[] = []
-) {
+export function collectUnitControlIssues(draft: UnitFlowDraft) {
   const issues: Array<{
-    range: ExecutionUnit['range']
+    range: SourceRange
     message: string
-    repair?: true
-    sourceRange?: ExecutionUnit['range']
+    needsSource?: true
   }> = []
-  const indexedBranches = new Set(unit.controlRanges.filter((control) => control.kind === 'branch')
-    .map((control) => coveredLines(control.range).lineStart))
-  const switchRepairNodes = new Set<string>()
-  for (const source of switches) {
-    if (!indexedBranches.has(source.line)) continue
-    for (const arm of missingSwitchArms(draft, source)) {
-      switchRepairNodes.add(arm.entryId)
-      issues.push({
-        range: arm.range,
-        message: `第 ${source.line} 行的 switch 无法到达第 ${arm.line} 行的${arm.isDefault ? '默认分支' : '分支'}动作`,
-        repair: true,
-        ...(arm.needsSource ? { sourceRange: arm.sourceRange } : {})
-      })
-    }
-  }
   const outgoing = new Map<string, Set<string>>()
   for (const { from, to } of draft.edges) {
     const targets = outgoing.get(from) ?? new Set<string>()
@@ -130,36 +62,18 @@ export function collectUnitControlIssues(
   for (const { localId, range, kind, label } of draft.nodes) {
     const exits = outgoing.get(localId)?.size ?? 0
     const { lineStart } = coveredLines(range)
-    if (kind === 'decision' && exits < 2 && !switchRepairNodes.has(localId)) {
+    if (kind === 'decision' && exits < 2) {
       issues.push({
         range,
         message: `第 ${lineStart} 行的判断“${label}”缺少不同出口，请补上不同结果的路径或合并为阶段动作`,
-        repair: true,
-        sourceRange: unit.controlRanges.find((control) =>
-          (control.kind === 'branch' || control.kind === 'loop') &&
-          control.range.lineStart === lineStart && control.range.endOffset > range.endOffset
-        )?.range ?? range
+        needsSource: true
       })
     }
     if ((kind === 'return' || kind === 'end') && exits > 0) {
       issues.push({
         range,
-        message: `第 ${lineStart} 行的结束节点“${label}”仍有后续流程，请核对结束位置`,
-        repair: true
+        message: `第 ${lineStart} 行的结束节点“${label}”仍有后续流程，请核对结束位置`
       })
-    }
-  }
-  // 独立映射到一条 return 的节点保留类型提示，阶段内的返回允许合并。
-  for (const { kind, range } of unit.controlRanges) {
-    if (kind !== 'return') continue
-    const { lineStart, lineEnd } = coveredLines(range)
-    const mapped = draft.nodes.filter((node) => {
-      const lines = coveredLines(node.range)
-      return lines.lineStart === lineStart && lines.lineEnd === lineEnd
-    })
-    if (mapped.length && mapped.every((node) => node.kind === 'action' && !outgoing.has(node.localId))) {
-      const lines = lineStart === lineEnd ? lineStart : `${lineStart}–${lineEnd}`
-      issues.push({ range, message: `第 ${lines} 行（return）建议使用 return 或 end 节点` })
     }
   }
   return issues

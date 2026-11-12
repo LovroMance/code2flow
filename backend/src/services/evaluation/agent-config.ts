@@ -14,11 +14,12 @@ function modelDetails(purpose?: 'index') {
 export function getAgentConfiguration() {
   const question = buildLanguageDetectionQuestion()
   const detection = getLanguageDetectionSettings().data
-  const structured = (['index', 'generate'] as const).map((role) => {
+  const labels = { index: '语义索引', generate: '补生成', overview: '总体汇总' }
+  const structured = (['index', 'generate', 'overview'] as const).map((role) => {
     const { system, responseFormat, runLimit } = structuredAgentConfig(role)
     return {
       id: role,
-      label: role === 'index' ? '语义索引' : '补生成',
+      label: labels[role],
       systemPrompt: system,
       ...modelDetails(role === 'index' ? 'index' : undefined),
       runLimit,

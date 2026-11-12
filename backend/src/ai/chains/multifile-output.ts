@@ -82,7 +82,6 @@ export function restoreModelIndex(
       scope: unit.scope ?? '',
       signature: unit.signature ?? '',
       range: resolve(unit.range),
-      controlRanges: unit.controlRanges.map((item) => ({ ...item, range: resolve(item.range) })),
       callSites: unit.callSites.map((call) => ({
         ...call,
         receiver: call.receiver ?? undefined,

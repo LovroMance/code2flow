@@ -21,7 +21,6 @@ export function safeErrorDetails(error: unknown) {
     'kind',
     'range',
     'signature',
-    'controlRanges',
     'callSites',
     'text',
     'receiver',

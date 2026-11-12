@@ -220,16 +220,29 @@ export class MultiFileService {
               config
             )
             combined.throwIfAborted()
-            const result = MultiFileFlowResultSchema.parse(state.result)
-            this.sessions.save({ ...this.sessions.get(id)!, updatedAt: new Date().toISOString() })
+            let result = MultiFileFlowResultSchema.parse(state.result)
             emit('metadata', {
               ...result,
               mermaid: undefined,
               mappings: undefined,
-              stage: 'complete'
+              stage: 'detail-ready'
             })
             emit('mermaid', result.mermaid)
             emit('mappings', result.mappings.map(publicMapping))
+            if (result.hasExecutableFlow) {
+              try {
+                runtime.progress('overview', 0, 1)
+                result = { ...result, overview: await runtime.generateOverview(result) }
+              } catch {
+                result = {
+                  ...result,
+                  overview: { status: 'unavailable', message: '总体图生成未完成，可以查看已生成的细分图。' }
+                }
+              }
+              await graph.updateState(this.config(id), { result }, 'validateResult')
+            }
+            this.sessions.save({ ...this.sessions.get(id)!, updatedAt: new Date().toISOString() })
+            emit('metadata', { ...result, mermaid: undefined, mappings: undefined, stage: 'complete' })
             emit('done')
             return result
           } catch (error) {

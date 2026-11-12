@@ -47,15 +47,6 @@ export const ExecutionUnitSchema = z.object({
   signature: text,
   // 单元职责摘要，不保存模型内部推理。
   summary: text,
-  // 关键控制语句位置，用于检查局部流程是否遗漏分支等结构。
-  controlRanges: z
-    .array(
-      z.object({
-        kind: z.enum(['branch', 'loop', 'exception', 'return']),
-        range: SourceRangeSchema
-      })
-    )
-    .max(500),
   // 当前单元直接包含的调用点，不重复登记嵌套单元内部的调用。
   callSites: z.array(CallSiteSchema).max(500),
   // 支撑该单元及边界的实际读取凭证。
@@ -118,9 +109,6 @@ const IndexSubmissionSchema = FileSemanticIndexSchema.omit({
       .partial({ scope: true, signature: true })
       .extend({
         range: SourceLineRangeSchema,
-        controlRanges: z.array(ExecutionUnitSchema.shape.controlRanges.element.extend({
-          range: SourceLineRangeSchema
-        })).max(500),
         callSites: z.array(CallSiteSchema.omit({ evidenceIds: true }).extend({
           range: SourceLineRangeSchema,
           text: text.describe('range 内逐字截取的单行调用片段，跨行时取含调用名的一行'),
@@ -242,6 +230,20 @@ export const MultiFileNodeMappingSchema = SourceRangeSchema.extend({
   // 节点位置对应的实际读取凭证。
   evidenceIds: ids
 })
+const overviewId = z.string().regex(/^[a-z][a-z0-9_]{0,39}$/)
+export const OverviewSubmissionSchema = z.object({
+  nodes: z.array(z.object({
+    id: overviewId,
+    label: z.string().trim().min(1).max(40),
+    description: z.string().trim().min(1).max(160),
+    unitIds: ids.min(1)
+  })).min(1).max(10),
+  edges: z.array(z.object({ from: overviewId, to: overviewId })).max(30)
+})
+export const OverviewResultSchema = z.discriminatedUnion('status', [
+  OverviewSubmissionSchema.extend({ status: z.literal('ready') }),
+  z.object({ status: z.literal('unavailable'), message: text })
+])
 /** v2 生成的完整对外结果；SSE 分事件传输后，前端重新组装为此结构。 */
 export const MultiFileFlowResultSchema = z.object({
   // 流式传输的结果协议版本。
@@ -259,6 +261,7 @@ export const MultiFileFlowResultSchema = z.object({
   mappings: z.array(MultiFileNodeMappingSchema),
   // 检索降级、关系歧义等公开提示。
   diagnostics: z.array(PublicDiagnosticSchema),
+  overview: OverviewResultSchema.optional(),
   // 最终源码范围覆盖情况。
   coverage: CoverageSchema
 })

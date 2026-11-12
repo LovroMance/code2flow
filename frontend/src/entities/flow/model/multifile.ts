@@ -42,6 +42,15 @@ export interface MultiFileMapping extends NodeMapping {
   /** 支撑节点位置的实际源码读取凭证。 */
   evidenceIds: string[]
 }
+export interface OverviewNode {
+  id: string
+  label: string
+  description: string
+  unitIds: string[]
+}
+export type FlowOverview =
+  | { status: 'ready'; nodes: OverviewNode[]; edges: Array<{ from: string; to: string }> }
+  | { status: 'unavailable'; message: string }
 /** SSE 各事件组装后的 v2 结果，完成运行时校验后才能用于渲染和点击定位。 */
 export interface MultiFileResult {
   version: 2
@@ -57,6 +66,7 @@ export interface MultiFileResult {
   mappings: MultiFileMapping[]
   /** 公开诊断码和说明，如检索降级、未确认关系。 */
   diagnostics: Array<{ code: string; message: string }>
+  overview?: FlowOverview
   /** 是否仍有阻塞语义缺口；不代表能证明所有语义理解正确。 */
   coverage: {
     /** 没有阻塞缺口时才为 true。 */
@@ -225,7 +235,50 @@ export function parseMultiResult(value: unknown): MultiFileResult {
     throw new Error('执行流程状态无效。')
   const result = r as unknown as MultiFileResult
   if (result.hasExecutableFlow) validateControlledGraph(result)
+  if (r.overview !== undefined) validateOverview(r.overview, result.mappings)
   return result
+}
+
+function validateOverview(value: unknown, mappings: MultiFileMapping[]) {
+  const overview = record(value)
+  if (overview.status === 'unavailable') {
+    str(overview.message)
+    return
+  }
+  if (overview.status !== 'ready' || !Array.isArray(overview.nodes) ||
+    !overview.nodes.length || overview.nodes.length > 10 || !Array.isArray(overview.edges) ||
+    overview.edges.length > 30) throw new Error('总体图结构无效。')
+  const unitIds = new Set(mappings.map(({ unitId }) => unitId)), ids = new Set<string>()
+  for (const value of overview.nodes) {
+    const node = record(value)
+    str(node.id)
+    str(node.label)
+    str(node.description)
+    if (!/^[a-z][a-z0-9_]{0,39}$/.test(node.id) || ids.has(node.id) ||
+      !node.label.trim() || node.label.length > 40 || !node.description.trim() || node.description.length > 160 ||
+      !Array.isArray(node.unitIds) || !node.unitIds.length || node.unitIds.length > 100 ||
+      !node.unitIds.every((id) => unitIds.has(id))) throw new Error('总体图节点与细分单元不一致。')
+    ids.add(node.id)
+  }
+  for (const value of overview.edges) {
+    const edge = record(value)
+    str(edge.from)
+    str(edge.to)
+    if (edge.from === edge.to || !ids.has(edge.from) || !ids.has(edge.to))
+      throw new Error('总体图包含无效连线。')
+  }
+}
+
+export function overviewMermaid(overview: Extract<FlowOverview, { status: 'ready' }>) {
+  const lines = ['flowchart TD']
+  for (const { id, label } of overview.nodes) {
+    const safeLabel = [...label.replace(/[<>&]/g, (c) => ({ '<': '＜', '>': '＞', '&': '＆' })[c]!)].map((char) =>
+      /[\p{L}\p{N} ，。？！、（）_-]/u.test(char) ? char : `#${char.codePointAt(0)};`
+    ).join('')
+    lines.push(`overview_${id}["${safeLabel}"]`)
+  }
+  for (const { from, to } of overview.edges) lines.push(`overview_${from} --> overview_${to}`)
+  return lines.join('\n')
 }
 // v2受控序列化协议检查；之后仍必须交给真实Mermaid解析器验证语法与渲染。
 function validateControlledGraph(result: MultiFileResult) {

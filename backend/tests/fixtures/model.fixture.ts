@@ -7,13 +7,17 @@ export interface ModelRequest {
 }
 
 // 真正经过 ChatOpenAI HTTP + SSE、createAgent 和 StateGraph，仅将外部供应商换成本地确定性服务。
-export async function createModelServer(replies: Reply[]) {
+export async function createModelServer(replies: Reply[], overviewReply?: (request: ModelRequest) => Reply) {
   const requests: ModelRequest[] = []
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     let body = ''
     for await (const part of req) body += part
-    requests.push(JSON.parse(body))
-    const reply = replies.shift() ?? { status: 500 }
+    const request: ModelRequest = JSON.parse(body)
+    requests.push(request)
+    const wantsOverview = request.tools?.some((tool) =>
+      (tool as { function?: { name?: string } }).function?.name === 'submit_overview'
+    )
+    const reply = wantsOverview && overviewReply ? overviewReply(request) : replies.shift() ?? { status: 500 }
     if ('status' in reply) {
       res.writeHead(reply.status, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: { message: 'fixture model failure', type: 'test_error' } }))

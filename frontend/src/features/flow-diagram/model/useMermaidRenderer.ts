@@ -8,7 +8,7 @@ let renderSequence = 0
 // 流式更新合并后串行渲染，在屏幕外测量，成功后才替换当前图，避免挤压页面和闪空。
 export function useMermaidRenderer(
   mermaidSource: () => string,
-  mappings: () => NodeMapping[],
+  mappings: () => ReadonlyArray<Pick<NodeMapping, 'nodeId'>>,
   onSelectNode: (nodeId: string) => void,
   isStreaming: () => boolean = () => false
 ) {
@@ -45,6 +45,12 @@ export function useMermaidRenderer(
     const source = mermaidSource()
     const currentMappings = mappings()
     pending = false
+    if (!source) {
+      diagramElement.value.replaceChildren()
+      renderedSvg.value = null
+      renderError.value = ''
+      return
+    }
     isRendering.value = true
 
     const scratch = document.createElement('div')
@@ -79,8 +85,16 @@ export function useMermaidRenderer(
               ? node.id.slice(idPrefix.length).replace(/-\d+$/, '')
               : undefined)
           if (!nodeId || !mappedIds.has(nodeId)) continue
+          node.dataset.flowNodeId = nodeId
           node.classList.add('clickable')
+          node.setAttribute('tabindex', '0')
+          node.setAttribute('role', 'button')
           node.addEventListener('click', () => onSelectNode(nodeId))
+          node.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter' && event.key !== ' ') return
+            event.preventDefault()
+            onSelectNode(nodeId)
+          })
         }
         renderedSvg.value = element
       }
