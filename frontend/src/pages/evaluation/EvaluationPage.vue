@@ -26,12 +26,13 @@ const deltaText = (delta: number, format: (value: number) => string) =>
 
 function summarize(run?: EvaluationRun) {
   if (!run?.cases.length) return null
-  const sum = (key: 'diagnosticCount' | 'inputTokens' | 'outputTokens' | 'totalTokens') =>
+  const sum = (key: 'diagnosticCount' | 'nodeCount' | 'inputTokens' | 'outputTokens' | 'totalTokens') =>
     run.cases.some((sample) => sample[key] == null) ? null : run.cases.reduce((n, sample) => n + (sample[key] ?? 0), 0)
   return {
     duration: run.cases.reduce((n, sample) => n + sample.durationMs, 0),
     calls: run.cases.reduce((n, sample) => n + sample.modelCalls, 0),
     diagnostics: sum('diagnosticCount'),
+    nodes: sum('nodeCount'),
     input: sum('inputTokens'), output: sum('outputTokens'), tokens: sum('totalTokens')
   }
 }
@@ -45,6 +46,7 @@ const metrics = computed(() => {
   if (!current) return []
   return [
     { label: '诊断总条数', value: number(current.diagnostics), delta: current.diagnostics !== null && previous?.diagnostics != null ? current.diagnostics - previous.diagnostics : null, format: number },
+    { label: '节点总数', value: number(current.nodes), delta: current.nodes !== null && previous?.nodes != null ? current.nodes - previous.nodes : null, format: number, neutral: true },
     { label: '累计分析耗时', value: seconds(current.duration), delta: previous ? current.duration - previous.duration : null, format: seconds },
     { label: '模型调用', value: number(current.calls), delta: previous ? current.calls - previous.calls : null, format: number },
     { label: '输入 Token', value: number(current.input), delta: current.input !== null && previous?.input != null ? current.input - previous.input : null, format: number },
@@ -61,7 +63,7 @@ const metrics = computed(() => {
       <div class="evaluation-title-row">
         <div>
           <h1>Agent 评测</h1>
-          <p>使用 LangSmith 数据集比较诊断条数、分析耗时、模型调用次数和 Token 用量。</p>
+          <p>使用 LangSmith 数据集比较诊断条数、节点数、分析耗时、模型调用次数和 Token 用量。</p>
         </div>
         <div class="evaluation-header-actions">
           <button class="ghost-button" type="button" :aria-expanded="configurationOpen" aria-controls="agent-configuration"
@@ -138,7 +140,7 @@ const metrics = computed(() => {
               <div v-for="metric in metrics" :key="metric.label">
                 <dt>{{ metric.label }}</dt>
                 <dd>{{ metric.value }}</dd>
-                <dd v-if="metric.delta !== null" class="metric-delta" :class="{ faster: metric.delta < 0 }">
+                <dd v-if="metric.delta !== null" class="metric-delta" :class="{ faster: metric.delta < 0 && !metric.neutral }">
                   {{ deltaText(metric.delta, metric.format) }}
                 </dd>
               </div>
@@ -160,6 +162,7 @@ const metrics = computed(() => {
                 </header>
                 <div class="sample-metrics">
                   <span>诊断条数 {{ number(sample.diagnosticCount ?? null) }}</span>
+                  <span>节点数 {{ number(sample.nodeCount ?? null) }}</span>
                   <span>模型调用 {{ number(sample.modelCalls) }} 次</span>
                   <span>输入 {{ number(sample.inputTokens) }} Token</span>
                   <span>输出 {{ number(sample.outputTokens) }} Token</span>

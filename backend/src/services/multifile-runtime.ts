@@ -61,7 +61,7 @@ type ControlIssues = ReturnType<typeof collectUnitControlIssues>
 function controlFeedback(issues: ControlIssues) {
   const listed = issues.slice(0, 20).map((issue) => issue.message).join('；')
   const remaining = issues.length - 20
-  return `请一起核对这些控制点：${listed}${remaining > 0 ? `；另有 ${remaining} 处，请逐项检查 unit.controlRanges` : ''}。保留已正确表达的流程。`
+  return `请修正这些流程出口：${listed}${remaining > 0 ? `；另有 ${remaining} 处，请检查其余判断和结束节点的连线` : ''}。保留已正确表达的阶段，并合并结果相同的条件。`
 }
 /** 一次分析的业务上下文：持有索引、证据与局部结果，实现图节点操作。
  * 阶段顺序和重试由 multifile.graph 决定，本类不另建状态机。
@@ -179,7 +179,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
         base: process.env.DEEPSEEK_BASE_URL,
         temperature: process.env.DEEPSEEK_TEMPERATURE,
         chunker: chunk.chunkerVersion,
-        version: 'index-with-drafts-v5'
+        version: 'index-with-overview-v6'
       })
     )
   }
@@ -427,7 +427,7 @@ export class AnalysisRuntime implements MultiFileRuntime {
               model: process.env.DEEPSEEK_MODEL,
               base: process.env.DEEPSEEK_BASE_URL,
               temperature: process.env.DEEPSEEK_TEMPERATURE,
-              version: 'flow-lines-v4'
+              version: 'flow-overview-v5'
             },
             (key, value) => key === 'evidenceIds' ? undefined : value
           ))

@@ -13,13 +13,15 @@ const sampleSchema = z.object({ case_id: z.string().optional(), files: SourceFil
 const progressSchema = z.object({ stage: z.string(), completed: z.number(), total: z.number() })
 const recordedStage = new Set(['prepare', 'detect', 'basic', 'index', 'resolve', 'generate'])
 const metric = z.number().nonnegative().nullable()
+const resultCount = z.number().int().nonnegative().nullable().default(null)
 const caseSchema = z.object({
   caseId: z.string(),
   status: z.enum(['passed', 'failed']),
   error: z.string().nullable(),
   durationMs: z.number().nonnegative(),
   modelCalls: z.number().nonnegative(),
-  diagnosticCount: z.number().int().nonnegative().nullable().default(null),
+  diagnosticCount: resultCount,
+  nodeCount: resultCount,
   inputTokens: metric,
   outputTokens: metric,
   totalTokens: metric
@@ -140,6 +142,7 @@ async function runCase(inputs: unknown, run: EvaluationRun): Promise<CaseResult>
   const caseId = (sample.success && sample.data.case_id) || `样本 ${run.cases.length + 1}`
   let failure: string | null = null
   let diagnosticCount: number | null = null
+  let nodeCount: number | null = null
   run.progress = null
 
   if (sample.success) {
@@ -156,6 +159,7 @@ async function runCase(inputs: unknown, run: EvaluationRun): Promise<CaseResult>
         }), { callbacks: [metrics] }
       )
       diagnosticCount = result.diagnostics.length
+      nodeCount = result.mappings.length
     } catch (error) {
       failure = error instanceof Error ? error.message : String(error)
     } finally {
@@ -166,7 +170,7 @@ async function runCase(inputs: unknown, run: EvaluationRun): Promise<CaseResult>
   }
 
   return {
-    caseId, status: failure ? 'failed' : 'passed', error: failure, diagnosticCount,
+    caseId, status: failure ? 'failed' : 'passed', error: failure, diagnosticCount, nodeCount,
     durationMs: Math.round(performance.now() - started), ...metrics.snapshot()
   }
 }

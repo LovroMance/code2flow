@@ -136,7 +136,7 @@
 .detail-panel > .error-banner { margin: 0 16px 14px; }
 .result-metrics {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   margin: 0 16px;
   border: 1px solid var(--border);
   border-radius: 6px;

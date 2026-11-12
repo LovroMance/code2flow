@@ -59,9 +59,12 @@ function missingSwitchArms(draft: UnitFlowDraft, source: SourceSwitch) {
     node.kind === 'decision' && node.lineStart >= source.line && node.lineStart <= firstArm.line
   )
   if (entry.length !== 1) return []
-  const armByNode = new Map([...nodes].map(([id, node]) => [id, source.arms.find((arm) =>
-    node.lineStart >= arm.line && node.lineStart <= arm.endLine &&
-    node.lineEnd >= arm.bodyLine && node.lineEnd <= arm.endLine
+  const [entryId] = entry[0]!
+  const armsByNode = new Map([...nodes].map(([id, node]) => [id, source.arms.filter((arm) =>
+    (node.lineStart >= arm.line && node.lineStart <= arm.endLine &&
+      node.lineEnd >= arm.bodyLine && node.lineEnd <= arm.endLine) ||
+    (id !== entryId && node.lineStart >= firstArm.line && node.lineStart <= arm.bodyLine &&
+      node.lineEnd >= arm.endLine && node.lineEnd <= source.endLine)
   )]))
   const outgoing = new Map<string, string[]>()
   for (const edge of draft.edges) {
@@ -70,7 +73,7 @@ function missingSwitchArms(draft: UnitFlowDraft, source: SourceSwitch) {
     outgoing.set(edge.from, targets)
   }
   const seen = new Set<string>()
-  const pending = [entry[0]![0]]
+  const pending = [entryId]
   const reached = new Set<number>()
   while (pending.length) {
     const id = pending.pop()!
@@ -78,20 +81,20 @@ function missingSwitchArms(draft: UnitFlowDraft, source: SourceSwitch) {
     if (!node || seen.has(id) || node.lineStart < source.line || node.lineStart > source.endLine)
       continue
     seen.add(id)
-    const arm = armByNode.get(id)
-    if (arm) reached.add(arm.line)
+    for (const arm of armsByNode.get(id) ?? []) reached.add(arm.line)
     pending.push(...(outgoing.get(id) ?? []))
   }
   // 至少有一个分支体被单独映射，才用该粒度判断其余路径。
   if (!reached.size) return []
-  const mapped = new Set(armByNode.values())
+  const mapped = new Set([...armsByNode.values()].flat())
   return source.arms.filter((arm) => !reached.has(arm.line)).map((arm) => ({
     ...arm,
+    entryId,
     needsSource: !mapped.has(arm)
   }))
 }
 
-/** 行覆盖及节点类型只作提示。可定位到具体缺失路径时才建议重新调用模型。 */
+/** 概览可合并源码控制点，验收图中明确表达的分流和结束路径。 */
 export function collectUnitControlIssues(
   draft: UnitFlowDraft,
   unit: Pick<ExecutionUnit, 'controlRanges'>,
@@ -105,11 +108,11 @@ export function collectUnitControlIssues(
   }> = []
   const indexedBranches = new Set(unit.controlRanges.filter((control) => control.kind === 'branch')
     .map((control) => coveredLines(control.range).lineStart))
-  const switchCases = new Set<number>()
+  const switchRepairNodes = new Set<string>()
   for (const source of switches) {
     if (!indexedBranches.has(source.line)) continue
-    for (const arm of source.arms) switchCases.add(arm.line)
     for (const arm of missingSwitchArms(draft, source)) {
+      switchRepairNodes.add(arm.entryId)
       issues.push({
         range: arm.range,
         message: `第 ${source.line} 行的 switch 无法到达第 ${arm.line} 行的${arm.isDefault ? '默认分支' : '分支'}动作`,
@@ -118,34 +121,46 @@ export function collectUnitControlIssues(
       })
     }
   }
-  for (const control of unit.controlRanges) {
-    const { lineStart, lineEnd } = coveredLines(control.range)
-    if (control.kind === 'branch' && lineStart === lineEnd && switchCases.has(lineStart)) continue
-    const mapped = draft.nodes.filter(
-      (node) =>
-        node.range.startOffset <= control.range.startOffset &&
-        node.range.endOffset >= control.range.endOffset
-    )
-    let detail: string
-    if (!mapped.length) {
-      detail = '缺少覆盖该位置的节点'
-    } else if (
-      (control.kind === 'branch' || control.kind === 'loop') &&
-      !mapped.some(
-        (node) =>
-          node.kind === 'decision' &&
-          draft.edges.filter((edge) => edge.from === node.localId).length >= 2
-      )
-    ) {
-      detail = '需要有至少两条出边的 decision 节点'
-    } else if (
-      control.kind === 'return' &&
-      !mapped.some((node) => node.kind === 'return' || node.kind === 'end')
-    ) {
-      detail = '建议使用 return 或 end 节点'
-    } else continue
-    const lines = lineStart === lineEnd ? lineStart : `${lineStart}–${lineEnd}`
-    issues.push({ range: control.range, message: `第 ${lines} 行（${control.kind}）${detail}` })
+  const outgoing = new Map<string, Set<string>>()
+  for (const { from, to } of draft.edges) {
+    const targets = outgoing.get(from) ?? new Set<string>()
+    targets.add(to)
+    outgoing.set(from, targets)
+  }
+  for (const { localId, range, kind, label } of draft.nodes) {
+    const exits = outgoing.get(localId)?.size ?? 0
+    const { lineStart } = coveredLines(range)
+    if (kind === 'decision' && exits < 2 && !switchRepairNodes.has(localId)) {
+      issues.push({
+        range,
+        message: `第 ${lineStart} 行的判断“${label}”缺少不同出口，请补上不同结果的路径或合并为阶段动作`,
+        repair: true,
+        sourceRange: unit.controlRanges.find((control) =>
+          (control.kind === 'branch' || control.kind === 'loop') &&
+          control.range.lineStart === lineStart && control.range.endOffset > range.endOffset
+        )?.range ?? range
+      })
+    }
+    if ((kind === 'return' || kind === 'end') && exits > 0) {
+      issues.push({
+        range,
+        message: `第 ${lineStart} 行的结束节点“${label}”仍有后续流程，请核对结束位置`,
+        repair: true
+      })
+    }
+  }
+  // 独立映射到一条 return 的节点保留类型提示，阶段内的返回允许合并。
+  for (const { kind, range } of unit.controlRanges) {
+    if (kind !== 'return') continue
+    const { lineStart, lineEnd } = coveredLines(range)
+    const mapped = draft.nodes.filter((node) => {
+      const lines = coveredLines(node.range)
+      return lines.lineStart === lineStart && lines.lineEnd === lineEnd
+    })
+    if (mapped.length && mapped.every((node) => node.kind === 'action' && !outgoing.has(node.localId))) {
+      const lines = lineStart === lineEnd ? lineStart : `${lineStart}–${lineEnd}`
+      issues.push({ range, message: `第 ${lines} 行（return）建议使用 return 或 end 节点` })
+    }
   }
   return issues
 }
@@ -240,14 +255,15 @@ export function composeMultiFileFlow(
     lines.push('end')
   })
   // 跨单元仅连接已证实的调用/注册；导入和请求关系不能直接充当本地执行边。
+  const callEdges = new Set<string>()
   for (const ref of references) {
     if (ref.status !== 'resolved' || (ref.kind !== 'call' && ref.kind !== 'registration')) continue
     const from = callNodes.get(ref.callSiteId ?? ''),
       to = entries.get(ref.targetUnitId ?? '')
     if (!from || !to) throw new Error('已确认关联缺少调用节点或目标入口。')
-    lines.push(`${from} -.->|"${ref.kind === 'call' ? '调用' : '触发'}"| ${to}`)
+    callEdges.add(`${from} -.->|"${ref.kind === 'call' ? '调用' : '触发'}"| ${to}`)
   }
-  const mermaid = mappings.length ? lines.join('\n') : ''
+  const mermaid = mappings.length ? [...lines, ...callEdges].join('\n') : ''
   // 图源完全由受控结构生成，双向覆盖和标签使用同一来源；实际语法解析由前端执行。
   return MultiFileFlowResultSchema.parse({
     ...base,

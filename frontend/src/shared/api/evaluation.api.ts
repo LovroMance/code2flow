@@ -13,6 +13,7 @@ export interface EvaluationCase {
   durationMs: number
   modelCalls: number
   diagnosticCount: number | null
+  nodeCount: number | null
   inputTokens: number | null
   outputTokens: number | null
   totalTokens: number | null

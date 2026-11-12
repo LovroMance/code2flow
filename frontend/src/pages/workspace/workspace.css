@@ -704,7 +704,7 @@
 .multi-file-row input {
   flex: 1;
 }
-.multi-diagnostics-count {
+.flow-result-counts {
   margin: 8px 16px;
   color: var(--text-soft);
   font-size: 12px;
