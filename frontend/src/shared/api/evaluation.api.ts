@@ -12,6 +12,7 @@ export interface EvaluationCase {
   error: string | null
   durationMs: number
   modelCalls: number
+  diagnosticCount: number | null
   inputTokens: number | null
   outputTokens: number | null
   totalTokens: number | null

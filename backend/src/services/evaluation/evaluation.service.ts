@@ -19,6 +19,7 @@ const caseSchema = z.object({
   error: z.string().nullable(),
   durationMs: z.number().nonnegative(),
   modelCalls: z.number().nonnegative(),
+  diagnosticCount: z.number().int().nonnegative().nullable().default(null),
   inputTokens: metric,
   outputTokens: metric,
   totalTokens: metric
@@ -138,6 +139,7 @@ async function runCase(inputs: unknown, run: EvaluationRun): Promise<CaseResult>
   const sample = sampleSchema.safeParse(inputs)
   const caseId = (sample.success && sample.data.case_id) || `样本 ${run.cases.length + 1}`
   let failure: string | null = null
+  let diagnosticCount: number | null = null
   run.progress = null
 
   if (sample.success) {
@@ -147,14 +149,15 @@ async function runCase(inputs: unknown, run: EvaluationRun): Promise<CaseResult>
       const service = new MultiFileService(saver)
       new SessionService(saver).ensure(sessionId, { title: caseId })
       const snapshot = await service.createSnapshot(sessionId, sample.data.files)
-      await traceStep('code2flow.evaluate-sample', { caseId }, () =>
+      const result = await traceStep('code2flow.evaluate-sample', { caseId }, () =>
         service.generate(sessionId, snapshot.snapshotId, new AbortController().signal, (_event, payload) => {
           const parsed = progressSchema.safeParse(payload)
           if (parsed.success && recordedStage.has(parsed.data.stage)) run.progress = parsed.data
         }), { callbacks: [metrics] }
       )
+      diagnosticCount = result.diagnostics.length
     } catch (error) {
-      failure = chineseErrorMessage(error, '样本分析失败，请查看 LangSmith 执行链路。', false)
+      failure = error instanceof Error ? error.message : String(error)
     } finally {
       saver.db.close()
     }
@@ -163,7 +166,7 @@ async function runCase(inputs: unknown, run: EvaluationRun): Promise<CaseResult>
   }
 
   return {
-    caseId, status: failure ? 'failed' : 'passed', error: failure,
+    caseId, status: failure ? 'failed' : 'passed', error: failure, diagnosticCount,
     durationMs: Math.round(performance.now() - started), ...metrics.snapshot()
   }
 }

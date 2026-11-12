@@ -26,11 +26,12 @@ const deltaText = (delta: number, format: (value: number) => string) =>
 
 function summarize(run?: EvaluationRun) {
   if (!run?.cases.length) return null
-  const sum = (key: 'inputTokens' | 'outputTokens' | 'totalTokens') =>
-    run.cases.some((sample) => sample[key] === null) ? null : run.cases.reduce((n, sample) => n + (sample[key] ?? 0), 0)
+  const sum = (key: 'diagnosticCount' | 'inputTokens' | 'outputTokens' | 'totalTokens') =>
+    run.cases.some((sample) => sample[key] == null) ? null : run.cases.reduce((n, sample) => n + (sample[key] ?? 0), 0)
   return {
     duration: run.cases.reduce((n, sample) => n + sample.durationMs, 0),
     calls: run.cases.reduce((n, sample) => n + sample.modelCalls, 0),
+    diagnostics: sum('diagnosticCount'),
     input: sum('inputTokens'), output: sum('outputTokens'), tokens: sum('totalTokens')
   }
 }
@@ -43,6 +44,7 @@ const metrics = computed(() => {
   const previous = reference.value
   if (!current) return []
   return [
+    { label: '诊断总条数', value: number(current.diagnostics), delta: current.diagnostics !== null && previous?.diagnostics != null ? current.diagnostics - previous.diagnostics : null, format: number },
     { label: '累计分析耗时', value: seconds(current.duration), delta: previous ? current.duration - previous.duration : null, format: seconds },
     { label: '模型调用', value: number(current.calls), delta: previous ? current.calls - previous.calls : null, format: number },
     { label: '输入 Token', value: number(current.input), delta: current.input !== null && previous?.input != null ? current.input - previous.input : null, format: number },
@@ -59,7 +61,7 @@ const metrics = computed(() => {
       <div class="evaluation-title-row">
         <div>
           <h1>Agent 评测</h1>
-          <p>使用 LangSmith 数据集比较分析耗时、模型调用次数和 Token 用量。</p>
+          <p>使用 LangSmith 数据集比较诊断条数、分析耗时、模型调用次数和 Token 用量。</p>
         </div>
         <div class="evaluation-header-actions">
           <button class="ghost-button" type="button" :aria-expanded="configurationOpen" aria-controls="agent-configuration"
@@ -157,6 +159,7 @@ const metrics = computed(() => {
                     :aria-label="`在 LangSmith 查看 ${sample.caseId} 的 Trace`">LangSmith Trace ↗</a>
                 </header>
                 <div class="sample-metrics">
+                  <span>诊断条数 {{ number(sample.diagnosticCount ?? null) }}</span>
                   <span>模型调用 {{ number(sample.modelCalls) }} 次</span>
                   <span>输入 {{ number(sample.inputTokens) }} Token</span>
                   <span>输出 {{ number(sample.outputTokens) }} Token</span>

@@ -407,6 +407,9 @@ async function confirmDelete() {
             >
               {{ isLoading ? statusText : '等待分析结果' }}
             </p>
+            <p v-if="multiResult" class="multi-diagnostics-count">
+              诊断条数 {{ multiResult.diagnostics.length }}
+            </p>
             <ul
               v-if="multiResult?.diagnostics.length"
               class="multi-diagnostics"

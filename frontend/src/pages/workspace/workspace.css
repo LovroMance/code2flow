@@ -704,6 +704,11 @@
 .multi-file-row input {
   flex: 1;
 }
+.multi-diagnostics-count {
+  margin: 8px 16px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
 .multi-diagnostics {
   max-height: 110px;
   overflow: auto;
