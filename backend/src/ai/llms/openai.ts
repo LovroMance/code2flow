@@ -1,13 +1,23 @@
 import { ChatOpenAI } from '@langchain/openai'
 
-export function createOpenAIModel(timeout: number, purpose?: 'index') {
+export function getAnalysisModelSettings(purpose?: 'index') {
   const model = process.env.DEEPSEEK_MODEL?.trim()
   const baseURL = process.env.DEEPSEEK_BASE_URL?.trim()
-  if (!model || !baseURL) throw new Error('请配置 DEEPSEEK_MODEL 和 DEEPSEEK_BASE_URL。')
   const useLowReasoning =
     purpose === 'index' &&
     model === 'deepseek-v4.1-flash' &&
-    URL.parse(baseURL)?.hostname === 'cn-beijing.maas.qianwenaiapi.com'
+    !!baseURL && URL.parse(baseURL)?.hostname === 'cn-beijing.maas.qianwenaiapi.com'
+  return {
+    model,
+    baseURL,
+    temperature: Number(process.env.DEEPSEEK_TEMPERATURE ?? 0),
+    reasoningEffort: useLowReasoning ? 'low' : null
+  }
+}
+
+export function createOpenAIModel(timeout: number, purpose?: 'index') {
+  const { model, baseURL, temperature, reasoningEffort } = getAnalysisModelSettings(purpose)
+  if (!model || !baseURL) throw new Error('请配置 DEEPSEEK_MODEL 和 DEEPSEEK_BASE_URL。')
 
   return new ChatOpenAI({
     apiKey: process.env.DEEPSEEK_API_KEY,
@@ -15,7 +25,7 @@ export function createOpenAIModel(timeout: number, purpose?: 'index') {
     configuration: { baseURL },
     // 不发送 max_tokens，由模型服务决定单次输出长度。
     // 通过兼容接口的原始字段传递百炼推理强度。
-    ...(useLowReasoning && { modelKwargs: { reasoning_effort: 'low' } }),
+    ...(reasoningEffort && { modelKwargs: { reasoning_effort: reasoningEffort } }),
     streaming: true,
     streamUsage: true,
     // OpenAI 兼容协议不代表实际供应商是 OpenAI，供远程面板匹配自定义价格。
@@ -27,6 +37,6 @@ export function createOpenAIModel(timeout: number, purpose?: 'index') {
     maxRetries: 0,
     timeout,
     // 通过环境变量调整生成结果的稳定性。
-    temperature: Number(process.env.DEEPSEEK_TEMPERATURE ?? 0)
+    temperature
   })
 }

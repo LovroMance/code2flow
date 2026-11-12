@@ -1,7 +1,8 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { getCurrentRun, getDatasets, getRuns, startRun } from '../services/evaluation/evaluation.service'
-import { EvaluationTraceNotFound, getSampleTrace, getTraceSpan } from '../services/evaluation/trace.service'
+import { EvaluationTraceNotFound, getSampleTraceUrl } from '../services/evaluation/trace.service'
+import { getAgentConfiguration } from '../services/evaluation/agent-config'
 import { chineseErrorMessage } from '../utils/errorMessage'
 
 export const evaluationRouter = Router()
@@ -17,6 +18,10 @@ function traceError(error: unknown) {
   if (error instanceof EvaluationTraceNotFound) return { status: 404, message: error.message }
   return { status: 502, message: remoteError(error) }
 }
+
+evaluationRouter.get('/agent-config', (_req, res) => {
+  res.set('Cache-Control', 'no-store').json(getAgentConfiguration())
+})
 
 evaluationRouter.get('/datasets', async (_req, res) => {
   try {
@@ -45,20 +50,7 @@ evaluationRouter.get('/experiments/:id/samples/:index/trace', async (req, res) =
   if (!params.success) return res.status(400).json({ error: '实验或样本参数无效。' })
   res.set('Cache-Control', 'no-store')
   try {
-    res.json(await getSampleTrace(params.data.id, params.data.index))
-  } catch (error) {
-    const failure = traceError(error)
-    res.status(failure.status).json({ error: failure.message })
-  }
-})
-
-evaluationRouter.get('/experiments/:id/traces/:traceId/spans/:spanId', async (req, res) => {
-  const params = z.object({ id: z.uuid(), traceId: z.uuid(), spanId: z.uuid() }).safeParse(req.params)
-  if (!params.success) return res.status(400).json({ error: 'Trace 或步骤参数无效。' })
-  res.set('Cache-Control', 'no-store')
-  try {
-    const { id, traceId, spanId } = params.data
-    res.json(await getTraceSpan(id, traceId, spanId))
+    res.redirect(await getSampleTraceUrl(params.data.id, params.data.index))
   } catch (error) {
     const failure = traceError(error)
     res.status(failure.status).json({ error: failure.message })

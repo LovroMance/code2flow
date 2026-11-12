@@ -40,6 +40,39 @@ const ReadSchema = z.object({
     .max(8)
 })
 
+export const SOURCE_TOOLS = {
+  readCode: {
+    name: 'read_code',
+    description: '只读当前快照。每次最多8个块/单元/原始行范围，共200行、12000个UTF-16字符。首尾行都包含。只返回完整行。截断时返回实际证据和nextRange；零读取不产生证据。',
+    schema: ReadSchema
+  },
+  listFiles: {
+    name: 'list_files',
+    description: '当前快照文件目录，不含正文；默认及最多20项，cursor为零起始整数下标。',
+    schema: PageSchema
+  },
+  getFileIndex: {
+    name: 'get_file_index',
+    description: '读取当前快照语义索引，默认简要概览与单元数；sections包含details或指定unitIds时分页返回单元/引用事实。每页最多20项，cursor为整数下标。',
+    schema: z.object({
+      fileIds: z.array(z.string()).min(1).max(20),
+      unitIds: z.array(z.string()).max(100).optional(),
+      sections: z.array(z.enum(['overview', 'details'])).optional(),
+      cursor: z.number().int().nonnegative().optional()
+    })
+  },
+  searchCode: {
+    name: 'search_code',
+    description: '仅当前快照候选召回。精确/关键词/语义/混合检索，默认8项、最多20项，每项片段不超过400字符。相似度不是调用证据，必须read_code核对。',
+    schema: z.object({
+      query: z.string().min(1).max(500),
+      mode: z.enum(['exact', 'keyword', 'semantic', 'hybrid']),
+      fileIds: z.array(z.string()).max(20).optional(),
+      limit: z.number().int().min(1).max(20).default(8)
+    })
+  }
+}
+
 // 每个角色有独立证据可见域；缓存命中也通过此服务重新登记证据。
 export class SourceContext {
   readonly evidence = new Map<string, Evidence>()
@@ -205,12 +238,7 @@ export class SourceContext {
           }
         }
       },
-      {
-        name: 'read_code',
-        description:
-          '只读当前快照。每次最多8个块/单元/原始行范围，共200行、12000个UTF-16字符。首尾行都包含。只返回完整行。截断时返回实际证据和nextRange；零读取不产生证据。',
-        schema: ReadSchema
-      }
+      SOURCE_TOOLS.readCode
     )
     return [
       read,
@@ -235,11 +263,7 @@ export class SourceContext {
             metering: { chars: 0 }
           }
         },
-        {
-          name: 'list_files',
-          description: '当前快照文件目录，不含正文；默认及最多20项，cursor为零起始整数下标。',
-          schema: PageSchema
-        }
+        SOURCE_TOOLS.listFiles
       ),
       tool(
         async (input) => {
@@ -276,17 +300,7 @@ export class SourceContext {
             metering: { chars: 0 }
           }
         },
-        {
-          name: 'get_file_index',
-          description:
-            '读取当前快照语义索引，默认简要概览与单元数；sections包含details或指定unitIds时分页返回单元/引用事实。每页最多20项，cursor为整数下标。',
-          schema: z.object({
-            fileIds: z.array(z.string()).min(1).max(20),
-            unitIds: z.array(z.string()).max(100).optional(),
-            sections: z.array(z.enum(['overview', 'details'])).optional(),
-            cursor: z.number().int().nonnegative().optional()
-          })
-        }
+        SOURCE_TOOLS.getFileIndex
       ),
       tool(
         async (input) => {
@@ -295,17 +309,7 @@ export class SourceContext {
             await this.retrieval.search(input.query, input.mode, input.fileIds, input.limit)
           )
         },
-        {
-          name: 'search_code',
-          description:
-            '仅当前快照候选召回。精确/关键词/语义/混合检索，默认8项、最多20项，每项片段不超过400字符。相似度不是调用证据，必须read_code核对。',
-          schema: z.object({
-            query: z.string().min(1).max(500),
-            mode: z.enum(['exact', 'keyword', 'semantic', 'hybrid']),
-            fileIds: z.array(z.string()).max(20).optional(),
-            limit: z.number().int().min(1).max(20).default(8)
-          })
-        }
+        SOURCE_TOOLS.searchCode
       )
     ]
   }

@@ -15,8 +15,6 @@ export interface EvaluationCase {
   inputTokens: number | null
   outputTokens: number | null
   totalTokens: number | null
-  stages: { stage: string; durationMs: number }[]
-  files: { path: string; chunks: { lineStart: number; lineEnd: number; chars: number }[] }[]
 }
 
 export interface EvaluationRun {
@@ -35,32 +33,25 @@ export interface EvaluationRun {
   experimentUrl: string | null
 }
 
-export interface EvaluationTraceNode {
+export interface EvaluationAgentStage {
   id: string
-  parentId: string | null
-  name: string
-  kind: string
-  status: string
-  startedAt: string
-  durationMs: number | null
-  inputTokens: number | null
-  outputTokens: number | null
-  totalTokens: number | null
+  label: string
   model: string | null
-  taskId: string | null
-  attempt: number | null
+  systemPrompt: string | null
+  temperature?: number | null
+  reasoningEffort?: string | null
+  runLimit?: number
+  tools: { name: string; description: string; schema: object }[]
+  choice?: {
+    instructions: string
+    criteria: Record<string, string>
+    timeoutMs: number | null
+    minConfidence: number | null
+  }
 }
 
-export interface EvaluationTrace {
-  traceId: string
-  nodes: EvaluationTraceNode[]
-}
-
-export interface EvaluationSpanDetail {
-  input: Record<string, unknown> | null
-  output: Record<string, unknown> | null
-  parameters: Record<string, unknown>
-  error: string | null
+export async function fetchEvaluationAgentConfig(signal: AbortSignal) {
+  return (await http.get<{ stages: EvaluationAgentStage[] }>('/evaluations/agent-config', { signal })).data
 }
 
 export async function fetchEvaluationDatasets() {
@@ -79,14 +70,6 @@ export async function startEvaluation(datasetId: string, name: string) {
   return (await http.post<EvaluationRun>('/evaluations/runs', { datasetId, name })).data
 }
 
-export async function fetchEvaluationTrace(experimentId: string, sampleIndex: number, signal: AbortSignal) {
-  return (await http.get<EvaluationTrace>(`/evaluations/experiments/${experimentId}/samples/${sampleIndex}/trace`, {
-    timeout: 30000, signal
-  })).data
-}
-
-export async function fetchEvaluationSpan(experimentId: string, traceId: string, spanId: string, signal: AbortSignal) {
-  return (await http.get<EvaluationSpanDetail>(`/evaluations/experiments/${experimentId}/traces/${traceId}/spans/${spanId}`, {
-    timeout: 30000, signal
-  })).data
+export function evaluationTraceLink(experimentId: string, sampleIndex: number) {
+  return `/api/evaluations/experiments/${encodeURIComponent(experimentId)}/samples/${sampleIndex}/trace`
 }

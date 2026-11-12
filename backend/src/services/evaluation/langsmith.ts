@@ -9,20 +9,8 @@ type Project = { id: string; name: string; extra?: { metadata?: Metadata } }
 type TraceRun = {
   id: string
   trace_id?: string
-  name?: string
-  run_type?: string
-  status?: string
   start_time?: string
-  latency_seconds?: number
-  parent_run_ids?: string[]
   reference_example_id?: string
-  prompt_tokens?: number | null
-  completion_tokens?: number | null
-  total_tokens?: number | null
-  metadata?: Metadata
-  extra?: { invocation_params?: Metadata }
-  error?: string
-  inputs?: Metadata
   outputs?: Metadata
 }
 
@@ -39,10 +27,9 @@ interface LangSmithClient {
       project_ids: string[]
       min_start_time: string
       is_root?: boolean
-      filter?: string
       selects: string[]
     }): AsyncIterable<TraceRun>
-    retrieve(id: string, options: { project_id: string; selects: string[] }): Promise<TraceRun>
+    getURL(id: string, options: { project_id: string; trace_id: string; start_time?: string }): Promise<{ url: string }>
   }
 }
 

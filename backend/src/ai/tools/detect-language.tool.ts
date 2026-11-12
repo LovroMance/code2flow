@@ -12,6 +12,14 @@ const ConfigSchema = z.object({
   minConfidence: z.coerce.number().min(0).max(1)
 })
 
+export function getLanguageDetectionSettings() {
+  return ConfigSchema.safeParse({
+    model: process.env.TYPESAFE_DEFAULT_MODEL,
+    timeout: process.env.CODE2FLOW_LANGUAGE_TIMEOUT_MS,
+    minConfidence: process.env.CODE2FLOW_LANGUAGE_MIN_CONFIDENCE
+  })
+}
+
 // Jev 只负责分类；临时失败降级为 unknown，流程图仍可使用通用规则生成。
 export async function runDetectLanguage(
   code: string,
@@ -21,11 +29,7 @@ export async function runDetectLanguage(
 }
 
 async function detectLanguage(code: string, signal?: AbortSignal): Promise<LanguageDetection> {
-  const config = ConfigSchema.safeParse({
-    model: process.env.TYPESAFE_DEFAULT_MODEL,
-    timeout: process.env.CODE2FLOW_LANGUAGE_TIMEOUT_MS,
-    minConfidence: process.env.CODE2FLOW_LANGUAGE_MIN_CONFIDENCE
-  })
+  const config = getLanguageDetectionSettings()
   if (!config.success) {
     console.error('[code-flow][jev] config-error', {
       message: '语言识别配置无效，请检查下列字段',

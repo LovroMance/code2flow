@@ -4,7 +4,6 @@ import { z } from 'zod'
 import { traceStep } from '../../ai/observability/langsmith'
 import { SourceFilesSchema } from '../../domain/source/schema'
 import { chineseErrorMessage } from '../../utils/errorMessage'
-import { coveredLines } from '../../utils/sourcePositions'
 import { MultiFileService } from '../multifile.service'
 import { SessionService } from '../session.service'
 import { evaluate, evaluationClient } from './langsmith'
@@ -22,12 +21,7 @@ const caseSchema = z.object({
   modelCalls: z.number().nonnegative(),
   inputTokens: metric,
   outputTokens: metric,
-  totalTokens: metric,
-  stages: z.array(z.object({ stage: z.string(), durationMs: z.number() })),
-  files: z.array(z.object({
-    path: z.string(),
-    chunks: z.array(z.object({ lineStart: z.number(), lineEnd: z.number(), chars: z.number() }))
-  }))
+  totalTokens: metric
 })
 const runSchema = z.object({
   id: z.uuid(),
@@ -141,19 +135,8 @@ async function execute(run: EvaluationRun) {
 async function runCase(inputs: unknown, run: EvaluationRun): Promise<CaseResult> {
   const started = performance.now()
   const metrics = new EvaluationMetrics()
-  const stages: CaseResult['stages'] = []
-  let stageStart = started
-  let stage = ''
-  const recordStage = (next: string) => {
-    if (stage === next) return
-    const now = performance.now()
-    if (stage) stages.push({ stage, durationMs: Math.round(now - stageStart) })
-    stage = next
-    stageStart = now
-  }
   const sample = sampleSchema.safeParse(inputs)
   const caseId = (sample.success && sample.data.case_id) || `样本 ${run.cases.length + 1}`
-  const files: CaseResult['files'] = []
   let failure: string | null = null
   run.progress = null
 
@@ -164,24 +147,12 @@ async function runCase(inputs: unknown, run: EvaluationRun): Promise<CaseResult>
       const service = new MultiFileService(saver)
       new SessionService(saver).ensure(sessionId, { title: caseId })
       const snapshot = await service.createSnapshot(sessionId, sample.data.files)
-      try {
-        await traceStep('code2flow.evaluate-sample', { caseId }, () =>
-          service.generate(sessionId, snapshot.snapshotId, new AbortController().signal, (_event, payload) => {
-            const parsed = progressSchema.safeParse(payload)
-            if (!parsed.success || !recordedStage.has(parsed.data.stage)) return
-            run.progress = parsed.data
-            recordStage(parsed.data.stage)
-          }), { callbacks: [metrics] }
-        )
-      } finally {
-        recordStage('')
-        const chunks = service.repo.chunks(snapshot)
-        for (const file of snapshot.files) {
-          files.push({ path: file.path, chunks: chunks.filter((chunk) => chunk.fileId === file.fileId)
-            .sort((a, b) => a.startOffset - b.startOffset)
-            .map((chunk) => ({ ...coveredLines(chunk), chars: chunk.endOffset - chunk.startOffset })) })
-        }
-      }
+      await traceStep('code2flow.evaluate-sample', { caseId }, () =>
+        service.generate(sessionId, snapshot.snapshotId, new AbortController().signal, (_event, payload) => {
+          const parsed = progressSchema.safeParse(payload)
+          if (parsed.success && recordedStage.has(parsed.data.stage)) run.progress = parsed.data
+        }), { callbacks: [metrics] }
+      )
     } catch (error) {
       failure = chineseErrorMessage(error, '样本分析失败，请查看 LangSmith 执行链路。', false)
     } finally {
@@ -193,6 +164,6 @@ async function runCase(inputs: unknown, run: EvaluationRun): Promise<CaseResult>
 
   return {
     caseId, status: failure ? 'failed' : 'passed', error: failure,
-    durationMs: Math.round(performance.now() - started), ...metrics.snapshot(), stages, files
+    durationMs: Math.round(performance.now() - started), ...metrics.snapshot()
   }
 }

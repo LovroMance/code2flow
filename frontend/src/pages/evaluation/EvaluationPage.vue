@@ -1,16 +1,15 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { useEvaluation } from '../../features/evaluation/model/useEvaluation'
-import EvaluationTrace from '../../features/evaluation/ui/EvaluationTrace.vue'
-import type { EvaluationRun } from '../../shared/api/evaluation.api'
+import AgentConfiguration from '../../features/evaluation/ui/AgentConfiguration.vue'
+import { evaluationTraceLink, type EvaluationRun } from '../../shared/api/evaluation.api'
 
 const emit = defineEmits<{ back: [] }>()
 const {
   datasets, datasetId, experimentName, runs, selectedRunId, selectedRun, baselineId, baseline,
   baselines, loading, loadingHistory, starting, error, activeRun, loadDatasets, runEvaluation
 } = useEvaluation()
-const traceSampleIndex = ref<number | null>(null)
-watch(selectedRunId, () => { traceSampleIndex.value = null })
+const configurationOpen = ref(false)
 
 const stateNames = { running: '运行中', completed: '已完成', failed: '有失败', interrupted: '已中断' }
 const stages: Record<string, string> = {
@@ -60,13 +59,18 @@ const metrics = computed(() => {
       <div class="evaluation-title-row">
         <div>
           <h1>Agent 评测</h1>
-          <p>使用 LangSmith 数据集查看每次流程的耗时、Token 和执行步骤。</p>
+          <p>使用 LangSmith 数据集比较分析耗时、模型调用次数和 Token 用量。</p>
         </div>
-        <button class="ghost-button" type="button" :disabled="loading || loadingHistory || starting" @click="loadDatasets">刷新数据</button>
+        <div class="evaluation-header-actions">
+          <button class="ghost-button" type="button" :aria-expanded="configurationOpen" aria-controls="agent-configuration"
+            @click="configurationOpen = !configurationOpen">Agent 配置</button>
+          <button class="ghost-button" type="button" :disabled="loading || loadingHistory || starting" @click="loadDatasets">刷新数据</button>
+        </div>
       </div>
     </header>
 
     <div class="evaluation-content">
+      <AgentConfiguration v-if="configurationOpen" />
       <form class="evaluation-form evaluation-panel" @submit.prevent="runEvaluation">
         <label>
           <span>LangSmith 数据集</span>
@@ -140,13 +144,18 @@ const metrics = computed(() => {
             <p v-else class="evaluation-note">{{ selectedRun.status === 'running' ? '样本运行完成后会显示数据。' : '此实验暂无样本结果。' }}</p>
 
             <div v-if="selectedRun.cases.length" class="sample-results">
-              <h3>样本与执行过程</h3>
-              <details v-for="(sample, index) in selectedRun.cases" :key="`${selectedRun.id}-${index}`" class="sample" :open="index === 0">
-                <summary>
-                  <strong>{{ sample.caseId }}</strong>
-                  <span>{{ seconds(sample.durationMs) }} · {{ number(sample.totalTokens) }} Token</span>
-                  <span v-if="sample.status === 'failed'" class="sample-error">分析失败</span>
-                </summary>
+              <h3>样本结果</h3>
+              <article v-for="(sample, index) in selectedRun.cases" :key="`${selectedRun.id}-${index}`" class="sample">
+                <header class="sample-heading">
+                  <div class="sample-heading-info">
+                    <strong>{{ sample.caseId }}</strong>
+                    <span>{{ seconds(sample.durationMs) }} · {{ number(sample.totalTokens) }} Token</span>
+                    <span v-if="sample.status === 'failed'" class="sample-error">分析失败</span>
+                  </div>
+                  <a v-if="selectedRun.experimentId" class="ghost-button sample-trace-link"
+                    :href="evaluationTraceLink(selectedRun.experimentId, index)" target="_blank" rel="noopener noreferrer"
+                    :aria-label="`在 LangSmith 查看 ${sample.caseId} 的 Trace`">LangSmith Trace ↗</a>
+                </header>
                 <div class="sample-metrics">
                   <span>模型调用 {{ number(sample.modelCalls) }} 次</span>
                   <span>输入 {{ number(sample.inputTokens) }} Token</span>
@@ -155,30 +164,11 @@ const metrics = computed(() => {
                     耗时较基线 {{ deltaText(sample.durationMs - referenceCases.get(sample.caseId)!.durationMs, seconds) }}
                   </span>
                 </div>
-                <div v-if="selectedRun.experimentId" class="sample-trace-action">
-                  <button type="button" class="ghost-button" :aria-expanded="traceSampleIndex === index"
-                    @click="traceSampleIndex = traceSampleIndex === index ? null : index">
-                    {{ traceSampleIndex === index ? '收起 Trace' : '查看 Trace' }}
-                  </button>
-                </div>
-                <EvaluationTrace v-if="selectedRun.experimentId && traceSampleIndex === index"
-                  :experiment-id="selectedRun.experimentId" :sample-index="index" />
                 <p v-if="sample.error" class="error-banner">{{ sample.error }}</p>
-                <div v-if="sample.stages.length" class="stage-list">
-                  <div v-for="(stage, stageIndex) in sample.stages" :key="stageIndex" class="stage-row">
-                    <span>{{ stages[stage.stage] || stage.stage }}</span>
-                    <div class="stage-track" aria-hidden="true"><div :style="{ width: `${Math.min(100, stage.durationMs * 100 / Math.max(1, sample.durationMs))}%` }" /></div>
-                    <span>{{ seconds(stage.durationMs) }}</span>
-                  </div>
-                </div>
-                <details v-for="file in sample.files" :key="file.path" class="file-chunks">
-                  <summary><span>{{ file.path }}</span><span>{{ file.chunks.length }} 块</span></summary>
-                  <ul><li v-for="(chunk, chunkIndex) in file.chunks" :key="chunkIndex">第 {{ chunk.lineStart }}–{{ chunk.lineEnd }} 行 · {{ number(chunk.chars) }} 字符</li></ul>
-                </details>
-              </details>
+              </article>
             </div>
           </template>
-          <p v-else class="evaluation-note">运行或选择一条实验记录，查看分析过程和指标。</p>
+          <p v-else class="evaluation-note">运行或选择一条实验记录，查看评测指标。</p>
         </section>
       </div>
     </div>
