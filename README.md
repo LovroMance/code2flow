@@ -1,52 +1,66 @@
 # Code2Flow
 
-Code2Flow 是一个将主流编程语言代码转换为 Mermaid 流程图的 Agent 项目，支持 JavaScript、TypeScript、Vue、Java、Python、C/C++ 等 23 种语言/组件格式，并保留节点到源码行号的映射。
+把源码（单文件或多文件）转成 Mermaid 流程图，并保留「图节点 ↔ 源码行号」映射：点击图中节点可跳回编辑器对应行，也可基于同一份源码快照追问。编辑器支持 23 种语言/组件格式。
 
-## 当前结构
+| 层 | 技术 |
+| --- | --- |
+| 前端 | Vue 3 + Vite + Monaco + Mermaid；手写路由（`App.vue`），无 vue-router / Pinia，按 `app / pages / features / entities / shared` 分层 |
+| 后端 | Express + TypeScript + LangChain / LangGraph（`StateGraph`） |
+| 存储 | 本地 SQLite，无独立数据库服务 |
+| 模型 | TypeSafe SDK 识别语言，OpenAI 兼容接口生成流程图 |
 
-- `frontend/`：Vue 3 + Vite 工作区，集成 Monaco 编辑与 Mermaid 节点定位
-- `backend/`：Express + TypeScript 服务，使用 LangChain / LangGraph 生成与追问
-- `docs/`：当前架构、产品范围与验收目标
-- `AGENTS.md`：项目协作规则
+> 定位为本机单用户工具，**没有鉴权**。上传的源码会发送到第三方模型服务，请先确认合规再使用。
 
-## 启动前准备
+## 目录
 
-使用 Node.js 22 或更新版本。根目录已启用 npm workspaces，先在根目录安装一次依赖即可：
+| 路径 | 内容 |
+| --- | --- |
+| `frontend/src/` | `app`、`pages`、`features`、`entities`、`shared` |
+| `backend/src/` | `index.ts` → `app` → `routes` → `controllers` → `services` → `ai`(graph/chains/tools) → `repositories` → `domain` / `utils` |
+| `docs/` | 设计决策记录（`设计要点.md`），不是架构文档 |
+| `测试功能代码/` | 手动调试用的样例源码 |
+| `测评集/` | LangSmith 回归数据集（JSONL） |
+| `backend/.env` | 本地配置，已 gitignore |
+| `backend/.code2flow/` | 运行时 SQLite 检查点、追踪与评测产物，已 gitignore |
+
+## 启动
+
+要求 Node.js **>= 22**（`backend/package.json` 的 `engines`）。根目录已启用 npm workspaces，装一次即可。
 
 ```bash
 npm install
-```
-
-后端从 `backend/.env` 读取本地配置，已有文件保留。首次配置时填写 `DEEPSEEK_API_KEY` 与 `TYPESAFE_API_KEY`；多文件分析还需设置 `CODE2FLOW_MODEL_CONTEXT_TOKENS` 为供应商实际上下文窗口。Jev Choice 由程序直接调用，用于语言识别；DeepSeek 用于生成流程图。检测默认模型 `jev-1.14.0`、超时 5000ms、置信度阈值 0.6，分别通过 `TYPESAFE_DEFAULT_MODEL`、`CODE2FLOW_LANGUAGE_TIMEOUT_MS`、`CODE2FLOW_LANGUAGE_MIN_CONFIDENCE` 调整。提交的代码会发送至 TypeSafe 和生成模型服务。本地环境文件不提交到 Git。
-
-后端使用 LangChain `createAgent` 和 LangGraph `StateGraph`。工作区草稿和分析结果保存在本地 SQLite，业务表按需创建。
-
-工作区支持直接输入代码、上传一个或多个文件。直接输入时，编辑器会创建一项有路径的草稿文件，路径扩展名沿用编辑器所选语言，未选择时使用 `draft.txt`。所有文件通过 `/api/v2` 保存草稿、创建快照、生成流程图和追问。生成与追问使用同一份源码快照。
-
-## 多文件切块
-
-调试预览和正式分析共用 Tree-sitter 切块。支持 JavaScript、TypeScript、Python、Java、Go、C++、C#、Rust、Ruby、PHP 和 Bash 的语法边界。每块由连续整行组成，优先保留完整的顶层语法单元。Java 类超出目标时，可以沿类成员边界切分，保留完整方法。相邻块无重叠，源码定位使用首尾都包含的原始行号。
-
-`CODE2FLOW_MULTI_CHUNK_TARGET_CHARS` 默认是 6000，按 UTF-16 计数，是打包目标。完整语法单元可以超出目标单独成块。流程图节点按业务阶段生成，节点范围用于源码定位。
-
-文件没有可用的语法切点时，整份作为一块送入索引，并受模型上下文限制。
-
-`CODE2FLOW_MULTI_TIMEOUT_MS` 设置整次分析或追问的总时限，单位为毫秒。DeepSeek 客户端使用同一配置，进行中的请求受该次分析或追问的取消信号约束。
-
-`CODE2FLOW_MODEL_CONTEXT_TOKENS` 用于本地估算单次请求能否放入模型的上下文，取值应对应供应商实际支持的窗口。输出长度由模型服务决定，服务返回长度截断时会终止任务并报错。整次分析的运行预算由调用总次数、并发、超时和文件限制控制。
-
-## 常用命令
-
-```bash
 npm run dev
-npm run build
 ```
 
-前端访问 `http://localhost:5175`，后端健康检查为 `http://localhost:3000/api/health`。根目录仅保留整体及前后端独立的开发、构建命令；不配置格式校验或提交钩子。
+| 地址 | 说明 |
+| --- | --- |
+| `http://localhost:5175` | 前端，`/api` 由 Vite 代理到 3000 |
+| `http://localhost:5175/evaluations` | 评测页（需 LangSmith 配置） |
+| `http://localhost:3000/api/health` | 后端健康检查 |
 
-业务代码位于 `backend/src/` 和 `frontend/src/`，产品与设计文档位于 `docs/`。`backend/tests/` 仅保留 LangSmith 配置与追踪测试及其模型夹具，需要时通过 `npm --prefix backend test` 手动执行。TypeScript 编译配置保留，业务变更按影响范围进行编译及实际流程验证。
+| 命令 | 作用 |
+| --- | --- |
+| `npm run dev` | 前后端一起启动（`concurrently`） |
+| `npm run dev:frontend` / `npm run dev:backend` | 分别启动 |
+| `npm run build` | 前端 `vue-tsc + vite build`，后端 `tsc` |
+| `npm --prefix backend test` | 手动运行 `backend/tests/`（vitest） |
 
-当前使用范围为本机单用户。可选接入 LangSmith 查看执行树、输入输出、耗时和用量，默认关闭远程上传；配置步骤和看板说明见 [LangSmith 执行追踪](./docs/langsmith.md)。完整 Mermaid 校验、生成 SVG 安全处理、鉴权和多实例协调尚未完善，具体见架构文档的已知实现差距。
+项目不配置 lint、格式化或提交钩子；验证靠 `npm run build` 加手动跑实际流程，约定见 `docs/设计要点.md`。
 
-- [架构说明](./docs/architecture.md)：分层、生成与追问、协议、存储及实现边界。
-- [产品范围与验收目标](./docs/product.md)：当前能力、验收场景和候选改进方向。
+## 配置
+
+后端在 `backend/src/index.ts` 用 `dotenv` 读取 `backend/.env`。**标为「必填」的变量在代码里没有默认值，缺失时生成接口会在配置校验处直接报错**；迁移环境时按清单补齐。该文件已 gitignore，不要提交或写入密钥。
+
+| 分组 | 变量 | 默认值 |
+| --- | --- | --- |
+| 生成模型（必填） | `DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL` | 无 |
+| 语言识别（必填） | `TYPESAFE_API_KEY`、`TYPESAFE_DEFAULT_MODEL`、`CODE2FLOW_LANGUAGE_TIMEOUT_MS`、`CODE2FLOW_LANGUAGE_MIN_CONFIDENCE` | 无 |
+| 运行预算（必填） | `CODE2FLOW_MODEL_CONTEXT_TOKENS`、`CODE2FLOW_MULTI_TIMEOUT_MS`、`CODE2FLOW_MULTI_MAX_FILES`、`CODE2FLOW_MULTI_MAX_TOTAL_BYTES`、`CODE2FLOW_MULTI_CONCURRENCY`、`CODE2FLOW_MULTI_MAX_MODEL_CALLS` | 无 |
+| 服务（必填） | `PORT` | 无 |
+| 可调 | `CODE2FLOW_MULTI_CHUNK_TARGET_CHARS` | `6000` |
+| 可调 | `CODE2FLOW_MAX_RETRIES` | `1` |
+| 可调 | `DEEPSEEK_TEMPERATURE` | `0` |
+| 可调 | `CODE2FLOW_CHECKPOINT_DB` | `.code2flow/checkpoints/code-flow.sqlite` |
+| 可选追踪 | `LANGSMITH_TRACING`（值为 `true` 才启用）、`LANGSMITH_API_KEY`、`LANGSMITH_ENDPOINT`、`LANGSMITH_PROJECT`、`LANGSMITH_WORKSPACE_ID` | 关闭 |
+
+配置解析集中在 `services/multifile-config.ts`、`ai/llms/openai.ts`、`ai/tools/detect-language.tool.ts`（均在 `backend/src/` 下）。
